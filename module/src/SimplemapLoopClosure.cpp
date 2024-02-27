@@ -175,6 +175,7 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     MRPT_TRY_END
 }
 
+// TODO: Factor this class (also in mola_lo) into an independent pkg
 std::tuple<bool /*isFirst*/, mrpt::poses::CPose3D /*distanceToClosest*/>
     SimplemapLoopClosure::SearchablePoseList::check(
         const mrpt::poses::CPose3D& p) const
@@ -248,4 +249,10 @@ void SimplemapLoopClosure::SearchablePoseList::removeAllFartherThan(
     // replace:
     kf_poses_  = std::move(new_kf_poses);
     kf_points_ = std::move(new_kf_points);
+}
+
+// Find and apply loop closures in the input/output simplemap
+void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
+{
+    //
 }

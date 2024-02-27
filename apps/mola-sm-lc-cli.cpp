@@ -21,8 +21,13 @@ struct Cli
         cmd};
 
     TCLAP::ValueArg<std::string> argOutput{
-        "o",      "output", "Output .mm file to write to", true, "out.mm",
-        "out.mm", cmd};
+        "o",
+        "output",
+        "Output .simplemap file to write to",
+        true,
+        "corrected_map.simplemap",
+        "corrected_map.simplemap",
+        cmd};
 
     TCLAP::ValueArg<std::string> argPlugins{
         "l",
@@ -38,7 +43,7 @@ struct Cli
         "p",
         "pipeline",
         "YAML file with the SimplemapLoopClosure configuration file.",
-        false,
+        true,
         "loop_closure.yaml",
         "loop_closure.yaml",
         cmd};
@@ -65,16 +70,20 @@ struct Cli
 
 void run_sm_to_mm(Cli& cli)
 {
+    const auto filYaml = cli.argPipeline.getValue();
+    ASSERT_FILE_EXISTS_(filYaml);
+    auto yamlData = mrpt::containers::yaml::FromFile(filYaml);
+
     const auto& filSM = cli.argInput.getValue();
 
     mrpt::maps::CSimpleMap sm;
 
-    std::cout << "[sm2mm] Reading simplemap from: '" << filSM << "'..."
+    std::cout << "[mola-sm-lc-cli] Reading simplemap from: '" << filSM << "'..."
               << std::endl;
 
     sm.loadFromFile(filSM);
 
-    std::cout << "[sm2mm] Done read simplemap with " << sm.size()
+    std::cout << "[mola-sm-lc-cli] Done read simplemap with " << sm.size()
               << " keyframes." << std::endl;
     ASSERT_(!sm.empty());
 
@@ -89,18 +98,22 @@ void run_sm_to_mm(Cli& cli)
 
     lc.setMinLoggingLevel(logLevel);
 
-    {
-        const auto filYaml = cli.argPipeline.getValue();
-        ASSERT_FILE_EXISTS_(filYaml);
-        auto yamlData = mrpt::containers::yaml::FromFile(filYaml);
-
-        lc.initialize(yamlData);
-    }
+    lc.initialize(yamlData);
 
     if (cli.arg_lazy_load_base_dir.isSet())
         mrpt::io::setLazyLoadPathBase(cli.arg_lazy_load_base_dir.getValue());
 
-    // process...
+    // Main stuff here:
+    lc.process(sm);
+
+    // save output:
+    const auto filOut = cli.argOutput.getValue();
+    std::cout << "[mola-sm-lc-cli] Writing output map to: '" << filOut << "'..."
+              << std::endl;
+
+    sm.saveToFile(filOut);
+
+    std::cout << "[mola-sm-lc-cli] Done." << std::endl;
 }
 
 int main(int argc, char** argv)
