@@ -20,11 +20,14 @@ project(mola_sm_loop_closure LANGUAGES CXX)
 # MOLA CMake scripts: "mola_xxx()"
 find_package(mola_common REQUIRED)
 find_package(mola_yaml REQUIRED)
+find_package(mola_pose_list REQUIRED)
 
 # find dependencies:
 find_package(mrpt-maps REQUIRED)
 find_package(mrpt-gui REQUIRED)
 find_package(mrpt-tclap REQUIRED)
+
+find_package(GTSAM REQUIRED)
 
 find_package(mp2p_icp REQUIRED)
 find_package(mp2p_icp_filters REQUIRED)
@@ -43,11 +46,13 @@ mola_add_library(
 		mola::mp2p_icp
 		mola::mp2p_icp_filters
 		mola::mola_yaml
-#	PRIVATE_LINK_LIBRARIES
-#		mrpt::maps
+		mola::mola_pose_list
+	PRIVATE_LINK_LIBRARIES
+		gtsam
 	CMAKE_DEPENDENCIES
 		mp2p_icp
 		mp2p_icp_filters
+		mola_pose_list
 		mrpt-maps
 )
 
@@ -62,11 +67,20 @@ install(
 	DESTINATION ${CMAKE_INSTALL_PREFIX}/include
 )
 
-# CLI app:
+# CLI apps:
 # ---------------------------------
 mola_add_executable(
 	TARGET  mola-sm-lc-cli
 	SOURCES apps/mola-sm-lc-cli.cpp
+	LINK_LIBRARIES
+		${PROJECT_NAME}
+		mrpt::maps
+		mrpt::tclap
+)
+
+mola_add_executable(
+	TARGET  mola-sm-georeferencing
+	SOURCES apps/mola-sm-georeferencing-cli.cpp
 	LINK_LIBRARIES
 		${PROJECT_NAME}
 		mrpt::maps
