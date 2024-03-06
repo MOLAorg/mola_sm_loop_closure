@@ -22,6 +22,7 @@
 #include <mola_sm_loop_closure/simplemap_georeference.h>
 #include <mrpt/obs/CObservationGPS.h>
 #include <mrpt/poses/gtsam_wrappers.h>
+#include <mrpt/topography/conversions.h>
 
 // GTSAM:
 #include <gtsam/geometry/Point3.h>
@@ -31,6 +32,7 @@
 #include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
 #include <gtsam/nonlinear/Values.h>
 #include <gtsam/nonlinear/expressions.h>
+#include <gtsam/slam/BetweenFactor.h>
 #include <gtsam/slam/expressions.h>
 
 class FactorGNNS2ENU : public gtsam::ExpressionFactorN<
@@ -112,30 +114,125 @@ class FactorGNNS2ENU : public gtsam::ExpressionFactorN<
 mola::SMGeoReferencingOutput mola::simplemap_georeference(
     const mrpt::maps::CSimpleMap& sm, const SMGeoReferencingParams& params)
 {
-    using gtsam::symbol_shorthand::P;
-
     mola::SMGeoReferencingOutput ret;
 
     ASSERT_(!sm.empty());
 
-    // Build list of KF poses with GNNS observations:
+    // first gps coord is used as reference:
+    std::optional<mrpt::topography::TGeodeticCoords> refCoord;
 
-    // Convert GNNS obs to ENU:
+    struct Frame
+    {
+        mrpt::poses::CPose3D              pose;
+        mrpt::obs::CObservationGPS::Ptr   obs;
+        mrpt::obs::gnss::Message_NMEA_GGA gga;
+        mrpt::topography::TGeodeticCoords coords;
+        mrpt::math::TPoint3D              enu;
+        double                            sigma_xy = 5.0;
+        double                            sigma_z  = 5.0;
+    };
+
+    std::vector<Frame> poses;
+    poses.reserve(sm.size());
+
+    // Build list of KF poses with GNNS observations:
+    for (const auto& [pose, sf, twist] : sm)
+    {
+        ASSERT_(pose);
+        ASSERT_(sf);
+
+        const auto p = pose->getMeanVal();
+
+        mrpt::obs::CObservationGPS::Ptr obs;
+        for (size_t i = 0;
+             !!(obs = sf->getObservationByClass<mrpt::obs::CObservationGPS>(i));
+             i++)
+        {
+            if (!obs->hasMsgType(mrpt::obs::gnss::NMEA_GGA)) continue;
+
+            auto& f = poses.emplace_back();
+
+            f.pose = p;
+            f.obs  = obs;
+            f.gga  = obs->getMsgByClass<mrpt::obs::gnss::Message_NMEA_GGA>();
+
+            // TODO: Integrate HDOP_REFERENCE_METERS into MRPT GPS observations?
+            f.sigma_xy = f.gga.fields.HDOP * 4.5 /*HDOP_REFERENCE_METERS*/;
+            f.sigma_z  = f.sigma_xy;
+
+            f.coords.lat    = f.gga.fields.latitude_degrees;
+            f.coords.lon    = f.gga.fields.longitude_degrees;
+            f.coords.height = f.gga.fields.altitude_meters;
+
+            // keep first one:
+            if (!refCoord.has_value()) refCoord = f.coords;
+
+            // Convert GNNS obs to ENU:
+            mrpt::topography::geodeticToENU_WGS84(f.coords, f.enu, *refCoord);
+
+#if 0
+            std::cout << "pose: " << p << "\nenu: " << f.enu << "\n";
+            // obs->getDescriptionAsText(std::cout);
+#endif
+        }
+    }
 
     // Build and optimize GTSAM graph:
     gtsam::NonlinearFactorGraph graph;
     gtsam::Values               initValues;
 
+    using gtsam::symbol_shorthand::P;  // P(i): each vehicle pose
+    using gtsam::symbol_shorthand::T;  // T(0): the single sought transformation
+
+    initValues.insert(T(0), gtsam::Pose3::Identity());
+
     // Expression to optimize (i=0...N):
     // P (+) kf_pose{i} = gps_enu{i}
 
-    double gpsUncertaintyMeters = 5.0;
-    auto   noise = gtsam::noiseModel::Isotropic::Sigma(3, gpsUncertaintyMeters);
+    auto noisePoses = gtsam::noiseModel::Isotropic::Sigma(6, 1e-2);
 
-    const gtsam::Vector3_ z0 = gtsam::Vector3(0, 0, 0);
+    for (size_t i = 0; i < poses.size(); i++)
+    {
+        const auto& frame = poses.at(i);
 
-    graph.emplace_shared<FactorGNNS2ENU>(
-        P(0), sensorPointOnVeh, observedENU, noise);
+        auto noise = gtsam::noiseModel::Isotropic::Sigma(3, frame.sigma_xy);
+
+        const auto observedENU = mrpt::gtsam_wrappers::toPoint3(frame.enu);
+        const auto sensorPointOnVeh =
+            mrpt::gtsam_wrappers::toPoint3(frame.obs->sensorPose.translation());
+
+        graph.emplace_shared<FactorGNNS2ENU>(
+            P(i), sensorPointOnVeh, observedENU, noise);
+
+        const auto vehiclePose = mrpt::gtsam_wrappers::toPose3(frame.pose);
+
+        initValues.insert(P(i), vehiclePose);
+
+        graph.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+            T(0), P(i), vehiclePose, noisePoses);
+    }
+
+    gtsam::LevenbergMarquardtParams lmParams =
+        gtsam::LevenbergMarquardtParams::CeresDefaults();
+
+    gtsam::LevenbergMarquardtOptimizer lm(graph, initValues, lmParams);
+
+    auto optimal = lm.optimize();
+
+    const double errInit = graph.error(initValues);
+    const double errEnd  = graph.error(optimal);
+
+    std::cout << "LM iterations: " << lm.iterations() << std::endl;
+    std::cout << "Init error   : " << errInit << std::endl;
+    std::cout << "Final error  : " << errEnd << std::endl;
+
+    const auto T0 = optimal.at<gtsam::Pose3>(T(0));
+
+    // store results:
+    ret.geo_ref.T_enu_to_map =
+        mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T0));
+
+    ret.geo_ref.geo_coord = refCoord.value();
 
     return ret;
 }

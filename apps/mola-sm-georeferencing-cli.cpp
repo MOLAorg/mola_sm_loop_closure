@@ -18,16 +18,14 @@ struct Cli
         true, "map.simplemap", "map.simplemap",
         cmd};
 
-#if 0
-    TCLAP::ValueArg<std::string> argOutput{
-        "o",
-        "output",
-        "Output .simplemap file to write to",
-        true,
-        "corrected_map.simplemap",
-        "corrected_map.simplemap",
+    TCLAP::ValueArg<std::string> argWriteMMInto{
+        "",
+        "write-into",
+        "An existing .mm file in which to write the georeferencing metadata",
+        false,
+        "map.mm",
+        "map.mm",
         cmd};
-#endif
 
     TCLAP::ValueArg<std::string> argPlugins{
         "l",
@@ -68,6 +66,34 @@ void run_sm_georef(Cli& cli)
 
     const mola::SMGeoReferencingOutput smGeo =
         mola::simplemap_georeference(sm, p);
+
+    std::cout << "Obtained georeferencing:\n"
+              << "lat: " << smGeo.geo_ref.geo_coord.lat.getAsString() << "\n"
+              << "lon: " << smGeo.geo_ref.geo_coord.lon.getAsString() << "\n"
+              << "lat_lon: " << smGeo.geo_ref.geo_coord.lat.decimal_value
+              << " , " << smGeo.geo_ref.geo_coord.lon.decimal_value << "\n"
+              << "h: " << smGeo.geo_ref.geo_coord.height << "\n"
+              << "T_enu_to_map: " << smGeo.geo_ref.T_enu_to_map.asString()
+              << "\n";
+
+    if (cli.argWriteMMInto.isSet())
+    {
+        mp2p_icp::metric_map_t mm;
+
+        std::cout << "[mola-sm-georeferencing-cli] Loading mm map: '"
+                  << cli.argWriteMMInto.getValue() << "'..." << std::endl;
+
+        mm.load_from_file(cli.argWriteMMInto.getValue());
+
+        // overwrite metadata:
+        mm.georeferencing = smGeo.geo_ref;
+
+        // and save:
+        mm.save_to_file(cli.argWriteMMInto.getValue());
+
+        std::cout << "[mola-sm-georeferencing-cli] Writing modified mm map: '"
+                  << cli.argWriteMMInto.getValue() << "'..." << std::endl;
+    }
 }
 
 int main(int argc, char** argv)
