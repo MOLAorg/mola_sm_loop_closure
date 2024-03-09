@@ -128,8 +128,9 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
         mrpt::obs::gnss::Message_NMEA_GGA gga;
         mrpt::topography::TGeodeticCoords coords;
         mrpt::math::TPoint3D              enu;
-        double                            sigma_xy = 5.0;
-        double                            sigma_z  = 5.0;
+        double                            sigma_E = 5.0;
+        double                            sigma_N = 5.0;
+        double                            sigma_U = 5.0;
     };
 
     std::vector<Frame> poses;
@@ -156,9 +157,18 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
             f.obs  = obs;
             f.gga  = obs->getMsgByClass<mrpt::obs::gnss::Message_NMEA_GGA>();
 
-            // TODO: Integrate HDOP_REFERENCE_METERS into MRPT GPS observations?
-            f.sigma_xy = f.gga.fields.HDOP * 4.5 /*HDOP_REFERENCE_METERS*/;
-            f.sigma_z  = f.sigma_xy;
+            if (obs->covariance_enu)
+            {
+                f.sigma_E = std::sqrt((*obs->covariance_enu)(0, 0));
+                f.sigma_N = std::sqrt((*obs->covariance_enu)(1, 1));
+                f.sigma_U = std::sqrt((*obs->covariance_enu)(2, 2));
+            }
+            else
+            {
+                f.sigma_E = f.gga.fields.HDOP * 4.5 /*HDOP_REFERENCE_METERS*/;
+                f.sigma_N = f.sigma_E;
+                f.sigma_U = f.sigma_E;
+            }
 
             f.coords.lat    = f.gga.fields.latitude_degrees;
             f.coords.lon    = f.gga.fields.longitude_degrees;
@@ -195,7 +205,8 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
     {
         const auto& frame = poses.at(i);
 
-        auto noise = gtsam::noiseModel::Isotropic::Sigma(3, frame.sigma_xy);
+        auto noise = gtsam::noiseModel::Diagonal::Sigmas(
+            gtsam::Vector3(frame.sigma_E, frame.sigma_N, frame.sigma_U));
 
         const auto observedENU = mrpt::gtsam_wrappers::toPoint3(frame.enu);
         const auto sensorPointOnVeh =
