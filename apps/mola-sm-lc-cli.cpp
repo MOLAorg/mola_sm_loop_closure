@@ -4,6 +4,7 @@
  * ------------------------------------------------------------------------- */
 
 #include <mola_sm_loop_closure/SimplemapLoopClosure.h>
+#include <mola_yaml/yaml_helpers.h>
 #include <mrpt/3rdparty/tclap/CmdLine.h>
 #include <mrpt/containers/yaml.h>
 #include <mrpt/io/lazy_load_path.h>
@@ -72,7 +73,7 @@ void run_sm_to_mm(Cli& cli)
 {
     const auto filYaml = cli.argPipeline.getValue();
     ASSERT_FILE_EXISTS_(filYaml);
-    auto yamlData = mrpt::containers::yaml::FromFile(filYaml);
+    auto yamlData = mola::load_yaml_file(filYaml);
 
     const auto& filSM = cli.argInput.getValue();
 

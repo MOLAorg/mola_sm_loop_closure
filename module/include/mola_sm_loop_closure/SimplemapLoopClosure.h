@@ -31,6 +31,7 @@
 #include <mrpt/system/CTimeLogger.h>
 
 #include <regex>
+#include <set>
 
 namespace mola
 {
@@ -44,6 +45,9 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
 
     /** @name Main API
      * @{ */
+
+    using keyframe_id_t = uint32_t;
+    using submap_id_t   = uint32_t;
 
     // See docs in base class
     void initialize(const mrpt::containers::yaml& cfg);
@@ -59,16 +63,6 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         std::vector<std::regex> lidar_sensor_labels;
 
         /** Sensor labels or regex to be matched to input observations
-         *  to be used as raw IMU observations.
-         */
-        std::optional<std::regex> imu_sensor_label;
-
-        /** Sensor labels or regex to be matched to input observations
-         *  to be used as wheel odometry observations.
-         */
-        std::optional<std::regex> wheel_odometry_sensor_label;
-
-        /** Sensor labels or regex to be matched to input observations
          *  to be used as GNNS (GPS) observations.
          */
         std::optional<std::regex> gnns_sensor_label;
@@ -80,6 +74,11 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         };
 
         ICP_case icp;
+
+        double threshold_sigma  = 0.50;
+        double max_sensor_range = 100.0;
+
+        size_t submap_keyframe_count = 100;
 
         double min_icp_goodness = 0.60;
         bool   profiler_enabled = true;
@@ -113,12 +112,33 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
     };
     void run_one_icp(const ICP_Input& in, ICP_Output& out);
 
+    // Each of the submaps for loop-closure checking:
+    struct SubMap
+    {
+        SubMap() = default;
+
+        submap_id_t id = 0;
+
+        /// Global SE(3) pose of the submap in the global frame:
+        mrpt::poses::CPose3D global_pose;
+
+        /// Local metric map in the frame of coordinates of the submap:
+        mp2p_icp::metric_map_t::Ptr local_map;
+
+        /// IDs are indices from the simplemap:
+        std::set<keyframe_id_t> kf_ids;
+    };
+
     struct State
     {
         State()  = default;
         ~State() = default;
 
         bool initialized = false;
+
+        // Input SM being processed. To avoid passing it as parameter to all
+        // methods.
+        const mrpt::maps::CSimpleMap* sm = nullptr;
 
         mp2p_icp::ParameterSource parameter_source;
 
@@ -129,11 +149,24 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         // local maps:
         mp2p_icp_filters::GeneratorSet   local_map_generators;
         mp2p_icp_filters::FilterPipeline obs2map_merge;
+
+        // Submaps:
+        std::map<submap_id_t, SubMap> submaps;
     };
 
     State state_;
 
     mrpt::system::CTimeLogger profiler_{true, "sm_loop_closure"};
+
+    // private methods:
+    void add_submap_from_kfs(const std::set<keyframe_id_t>& ids);
+
+    mrpt::poses::CPose3D keyframe_pose_in_simplemap(keyframe_id_t kfId) const;
+    mrpt::poses::CPose3D keyframe_relative_pose_in_simplemap(
+        keyframe_id_t kfId, keyframe_id_t referenceKfId) const;
+
+    void updatePipelineDynamicVariablesForKeyframe(
+        const keyframe_id_t id, const keyframe_id_t referenceId);
 };
 
 }  // namespace mola
