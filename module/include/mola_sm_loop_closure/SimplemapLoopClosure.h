@@ -25,8 +25,10 @@
 #include <mp2p_icp_filters/FilterBase.h>
 #include <mp2p_icp_filters/Generator.h>
 #include <mrpt/containers/yaml.h>
+#include <mrpt/graphs/CNetworkOfPoses.h>
 #include <mrpt/maps/CSimpleMap.h>
 #include <mrpt/maps/CSimplePointsMap.h>
+#include <mrpt/opengl/CSetOfObjects.h>
 #include <mrpt/system/COutputLogger.h>
 #include <mrpt/system/CTimeLogger.h>
 
@@ -125,6 +127,8 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         /// Local metric map in the frame of coordinates of the submap:
         mp2p_icp::metric_map_t::Ptr local_map;
 
+        mrpt::math::TBoundingBox bbox;  // in the submap local frame
+
         /// IDs are indices from the simplemap:
         std::set<keyframe_id_t> kf_ids;
     };
@@ -150,8 +154,13 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         mp2p_icp_filters::GeneratorSet   local_map_generators;
         mp2p_icp_filters::FilterPipeline obs2map_merge;
 
+        // final stage filters for submaps:
+        mp2p_icp_filters::FilterPipeline submap_final_filter;
+
         // Submaps:
         std::map<submap_id_t, SubMap> submaps;
+
+        mrpt::graphs::CNetworkOfPoses3DCov submapsGraph;
     };
 
     State state_;
@@ -159,7 +168,18 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
     mrpt::system::CTimeLogger profiler_{true, "sm_loop_closure"};
 
     // private methods:
-    void add_submap_from_kfs(const std::set<keyframe_id_t>& ids);
+    void build_submap_from_kfs(const std::set<keyframe_id_t>& ids);
+
+    struct VizOptions
+    {
+        VizOptions() = default;
+
+        std::string viz_point_layer = "minimap_viz";
+        bool        show_bbox       = true;
+    };
+
+    mrpt::opengl::CSetOfObjects::Ptr build_submaps_visualization(
+        const VizOptions& p) const;
 
     mrpt::poses::CPose3D keyframe_pose_in_simplemap(keyframe_id_t kfId) const;
     mrpt::poses::CPose3D keyframe_relative_pose_in_simplemap(

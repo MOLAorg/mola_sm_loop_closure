@@ -23,6 +23,14 @@
 #include <mrpt/obs/CObservationPointCloud.h>
 #include <mrpt/poses/Lie/SO.h>
 
+// MRPT graph-slam:
+#include <mrpt/graphslam/levmarq.h>
+
+// visualization:
+#include <mrpt/opengl/CBox.h>
+#include <mrpt/opengl/Scene.h>
+#include <mrpt/opengl/graph_tools.h>
+
 using namespace mola;
 
 SimplemapLoopClosure::SimplemapLoopClosure()
@@ -160,9 +168,16 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
         // Attach to the parameter source for dynamic parameters:
         mp2p_icp::AttachToParameterSource(
             state_.local_map_generators, state_.parameter_source);
-    }
 
-    // Parameterizable values in params_:
+        // submaps final stage filter:
+        state_.submap_final_filter =
+            mp2p_icp_filters::filter_pipeline_from_yaml(
+                c["submap_final_filter"], this->getMinLoggingLevel());
+
+        // Attach to the parameter source for dynamic parameters:
+        mp2p_icp::AttachToParameterSource(
+            state_.submap_final_filter, state_.parameter_source);
+    }
 
     state_.initialized = true;
 
@@ -188,15 +203,15 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
             if (pendingKFs.size() >= params_.submap_keyframe_count)
             {
-                add_submap_from_kfs(pendingKFs);
+                build_submap_from_kfs(pendingKFs);
                 pendingKFs.clear();
             }
         }
         // remaining ones?
-        if (!pendingKFs.empty()) add_submap_from_kfs(pendingKFs);
+        if (!pendingKFs.empty()) build_submap_from_kfs(pendingKFs);
     }
 
-#if 1
+#if 0
     // Debug: save all local maps:
     for (const auto& [id, submap] : state_.submaps)
     {
@@ -206,10 +221,60 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     }
 #endif
 
+    // Build a graph with the submaps:
+    // -----------------------------------------------
+    // Nodes:
+    for (const auto& [id, submap] : state_.submaps)
+    {
+        auto& globalPose = state_.submapsGraph.nodes[id];
+        globalPose       = submap.global_pose;
+    }
+    // Edges: one between adjacent submaps in traverse order:
+    {
+        std::optional<const SubMap*> lastSubmap;
+        for (const auto& [id, submap] : state_.submaps)
+        {
+            if (lastSubmap)
+            {
+                // add edge: i-1 => i
+                const auto last_id = lastSubmap.value()->id;
+                const auto this_id = id;
+
+                const auto& thisGlobalPose = state_.submapsGraph.nodes[this_id];
+                const auto& lastGlobalPose = state_.submapsGraph.nodes[last_id];
+
+                mrpt::poses::CPose3DPDFGaussian relPose;
+                relPose.mean = thisGlobalPose - lastGlobalPose;
+
+                // TODO: extract cov from simplemap cov from icp odometry
+                relPose.cov.setDiagonal(0.10);
+
+                state_.submapsGraph.insertEdge(last_id, this_id, relPose);
+            }
+
+            lastSubmap = &submap;
+        }
+    }
+
+#if 1
+    // Save viz of initial state:
+    {
+        VizOptions opts;
+        auto       glMap = build_submaps_visualization(opts);
+
+        mrpt::opengl::Scene scene;
+        scene.insert(glMap);
+
+        scene.saveToFile("submaps_initial.3Dscene");
+    }
+
+#endif
+
     // Look for potential loop closures:
+    // -----------------------------------------------
 }
 
-void SimplemapLoopClosure::add_submap_from_kfs(
+void SimplemapLoopClosure::build_submap_from_kfs(
     const std::set<keyframe_id_t>& ids)
 {
     ASSERT_(!ids.empty());
@@ -318,6 +383,29 @@ void SimplemapLoopClosure::add_submap_from_kfs(
         tle3.stop();
     }  // end for each keyframe ID
 
+    mp2p_icp_filters::apply_filter_pipeline(
+        state_.submap_final_filter, *submap.local_map, profiler_);
+
+    // Bbox: from point cloud layer:
+    std::optional<mrpt::math::TBoundingBoxf> theBBox;
+
+    for (const auto& [name, map] : submap.local_map->layers)
+    {
+        const auto* pts = mp2p_icp::MapToPointsMap(*map);
+        if (!pts || pts->empty()) continue;
+
+        auto bbox = pts->boundingBox();
+        if (!theBBox)
+            theBBox = bbox;
+        else
+            theBBox = theBBox->unionWith(bbox);
+    }
+
+    ASSERT_(theBBox.has_value());
+
+    submap.bbox.min = theBBox->min.cast<double>();
+    submap.bbox.max = theBBox->max.cast<double>();
+
     MRPT_LOG_INFO_STREAM(
         "Done. Submap metric map: " << submap.local_map->contents_summary());
 }
@@ -374,4 +462,51 @@ void SimplemapLoopClosure::updatePipelineDynamicVariablesForKeyframe(
 
     // Make all changes effective and evaluate the variables now:
     state_.parameter_source.realize();
+}
+
+mrpt::opengl::CSetOfObjects::Ptr
+    SimplemapLoopClosure::build_submaps_visualization(const VizOptions& p) const
+{
+    auto glViz = mrpt::opengl::CSetOfObjects::Create();
+
+    // Show graph:
+    mrpt::containers::yaml extra_params;
+    extra_params["show_ID_labels"] = true;
+
+    auto glGraph = mrpt::opengl::graph_tools::graph_visualize(
+        state_.submapsGraph, extra_params);
+
+    glViz->insert(glGraph);
+
+    // Boxes and mini-maps for each submap:
+    for (const auto& [id, submap] : state_.submaps)
+    {
+        auto glSubmap = mrpt::opengl::CSetOfObjects::Create();
+
+        if (p.show_bbox)
+        {
+            auto glBox = mrpt::opengl::CBox::Create();
+            glBox->setWireframe(true);
+            auto bbox = submap.bbox;
+            glBox->setBoxCorners(bbox.min, bbox.max);
+            glSubmap->insert(glBox);
+        }
+        if (!p.viz_point_layer.empty() &&
+            submap.local_map->layers.count(p.viz_point_layer) != 0)
+        {
+            auto& m = submap.local_map->layers.at(p.viz_point_layer);
+            mp2p_icp::metric_map_t mm;
+            mm.layers["dummy"] = m;
+
+            mp2p_icp::render_params_t rp;
+            rp.points.allLayers.pointSize = 3.0f;
+
+            glSubmap->insert(mm.get_visualization(rp));
+        }
+
+        glSubmap->setPose(submap.global_pose);
+        glViz->insert(glSubmap);
+    }
+
+    return glViz;
 }

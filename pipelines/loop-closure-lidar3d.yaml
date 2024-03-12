@@ -94,19 +94,12 @@ localmap_generator:
       
       metric_map_definition:
         # Any class derived from mrpt::maps::CMetricMap https://docs.mrpt.org/reference/latest/group_mrpt_maps_grp.html
-        class: mola::HashedVoxelPointCloud
-        plugin: 'libmola_metric_maps.so' # Import additional custom user-defined map classes (search in LD_LIBRARY_PATH)
-        creationOpts:
-          voxel_size: '$f{max(0.5, min(1.0, 0.015*ESTIMATED_SENSOR_MAX_RANGE))}' # [m]
-        insertionOpts:
-          max_points_per_voxel: 20
-          min_distance_between_points: 0  # [m]
-          # if !=0, remove voxels farther (L1) than the current observation insert point
-          remove_voxels_farther_than: '$f{max(100.0, 1.50*ESTIMATED_SENSOR_MAX_RANGE)}' # [m]
-        likelihoodOpts:
-          sigma_dist: 1.0    # [m]
-          max_corr_distance: 2.0  #[m]
-          decimation: 10
+        class: mrpt::maps::CSimplePointsMap
+        #class: mola::HashedVoxelPointCloud
+        #plugin: 'libmola_metric_maps.so' # Import additional custom user-defined map classes (search in LD_LIBRARY_PATH)
+        creationOpts: ~
+        insertionOpts: ~
+        likelihoodOpts: ~
 
 # ---------------------------------------------------------------------------------
 # LIDAR observations are, first, loaded using a generator
@@ -195,4 +188,26 @@ insert_observation_into_local_map:
       target_layer: 'localmap'
       input_layer_in_local_coordinates: true
       robot_pose: [ROBOT_X, ROBOT_Y, ROBOT_Z, ROBOT_YAW, ROBOT_PITCH, ROBOT_ROLL]
+
+
+submap_final_filter:
+  # Filters:
+  #
+  # One filter object will be created for each entry, instancing the given class,
+  # and with the given parameters. Filters are run in definition order on the
+  # input metric_map_t object.
+  #
+  - class_name: mp2p_icp_filters::FilterDecimateVoxels
+    params:
+      input_pointcloud_layer: 'localmap'
+      output_pointcloud_layer: 'minimap_viz'
+      voxel_filter_resolution: 3.5
+      decimate_method: DecimateMethod::FirstPoint
+
+  - class_name: mp2p_icp_filters::FilterDecimateVoxels
+    params:
+      input_pointcloud_layer: 'localmap'
+      output_pointcloud_layer: 'points_to_register'
+      voxel_filter_resolution: 2.0
+      decimate_method: DecimateMethod::FirstPoint
 
