@@ -162,6 +162,9 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
                 f.sigma_E = std::sqrt((*obs->covariance_enu)(0, 0));
                 f.sigma_N = std::sqrt((*obs->covariance_enu)(1, 1));
                 f.sigma_U = std::sqrt((*obs->covariance_enu)(2, 2));
+
+                MRPT_TODO("Remove!");
+                if (f.sigma_U == 0) f.sigma_U = 100.0;
             }
             else
             {
@@ -169,6 +172,10 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
                 f.sigma_N = f.sigma_E;
                 f.sigma_U = f.sigma_E;
             }
+
+            ASSERT_(f.sigma_E > 0);
+            ASSERT_(f.sigma_N > 0);
+            ASSERT_(f.sigma_U > 0);
 
             f.coords.lat    = f.gga.fields.latitude_degrees;
             f.coords.lon    = f.gga.fields.longitude_degrees;
@@ -199,21 +206,26 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
     // Expression to optimize (i=0...N):
     // P (+) kf_pose{i} = gps_enu{i}
 
-    auto noisePoses = gtsam::noiseModel::Isotropic::Sigma(6, 1e-2);
+    auto noisePoses         = gtsam::noiseModel::Isotropic::Sigma(6, 1e-2);
+    auto noiseHorizontality = gtsam::noiseModel::Diagonal::Sigmas(
+        gtsam::Vector6(1e3, 1e3, 1e3, 1e6, 1e6, params.horizontalitySigmaZ));
 
     for (size_t i = 0; i < poses.size(); i++)
     {
         const auto& frame = poses.at(i);
 
-        auto noise = gtsam::noiseModel::Diagonal::Sigmas(
+        auto noiseOrg = gtsam::noiseModel::Diagonal::Sigmas(
             gtsam::Vector3(frame.sigma_E, frame.sigma_N, frame.sigma_U));
+
+        auto robustNoise = gtsam::noiseModel::Robust::Create(
+            gtsam::noiseModel::mEstimator::Huber::Create(1.5), noiseOrg);
 
         const auto observedENU = mrpt::gtsam_wrappers::toPoint3(frame.enu);
         const auto sensorPointOnVeh =
             mrpt::gtsam_wrappers::toPoint3(frame.obs->sensorPose.translation());
 
         graph.emplace_shared<FactorGNNS2ENU>(
-            P(i), sensorPointOnVeh, observedENU, noise);
+            P(i), sensorPointOnVeh, observedENU, robustNoise);
 
         const auto vehiclePose = mrpt::gtsam_wrappers::toPose3(frame.pose);
 
@@ -221,6 +233,12 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
 
         graph.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             T(0), P(i), vehiclePose, noisePoses);
+
+        if (params.addHorizontalityConstraints)
+        {
+            graph.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
+                P(i), gtsam::Pose3::Identity(), noiseHorizontality);
+        }
     }
 
     gtsam::LevenbergMarquardtParams lmParams =

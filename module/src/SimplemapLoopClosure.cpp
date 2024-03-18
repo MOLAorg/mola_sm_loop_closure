@@ -476,6 +476,9 @@ mrpt::opengl::CSetOfObjects::Ptr
     auto glGraph = mrpt::opengl::graph_tools::graph_visualize(
         state_.submapsGraph, extra_params);
 
+    // Show at an elevated height:
+    glGraph->setLocation(0, 0, 10);
+
     glViz->insert(glGraph);
 
     // Boxes and mini-maps for each submap:

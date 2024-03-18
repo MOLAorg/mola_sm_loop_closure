@@ -70,8 +70,10 @@ void run_sm_georef(Cli& cli)
     std::cout << "Obtained georeferencing:\n"
               << "lat: " << smGeo.geo_ref.geo_coord.lat.getAsString() << "\n"
               << "lon: " << smGeo.geo_ref.geo_coord.lon.getAsString() << "\n"
-              << "lat_lon: " << smGeo.geo_ref.geo_coord.lat.decimal_value
-              << " , " << smGeo.geo_ref.geo_coord.lon.decimal_value << "\n"
+              << mrpt::format(
+                     "lat_lon: %.06f, %.06f\n",
+                     smGeo.geo_ref.geo_coord.lat.decimal_value,
+                     smGeo.geo_ref.geo_coord.lon.decimal_value)
               << "h: " << smGeo.geo_ref.geo_coord.height << "\n"
               << "T_enu_to_map: " << smGeo.geo_ref.T_enu_to_map.asString()
               << "\n";
