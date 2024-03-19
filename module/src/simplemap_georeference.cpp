@@ -162,9 +162,6 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
                 f.sigma_E = std::sqrt((*obs->covariance_enu)(0, 0));
                 f.sigma_N = std::sqrt((*obs->covariance_enu)(1, 1));
                 f.sigma_U = std::sqrt((*obs->covariance_enu)(2, 2));
-
-                MRPT_TODO("Remove!");
-                if (f.sigma_U == 0) f.sigma_U = 100.0;
             }
             else
             {
