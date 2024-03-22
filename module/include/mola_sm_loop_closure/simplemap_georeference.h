@@ -36,8 +36,8 @@ struct SMGeoReferencingParams
 {
     SMGeoReferencingParams() = default;
 
-    bool   addHorizontalityConstraints = false;
-    double horizontalitySigmaZ         = 5.0;  // [m]
+    bool   addHorizontalityConstraints = true;
+    double horizontalitySigmaZ         = 1.0;  // [m]
 };
 
 /** Function to georeferencing a given SimpleMap with GNNS observations.

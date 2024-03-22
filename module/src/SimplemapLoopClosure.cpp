@@ -24,6 +24,7 @@
 #include <mrpt/poses/Lie/SO.h>
 
 // MRPT graph-slam:
+#include <mrpt/graphs/dijkstra.h>
 #include <mrpt/graphslam/levmarq.h>
 
 // visualization:
@@ -272,6 +273,16 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
     // Look for potential loop closures:
     // -----------------------------------------------
+    // find next smallest potential loop closure?
+    for (;;)
+    {
+        std::optional<PotentialLoopOutput> lc = find_next_loop_closure();
+        if (!lc) break;  // no more candidates
+
+        MRPT_LOG_INFO_STREAM(
+            "Considering potential LC: " << lc->smallest_id << "<=>"
+                                         << lc->largest_id);
+    }
 }
 
 void SimplemapLoopClosure::build_submap_from_kfs(
@@ -512,4 +523,29 @@ mrpt::opengl::CSetOfObjects::Ptr
     }
 
     return glViz;
+}
+
+std::optional<SimplemapLoopClosure::PotentialLoopOutput>
+    SimplemapLoopClosure::find_next_loop_closure()
+{
+    submap_id_t root_id = 0;
+
+    mrpt::graphs::CDijkstra<typeof(state_.submapsGraph)> dijkstra(
+        state_.submapsGraph, root_id);
+
+    using tree_t = mrpt::graphs::CDirectedTree<
+        const mrpt::graphs::CNetworkOfPoses3DCov::edge_t*>;
+
+    const tree_t tree = dijkstra.getTreeGraph();
+
+    auto lambdaVisitTree = [&](mrpt::graphs::TNodeID const parent,
+                               const tree_t::TEdgeInfo&    edgeToChild,
+                               size_t                      depthLevel) {
+        MRPT_LOG_INFO_STREAM(
+            "TREE visit: " << parent << " depth: " << depthLevel);
+    };
+
+    tree.visitDepthFirst(root_id, lambdaVisitTree);
+
+    return {};
 }

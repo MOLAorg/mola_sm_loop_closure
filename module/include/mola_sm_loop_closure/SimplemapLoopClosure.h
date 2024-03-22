@@ -187,6 +187,15 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
 
     void updatePipelineDynamicVariablesForKeyframe(
         const keyframe_id_t id, const keyframe_id_t referenceId);
+
+    struct PotentialLoopOutput
+    {
+        PotentialLoopOutput() = default;
+
+        submap_id_t smallest_id = 0, largest_id = 0;
+    };
+
+    std::optional<PotentialLoopOutput> find_next_loop_closure();
 };
 
 }  // namespace mola
