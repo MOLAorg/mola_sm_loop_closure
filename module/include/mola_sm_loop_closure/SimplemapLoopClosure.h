@@ -69,18 +69,14 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
          */
         std::optional<std::regex> gnns_sensor_label;
 
-        struct ICP_case
-        {
-            mp2p_icp::ICP::Ptr   icp;
-            mp2p_icp::Parameters icp_parameters;
-        };
-
-        ICP_case icp;
+        mp2p_icp::Parameters icp_parameters;
 
         double threshold_sigma  = 0.50;
         double max_sensor_range = 100.0;
 
         size_t submap_keyframe_count = 100;
+
+        double min_volume_intersection_ratio_for_lc_candidate = 0.6;
 
         double min_icp_goodness = 0.60;
         bool   profiler_enabled = true;
@@ -92,28 +88,6 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
     /** @} */
 
    private:
-    struct ICP_Input
-    {
-        using Ptr = std::shared_ptr<ICP_Input>;
-
-        int32_t                     global_id = -1;
-        int32_t                     local_id  = -1;
-        mp2p_icp::metric_map_t::Ptr global_pc, local_pc;
-        mrpt::math::TPose3D         init_guess_local_wrt_global;
-        mp2p_icp::Parameters        icp_params;
-
-        std::optional<mrpt::poses::CPose3DPDFGaussianInf> prior;
-
-        /** used to identity where does this request come from */
-        std::string debug_str;
-    };
-    struct ICP_Output
-    {
-        double                          goodness{.0};
-        mrpt::poses::CPose3DPDFGaussian found_pose_to_wrt_from;
-    };
-    void run_one_icp(const ICP_Input& in, ICP_Output& out);
-
     // Each of the submaps for loop-closure checking:
     struct SubMap
     {
@@ -160,7 +134,11 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         // Submaps:
         std::map<submap_id_t, SubMap> submaps;
 
-        mrpt::graphs::CNetworkOfPoses3DCov submapsGraph;
+        // Use information matrices alternative, which is the only
+        // implementation of optimize_graph_spa_levmarq() for SE(3)
+        mrpt::graphs::CNetworkOfPoses3DInf submapsGraph;
+
+        mp2p_icp::ICP::Ptr icp;
     };
 
     State state_;
@@ -176,6 +154,7 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
 
         std::string viz_point_layer = "minimap_viz";
         bool        show_bbox       = true;
+        bool        show_edges      = true;
     };
 
     mrpt::opengl::CSetOfObjects::Ptr build_submaps_visualization(
@@ -188,14 +167,23 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
     void updatePipelineDynamicVariablesForKeyframe(
         const keyframe_id_t id, const keyframe_id_t referenceId);
 
-    struct PotentialLoopOutput
+    struct PotentialLoop
     {
-        PotentialLoopOutput() = default;
+        PotentialLoop() = default;
 
-        submap_id_t smallest_id = 0, largest_id = 0;
+        submap_id_t                        smallest_id = 0, largest_id = 0;
+        size_t                             topological_distance = 0;
+        mrpt::poses::CPose3DPDFGaussianInf relative_pose_largest_wrt_smallest;
     };
 
-    std::optional<PotentialLoopOutput> find_next_loop_closure();
+    /** For each submap, a list of potential LCs to check, already sorted by
+     * decreasing score */
+    using PotentialLoopOutput =
+        std::map<submap_id_t, std::vector<PotentialLoop>>;
+
+    PotentialLoopOutput find_next_loop_closures() const;
+
+    [[nodiscard]] bool process_loop_candidate(const PotentialLoop& lc);
 };
 
 }  // namespace mola

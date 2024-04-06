@@ -68,7 +68,7 @@ icp_settings:
         pairingsPerPoint: 1
         allowMatchAlreadyMatchedGlobalPoints: true # faster
         pointLayerMatches:
-          - {global: "localmap", local: "decimated_for_icp", weight: 1.0}
+          - {global: "localmap", local: "points_to_register", weight: 1.0}
 
   quality:
     - class: mp2p_icp::QualityEvaluator_PairedRatio
