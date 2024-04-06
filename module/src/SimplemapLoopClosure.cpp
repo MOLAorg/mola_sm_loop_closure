@@ -528,6 +528,7 @@ mrpt::opengl::CSetOfObjects::Ptr
 std::optional<SimplemapLoopClosure::PotentialLoopOutput>
     SimplemapLoopClosure::find_next_loop_closure()
 {
+    // go on thru all nodes as root?
     submap_id_t root_id = 0;
 
     mrpt::graphs::CDijkstra<typeof(state_.submapsGraph)> dijkstra(
@@ -538,11 +539,20 @@ std::optional<SimplemapLoopClosure::PotentialLoopOutput>
 
     const tree_t tree = dijkstra.getTreeGraph();
 
+    std::map<submap_id_t, mrpt::poses::CPose3DPDFGaussian> submapPoses;
+
+    submapPoses[root_id] = {};  // perfect identity pose with zero cov.
+
     auto lambdaVisitTree = [&](mrpt::graphs::TNodeID const parent,
                                const tree_t::TEdgeInfo&    edgeToChild,
-                               size_t                      depthLevel) {
+                               size_t                      depthLevel)
+    {
+        submapPoses[edgeToChild.id] = submapPoses[root_id] + *edgeToChild.data;
+
         MRPT_LOG_INFO_STREAM(
-            "TREE visit: " << parent << " depth: " << depthLevel);
+            "TREE visit: " << parent << " depth: " << depthLevel
+                           << " pose mean="
+                           << submapPoses[edgeToChild.id].mean);
     };
 
     tree.visitDepthFirst(root_id, lambdaVisitTree);
