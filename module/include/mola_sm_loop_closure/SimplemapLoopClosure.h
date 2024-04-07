@@ -74,7 +74,7 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         double threshold_sigma  = 0.50;
         double max_sensor_range = 100.0;
 
-        size_t submap_keyframe_count = 100;
+        double submap_max_length = 75.0;
 
         double min_volume_intersection_ratio_for_lc_candidate = 0.6;
 

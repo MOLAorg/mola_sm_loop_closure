@@ -83,7 +83,7 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
 
     YAML_LOAD_REQ(params_, min_icp_goodness, double);
     YAML_LOAD_OPT(params_, profiler_enabled, bool);
-    YAML_LOAD_REQ(params_, submap_keyframe_count, size_t);
+    YAML_LOAD_REQ(params_, submap_max_length, double);
 
     YAML_LOAD_REQ(params_, threshold_sigma, double);
     YAML_LOAD_REQ(params_, max_sensor_range, double);
@@ -190,7 +190,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     state_.sm = &sm;
 
     // Minimum to have a large-enough topological loop closure:
-    ASSERT_GT_(sm.size(), 3 * params_.submap_keyframe_count);
+    // ASSERT_GT_(sm.size(), 3 * params_.submap_keyframe_count);
 
     // Build submaps:
     {
@@ -199,7 +199,17 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         {
             pendingKFs.insert(i);
 
-            if (pendingKFs.size() >= params_.submap_keyframe_count)
+            const auto pose_i_local =
+                keyframe_relative_pose_in_simplemap(i, *pendingKFs.begin());
+
+            const auto& [pose_i, sf_i, twist_i] = state_.sm->get(i);
+
+            // don't cut a submap while we are processing empty SFs since we
+            // don't know for how long it will take and we might end up with a
+            // totally empty final submap
+            if (sf_i->empty()) continue;
+
+            if (pose_i_local.translation().norm() >= params_.submap_max_length)
             {
                 build_submap_from_kfs(pendingKFs);
                 pendingKFs.clear();
@@ -423,6 +433,12 @@ void SimplemapLoopClosure::build_submap_from_kfs(
         auto observation = mp2p_icp::metric_map_t::Create();
 
         const auto& [pose, sf, twist] = state_.sm->get(id);
+
+        MRPT_LOG_DEBUG_STREAM(
+            "Processing KF#" << id << " with |SF|=" << sf->size());
+
+        // Some frames may be empty:
+        if (sf->empty()) continue;
 
         mrpt::system::CTimeLoggerEntry tle0(
             profiler_, "add_submap_from_kfs.apply_generators");

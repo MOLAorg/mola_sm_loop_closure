@@ -14,8 +14,8 @@ params:
   # These sensor labels will be handled as GNNS (GPS) (For storage in simplemap only)
   gnns_sensor_label: 'gps'
   
-  # Number of KFs per submap
-  submap_keyframe_count: 60
+  # Max. length of submap:
+  submap_max_length: 75   # [m]
 
   # Minimum ICP quality to accept a loop closure:
   min_icp_goodness: 0.70
