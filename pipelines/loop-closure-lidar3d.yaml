@@ -25,7 +25,7 @@ params:
   # Profiler:
   profiler_enabled: true
   
-  threshold_sigma: 0.50
+  threshold_sigma: 1.5
   max_sensor_range: 100
 
 
@@ -41,7 +41,7 @@ icp_settings:
 
   # See: mp2p_icp::Parameter
   params:
-    maxIterations: 300
+    maxIterations: 800
     minAbsStep_trans: 1e-4
     minAbsStep_rot: 5e-5
 
@@ -49,7 +49,7 @@ icp_settings:
     #generateDebugFiles: true  # Can be override with env var "MP2P_ICP_GENERATE_DEBUG_FILES=1"
     saveIterationDetails: false  # Store partial solutions and pairings for each ICP iteration
     decimationIterationDetails: 3
-    debugFileNameFormat: "icp-logs/lc-$UNIQUE_ID-local_$LOCAL_ID$LOCAL_LABEL-to-global_$GLOBAL_ID$GLOBAL_LABEL.icplog"
+    debugFileNameFormat: "${HOME}/ros2_ws/icp-logs/lc-$UNIQUE_ID-local_$LOCAL_ID$LOCAL_LABEL-to-global_$GLOBAL_ID$GLOBAL_LABEL.icplog"
     decimationDebugFiles: ${MP2P_ICP_LOG_FILES_DECIMATION|1}
 
   solvers:

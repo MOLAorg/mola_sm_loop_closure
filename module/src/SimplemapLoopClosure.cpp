@@ -350,6 +350,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     // find next smallest potential loop closure?
 
     std::set<std::pair<submap_id_t, submap_id_t>> alreadyChecked;
+    // TODO: Consider a finer grade alreadyChecked reset?
 
     // repeat until checkedCount==0:
     for (;;)
@@ -394,14 +395,27 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
                 const double rmseFinal = state_.submapsGraph.chi2();
 
+                // Update submaps global pose:
+                double largestDelta = 0;
+
+                for (const auto& [id, newPose] : state_.submapsGraph.nodes)
+                {
+                    auto& targetPose = state_.submaps.at(id).global_pose;
+
+                    const auto deltaPose =
+                        (targetPose - newPose).translation().norm();
+                    mrpt::keep_max(largestDelta, deltaPose);
+
+                    targetPose = newPose;
+                }
+
                 MRPT_LOG_INFO_STREAM(
                     "SUBMAP-LEVEL Graph re-optimized in "
                     << lmOut.num_iters << " iters, RMSE=" << rmseInit << " ==> "
-                    << rmseFinal);
+                    << rmseFinal << " largestDelta: " << largestDelta);
 
-                // Update submaps global pose:
-                for (const auto& [id, pose] : state_.submapsGraph.nodes)
-                    state_.submaps.at(id).global_pose = pose;
+                // re-visit all areas again
+                if (largestDelta > 3.0) alreadyChecked.clear();
             }
 
             // low-level KF graph:
