@@ -20,6 +20,7 @@
 
 #include <mola_sm_loop_closure/SimplemapLoopClosure.h>
 #include <mola_yaml/yaml_helpers.h>
+#include <mrpt/core/WorkerThreadsPool.h>
 #include <mrpt/obs/CObservationPointCloud.h>
 #include <mrpt/poses/Lie/SO.h>
 
@@ -66,18 +67,6 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     }
     ASSERT_(!params_.lidar_sensor_labels.empty());
 
-    // Obs2map merge pipeline:
-    ASSERT_(c["insert_observation_into_local_map"].isSequence());
-    // Create, and copy my own verbosity level:
-    state_.obs2map_merge = mp2p_icp_filters::filter_pipeline_from_yaml(
-        c["insert_observation_into_local_map"], this->getMinLoggingLevel());
-
-    // Attach to the parameter source for dynamic parameters:
-    mp2p_icp::AttachToParameterSource(
-        state_.obs2map_merge, state_.parameter_source);
-
-    ASSERT_(!state_.obs2map_merge.empty());
-
     if (cfg.has("gnns_sensor_label"))
         params_.gnns_sensor_label = cfg["gnns_sensor_label"].as<std::string>();
 
@@ -91,34 +80,48 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(
         params_, min_volume_intersection_ratio_for_lc_candidate, double);
 
-    ENSURE_YAML_ENTRY_EXISTS(c, "icp_settings");
-
-    {
-        const auto [icp, icpParams] =
-            mp2p_icp::icp_pipeline_from_yaml(c["icp_settings"]);
-
-        state_.icp             = icp;
-        params_.icp_parameters = icpParams;
-    }
-
-    // Attach all ICP instances to the parameter source for dynamic
-    // parameters:
-    state_.icp->attachToParameterSource(state_.parameter_source);
-
     // system-wide profiler:
     profiler_.enable(params_.profiler_enabled);
 
-    // Create lidar segmentation algorithm:
-    {
-        mrpt::system::CTimeLoggerEntry tle(
-            profiler_, "filterPointCloud_initialize");
+    ENSURE_YAML_ENTRY_EXISTS(c, "icp_settings");
+    ASSERT_(c["insert_observation_into_local_map"].isSequence());
 
+    mrpt::system::CTimeLoggerEntry tlePcInit(
+        profiler_, "filterPointCloud_initialize");
+
+    for (size_t threadIdx = 0; threadIdx < state_.perThreadState_.size();
+         threadIdx++)
+    {
+        auto& pts = state_.perThreadState_.at(threadIdx);
+
+        const auto [icp, icpParams] =
+            mp2p_icp::icp_pipeline_from_yaml(c["icp_settings"]);
+
+        pts.icp                = icp;
+        params_.icp_parameters = icpParams;
+
+        // Attach all ICP instances to the parameter source for dynamic
+        // parameters:
+        pts.icp->attachToParameterSource(pts.parameter_source);
+
+        // Obs2map merge pipeline:
+        // Create, and copy my own verbosity level:
+        pts.obs2map_merge = mp2p_icp_filters::filter_pipeline_from_yaml(
+            c["insert_observation_into_local_map"], this->getMinLoggingLevel());
+
+        // Attach to the parameter source for dynamic parameters:
+        mp2p_icp::AttachToParameterSource(
+            pts.obs2map_merge, pts.parameter_source);
+
+        ASSERT_(!pts.obs2map_merge.empty());
+
+        // Create lidar segmentation algorithm:
         // Observation -> map generator:
         if (c.has("observations_generator") &&
             !c["observations_generator"].isNullNode())
         {
             // Create, and copy my own verbosity level:
-            state_.obs_generators = mp2p_icp_filters::generators_from_yaml(
+            pts.obs_generators = mp2p_icp_filters::generators_from_yaml(
                 c["observations_generator"], this->getMinLoggingLevel());
         }
         else
@@ -130,22 +133,22 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
 
             auto defaultGen = mp2p_icp_filters::Generator::Create();
             defaultGen->initialize({});
-            state_.obs_generators.push_back(defaultGen);
+            pts.obs_generators.push_back(defaultGen);
         }
 
         // Attach to the parameter source for dynamic parameters:
         mp2p_icp::AttachToParameterSource(
-            state_.obs_generators, state_.parameter_source);
+            pts.obs_generators, pts.parameter_source);
 
         if (c.has("observations_filter"))
         {
             // Create, and copy my own verbosity level:
-            state_.pc_filter = mp2p_icp_filters::filter_pipeline_from_yaml(
+            pts.pc_filter = mp2p_icp_filters::filter_pipeline_from_yaml(
                 c["observations_filter"], this->getMinLoggingLevel());
 
             // Attach to the parameter source for dynamic parameters:
             mp2p_icp::AttachToParameterSource(
-                state_.pc_filter, state_.parameter_source);
+                pts.pc_filter, pts.parameter_source);
         }
 
         // Local map generator:
@@ -153,9 +156,8 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
             !c["localmap_generator"].isNullNode())
         {
             // Create, and copy my own verbosity level:
-            state_.local_map_generators =
-                mp2p_icp_filters::generators_from_yaml(
-                    c["localmap_generator"], this->getMinLoggingLevel());
+            pts.local_map_generators = mp2p_icp_filters::generators_from_yaml(
+                c["localmap_generator"], this->getMinLoggingLevel());
         }
         else
         {
@@ -165,17 +167,18 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
         }
         // Attach to the parameter source for dynamic parameters:
         mp2p_icp::AttachToParameterSource(
-            state_.local_map_generators, state_.parameter_source);
+            pts.local_map_generators, pts.parameter_source);
 
         // submaps final stage filter:
-        state_.submap_final_filter =
-            mp2p_icp_filters::filter_pipeline_from_yaml(
-                c["submap_final_filter"], this->getMinLoggingLevel());
+        pts.submap_final_filter = mp2p_icp_filters::filter_pipeline_from_yaml(
+            c["submap_final_filter"], this->getMinLoggingLevel());
 
         // Attach to the parameter source for dynamic parameters:
         mp2p_icp::AttachToParameterSource(
-            state_.submap_final_filter, state_.parameter_source);
-    }
+            pts.submap_final_filter, pts.parameter_source);
+
+    }  // end for threadIdx
+    tlePcInit.stop();
 
     state_.initialized = true;
 
@@ -193,6 +196,8 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     // ASSERT_GT_(sm.size(), 3 * params_.submap_keyframe_count);
 
     // Build submaps:
+    std::vector<std::set<keyframe_id_t>> detectedSubMaps;
+
     {
         std::set<keyframe_id_t> pendingKFs;
         for (size_t i = 0; i < sm.size(); i++)
@@ -211,13 +216,47 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
             if (pose_i_local.translation().norm() >= params_.submap_max_length)
             {
-                build_submap_from_kfs(pendingKFs);
+                detectedSubMaps.emplace_back(pendingKFs);
                 pendingKFs.clear();
             }
         }
         // remaining ones?
-        if (!pendingKFs.empty()) build_submap_from_kfs(pendingKFs);
+        if (!pendingKFs.empty()) detectedSubMaps.emplace_back(pendingKFs);
     }
+
+    // process pending submap creation, in parallel threads:
+    mrpt::WorkerThreadsPool        threads(state_.perThreadState_.size());
+    std::vector<std::future<void>> futures;
+    const size_t                   nSubMaps = detectedSubMaps.size();
+
+    for (submap_id_t submapId = 0; submapId < nSubMaps; submapId++)
+    {
+        const size_t threadIdx = submapId % state_.perThreadState_.size();
+
+        // Modify the submaps[] std::map here in this main thread:
+        SubMap& submap = state_.submaps[submapId];
+        submap.id      = submapId;
+
+        // then process the observations in parallel:
+        auto fut = threads.enqueue(
+            [this, threadIdx, submapId, nSubMaps](
+                std::set<keyframe_id_t> ids, SubMap* m)
+            {
+                // ensure only 1 thread is running for each per-thread data:
+                auto lck =
+                    mrpt::lockHelper(state_.perThreadState_.at(threadIdx).mtx);
+
+                build_submap_from_kfs_into(ids, *m, threadIdx);
+                MRPT_LOG_INFO_STREAM(
+                    "Done with submap #" << submapId << " / " << nSubMaps);
+            },
+            detectedSubMaps.at(submapId), &submap);
+
+        futures.emplace_back(std::move(fut));
+    }
+
+    // wait for all them:
+    for (auto& f : futures) f.get();
 
 #if 0
     // Debug: save all local maps:
@@ -266,6 +305,31 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
             lastSubmap = &submap;
         }
+    }
+
+    // Build a graph with the low-level keyframes:
+    // -----------------------------------------------
+    for (const auto& [submapId, submap] : state_.submaps)
+    {
+        for (const auto id : submap.kf_ids)
+        {
+            auto& kfPose = state_.keyframesGraph.nodes[id];
+            kfPose       = this->keyframe_pose_in_simplemap(id);
+        }
+    }
+    // create edges: i -> i-1
+    for (size_t i = 1; i < sm.size(); i++)
+    {
+        const auto& [pose_i, sf_i, twist_i]       = state_.sm->get(i);
+        const auto& [pose_im1, sf_im1, twist_im1] = state_.sm->get(i - 1);
+
+        // TODO: extract cov from simplemap cov from icp odometry
+
+        mrpt::poses::CPose3DPDFGaussianInf relPoseInf;
+        relPoseInf.mean = pose_i->getMeanVal() - pose_im1->getMeanVal();
+        relPoseInf.cov_inv.setIdentity();  // XXX
+
+        state_.keyframesGraph.insertEdge(i - 1, i, relPoseInf);
     }
 
 #if 1
@@ -321,21 +385,42 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         // any change to the graph? re-optimize it:
         if (anyGraphChange)
         {
-            const double rmseInit = state_.submapsGraph.chi2();
+            {
+                const double rmseInit = state_.submapsGraph.chi2();
 
-            mrpt::graphslam::TResultInfoSpaLevMarq lmOut;
-            mrpt::graphslam::optimize_graph_spa_levmarq(
-                state_.submapsGraph, lmOut);
+                mrpt::graphslam::TResultInfoSpaLevMarq lmOut;
+                mrpt::graphslam::optimize_graph_spa_levmarq(
+                    state_.submapsGraph, lmOut);
 
-            const double rmseFinal = state_.submapsGraph.chi2();
+                const double rmseFinal = state_.submapsGraph.chi2();
 
-            MRPT_LOG_INFO_STREAM(
-                "Graph re-optimized in " << lmOut.num_iters << " iters, RMSE="
-                                         << rmseInit << " ==> " << rmseFinal);
+                MRPT_LOG_INFO_STREAM(
+                    "SUBMAP-LEVEL Graph re-optimized in "
+                    << lmOut.num_iters << " iters, RMSE=" << rmseInit << " ==> "
+                    << rmseFinal);
 
-            // Update submaps global pose:
-            for (const auto& [id, pose] : state_.submapsGraph.nodes)
-                state_.submaps.at(id).global_pose = pose;
+                // Update submaps global pose:
+                for (const auto& [id, pose] : state_.submapsGraph.nodes)
+                    state_.submaps.at(id).global_pose = pose;
+            }
+
+            // low-level KF graph:
+            {
+                const double rmseInit = state_.keyframesGraph.chi2();
+
+                mrpt::graphslam::TResultInfoSpaLevMarq lmOut;
+                mrpt::graphslam::optimize_graph_spa_levmarq(
+                    state_.keyframesGraph, lmOut);
+
+                const double rmseFinal = state_.keyframesGraph.chi2();
+
+                MRPT_LOG_INFO_STREAM(
+                    "KF-LEVEL Graph re-optimized in "
+                    << lmOut.num_iters << " iters, RMSE=" << rmseInit << " ==> "
+                    << rmseFinal);
+
+                // The updated KF poses are used at the end of this function.
+            }
         }
     }
 
@@ -352,10 +437,11 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     }
 #endif
 
-    // At this point, we have optimized the top-level submaps graph.
+    // At this point, we have optimized the KFs in state_.keyframesGraph.
     // Now, update all low-level keyframes in the simplemap:
     mrpt::maps::CSimpleMap outSM;
 
+#if 0
     for (const auto& [submapId, submap] : state_.submaps)
     {
         const keyframe_id_t refKfId = *submap.kf_ids.begin();
@@ -376,45 +462,55 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             outSM.insert(newPose, sf, twist);
         }
     }
+#endif
+
+    for (size_t id = 0; id < sm.size(); id++)
+    {
+        auto& [oldPose, sf, twist] = state_.sm->get(id);
+
+        const auto& newKfGlobalPose = state_.keyframesGraph.nodes.at(id);
+
+        const auto newPose = mrpt::poses::CPose3DPDFGaussian::Create();
+        newPose->mean      = newKfGlobalPose;
+        newPose->cov.setIdentity();  // TODO! Get cov from optimizer?
+
+        outSM.insert(newPose, sf, twist);
+    }
 
     // Overwrite with new SM:
     sm = std::move(outSM);
 }
 
-void SimplemapLoopClosure::build_submap_from_kfs(
-    const std::set<keyframe_id_t>& ids)
+void SimplemapLoopClosure::build_submap_from_kfs_into(
+    const std::set<keyframe_id_t>& ids, SubMap& submap, const size_t threadIdx)
 {
-    ASSERT_(!ids.empty());
-
-    const submap_id_t newSubmapId = state_.submaps.size();
-
-    SubMap& submap = state_.submaps[newSubmapId];
-
     const keyframe_id_t refFrameId = *ids.begin();
 
-    submap.id          = newSubmapId;
     submap.kf_ids      = ids;
     submap.global_pose = keyframe_pose_in_simplemap(refFrameId);
 
     MRPT_LOG_INFO_STREAM(
-        "Populating submap #" << newSubmapId << " with " << ids.size()
-                              << " keyframes...");
+        "Populating submap #" << submap.id << " with " << ids.size()
+                              << " keyframes... (threadIdx=" << threadIdx
+                              << ")");
+
+    auto& pts = state_.perThreadState_.at(threadIdx);
 
     // Insert all observations in this submap:
     for (const auto& id : ids)
     {
         // (this defines the local robot pose on the submap)
-        updatePipelineDynamicVariablesForKeyframe(id, refFrameId);
+        updatePipelineDynamicVariablesForKeyframe(id, refFrameId, threadIdx);
 
-        // now that we have valid dynamic variables, check if we need to create
-        // the submap on the first KF:
+        // now that we have valid dynamic variables, check if we need to
+        // create the submap on the first KF:
         if (!submap.local_map)
         {
             // Create empty local map:
             submap.local_map = mp2p_icp::metric_map_t::Create();
 
             // and populate with empty metric maps:
-            state_.parameter_source.realize();
+            pts.parameter_source.realize();
 
             mrpt::obs::CSensoryFrame dummySF;
             {
@@ -423,7 +519,7 @@ void SimplemapLoopClosure::build_submap_from_kfs(
             }
 
             mp2p_icp_filters::apply_generators(
-                state_.local_map_generators, dummySF, *submap.local_map);
+                pts.local_map_generators, dummySF, *submap.local_map);
         }
 
         // insert observations from the keyframe:
@@ -445,7 +541,7 @@ void SimplemapLoopClosure::build_submap_from_kfs(
 
         for (const auto& o : *sf)
             mp2p_icp_filters::apply_generators(
-                state_.obs_generators, *o, *observation);
+                pts.obs_generators, *o, *observation);
 
         tle0.stop();
 
@@ -455,7 +551,7 @@ void SimplemapLoopClosure::build_submap_from_kfs(
             profiler_, "add_submap_from_kfs.filter_pointclouds");
 
         mp2p_icp_filters::apply_filter_pipeline(
-            state_.pc_filter, *observation, profiler_);
+            pts.pc_filter, *observation, profiler_);
 
         tle1.stop();
 
@@ -467,14 +563,16 @@ void SimplemapLoopClosure::build_submap_from_kfs(
         // Input  metric_map_t: observation
         // Output metric_map_t: state_.local_map
 
-        // 1/4: temporarily make a (shallow) copy of the observation layers into
-        // the local map:
+        // 1/4: temporarily make a (shallow) copy of the observation layers
+        // into the local map:
+        ASSERT_(submap.local_map);
         for (const auto& [lyName, lyMap] : observation->layers)
         {
             ASSERTMSG_(
                 submap.local_map->layers.count(lyName) == 0,
                 mrpt::format(
-                    "Error: local map layer name '%s' collides with one of the "
+                    "Error: local map layer name '%s' collides with one of "
+                    "the "
                     "observation layers, please use different layer names.",
                     lyName.c_str()));
 
@@ -487,7 +585,7 @@ void SimplemapLoopClosure::build_submap_from_kfs(
 
         // 3/4: Apply pipeline
         mp2p_icp_filters::apply_filter_pipeline(
-            state_.obs2map_merge, *submap.local_map, profiler_);
+            pts.obs2map_merge, *submap.local_map, profiler_);
 
         // 4/4: remove temporary layers:
         for (const auto& [lyName, lyMap] : observation->layers)
@@ -497,20 +595,20 @@ void SimplemapLoopClosure::build_submap_from_kfs(
     }  // end for each keyframe ID
 
     mp2p_icp_filters::apply_filter_pipeline(
-        state_.submap_final_filter, *submap.local_map, profiler_);
+        pts.submap_final_filter, *submap.local_map, profiler_);
 
     // add metadata:
-    submap.local_map->id = newSubmapId;
+    submap.local_map->id = submap.id;
 
     // Bbox: from point cloud layer:
     std::optional<mrpt::math::TBoundingBoxf> theBBox;
 
     for (const auto& [name, map] : submap.local_map->layers)
     {
-        const auto* pts = mp2p_icp::MapToPointsMap(*map);
-        if (!pts || pts->empty()) continue;
+        const auto* ptsMap = mp2p_icp::MapToPointsMap(*map);
+        if (!ptsMap || ptsMap->empty()) continue;
 
-        auto bbox = pts->boundingBox();
+        auto bbox = ptsMap->boundingBox();
         if (!theBBox)
             theBBox = bbox;
         else
@@ -542,8 +640,11 @@ mrpt::poses::CPose3D SimplemapLoopClosure::keyframe_relative_pose_in_simplemap(
 }
 
 void SimplemapLoopClosure::updatePipelineDynamicVariablesForKeyframe(
-    const keyframe_id_t id, const keyframe_id_t referenceId)
+    const keyframe_id_t id, const keyframe_id_t referenceId,
+    const size_t threadIdx)
 {
+    auto& pts = state_.perThreadState_.at(threadIdx);
+
     const auto& [globalPose, sf, twist] = state_.sm->get(id);
 
     // Set dynamic variables for twist usage within ICP pipelines
@@ -552,32 +653,32 @@ void SimplemapLoopClosure::updatePipelineDynamicVariablesForKeyframe(
         mrpt::math::TTwist3D twistForIcpVars = {0, 0, 0, 0, 0, 0};
         if (twist) twistForIcpVars = *twist;
 
-        state_.parameter_source.updateVariable("VX", twistForIcpVars.vx);
-        state_.parameter_source.updateVariable("VY", twistForIcpVars.vy);
-        state_.parameter_source.updateVariable("VZ", twistForIcpVars.vz);
-        state_.parameter_source.updateVariable("WX", twistForIcpVars.wx);
-        state_.parameter_source.updateVariable("WY", twistForIcpVars.wy);
-        state_.parameter_source.updateVariable("WZ", twistForIcpVars.wz);
+        pts.parameter_source.updateVariable("VX", twistForIcpVars.vx);
+        pts.parameter_source.updateVariable("VY", twistForIcpVars.vy);
+        pts.parameter_source.updateVariable("VZ", twistForIcpVars.vz);
+        pts.parameter_source.updateVariable("WX", twistForIcpVars.wx);
+        pts.parameter_source.updateVariable("WY", twistForIcpVars.wy);
+        pts.parameter_source.updateVariable("WZ", twistForIcpVars.wz);
     }
 
     // robot pose:
     const auto p = keyframe_relative_pose_in_simplemap(id, referenceId);
 
-    state_.parameter_source.updateVariable("ROBOT_X", p.x());
-    state_.parameter_source.updateVariable("ROBOT_Y", p.y());
-    state_.parameter_source.updateVariable("ROBOT_Z", p.z());
-    state_.parameter_source.updateVariable("ROBOT_YAW", p.yaw());
-    state_.parameter_source.updateVariable("ROBOT_PITCH", p.pitch());
-    state_.parameter_source.updateVariable("ROBOT_ROLL", p.roll());
+    pts.parameter_source.updateVariable("ROBOT_X", p.x());
+    pts.parameter_source.updateVariable("ROBOT_Y", p.y());
+    pts.parameter_source.updateVariable("ROBOT_Z", p.z());
+    pts.parameter_source.updateVariable("ROBOT_YAW", p.yaw());
+    pts.parameter_source.updateVariable("ROBOT_PITCH", p.pitch());
+    pts.parameter_source.updateVariable("ROBOT_ROLL", p.roll());
 
-    state_.parameter_source.updateVariable(
+    pts.parameter_source.updateVariable(
         "ADAPTIVE_THRESHOLD_SIGMA", params_.threshold_sigma);
 
-    state_.parameter_source.updateVariable(
+    pts.parameter_source.updateVariable(
         "ESTIMATED_SENSOR_MAX_RANGE", params_.max_sensor_range);
 
     // Make all changes effective and evaluate the variables now:
-    state_.parameter_source.realize();
+    pts.parameter_source.realize();
 }
 
 mrpt::opengl::CSetOfObjects::Ptr
@@ -736,14 +837,15 @@ SimplemapLoopClosure::PotentialLoopOutput
     }
 
     // filter them, and keep the most promising ones, sorted by "score",
-    // and remove those touching a submap already included in another candidate:
+    // and remove those touching a submap already included in another
+    // candidate:
     PotentialLoopOutput result;
     for (auto it = potentialLCs.rbegin(); it != potentialLCs.rend(); ++it)
     {
         const auto& [score, lc] = *it;
 
-        // only store map entries for the "smallest_id" of each pair to avoid
-        // duplicated checks:
+        // only store map entries for the "smallest_id" of each pair to
+        // avoid duplicated checks:
         if (result.count(lc.largest_id) != 0) continue;
 
         auto& rs = result[lc.smallest_id];
@@ -772,13 +874,15 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
     mrpt::system::CTimeLoggerEntry tle(profiler_, "process_loop_candidate");
 
     // Apply ICP between the two submaps:
-    const auto  idGlobal  = lc.smallest_id;
-    const auto& mapGlobal = state_.submaps.at(idGlobal).local_map;
+    const auto  idGlobal     = lc.smallest_id;
+    const auto& submapGlobal = state_.submaps.at(idGlobal);
+    const auto& mapGlobal    = submapGlobal.local_map;
     ASSERT_(mapGlobal);
     const auto& pcs_global = *mapGlobal;
 
-    const auto  idLocal  = lc.largest_id;
-    const auto& mapLocal = state_.submaps.at(idLocal).local_map;
+    const auto  idLocal     = lc.largest_id;
+    const auto& submapLocal = state_.submaps.at(idLocal);
+    const auto& mapLocal    = submapLocal.local_map;
     ASSERT_(mapLocal);
     const auto& pcs_local = *mapLocal;
 
@@ -790,7 +894,12 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
 
     mp2p_icp::Results icp_result;
 
-    state_.icp->align(
+    // Assume we are running this part in single thread (!)
+    const size_t threadIdx = 0;
+
+    auto& pts = state_.perThreadState_.at(threadIdx);
+
+    pts.icp->align(
         pcs_local, pcs_global, current_solution, params_.icp_parameters,
         icp_result);
 
@@ -810,6 +919,10 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
     newEdge.cov_inv.setIdentity();  // XXX
 
     state_.submapsGraph.insertEdge(idGlobal, idLocal, newEdge);
+
+    // and to the low-level graph too:
+    state_.keyframesGraph.insertEdge(
+        *submapGlobal.kf_ids.begin(), *submapLocal.kf_ids.begin(), newEdge);
 
     return true;
 }

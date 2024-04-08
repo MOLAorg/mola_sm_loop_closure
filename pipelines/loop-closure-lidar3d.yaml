@@ -13,12 +13,14 @@ params:
 
   # These sensor labels will be handled as GNNS (GPS) (For storage in simplemap only)
   gnns_sensor_label: 'gps'
-  
+
   # Max. length of submap:
   submap_max_length: 75   # [m]
 
   # Minimum ICP quality to accept a loop closure:
   min_icp_goodness: 0.70
+
+  min_volume_intersection_ratio_for_lc_candidate: 0.40
 
   # Profiler:
   profiler_enabled: true

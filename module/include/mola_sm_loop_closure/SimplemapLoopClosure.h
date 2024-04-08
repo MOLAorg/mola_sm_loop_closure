@@ -118,18 +118,29 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         // methods.
         const mrpt::maps::CSimpleMap* sm = nullptr;
 
-        mp2p_icp::ParameterSource parameter_source;
+        struct PerThreadState
+        {
+            std::mutex mtx;
 
-        // observations:
-        mp2p_icp_filters::GeneratorSet   obs_generators;
-        mp2p_icp_filters::FilterPipeline pc_filter;
+            mp2p_icp::ParameterSource parameter_source;
 
-        // local maps:
-        mp2p_icp_filters::GeneratorSet   local_map_generators;
-        mp2p_icp_filters::FilterPipeline obs2map_merge;
+            mp2p_icp::ICP::Ptr icp;
 
-        // final stage filters for submaps:
-        mp2p_icp_filters::FilterPipeline submap_final_filter;
+            // observations:
+            mp2p_icp_filters::GeneratorSet   obs_generators;
+            mp2p_icp_filters::FilterPipeline pc_filter;
+
+            // local maps:
+            mp2p_icp_filters::GeneratorSet   local_map_generators;
+            mp2p_icp_filters::FilterPipeline obs2map_merge;
+
+            // final stage filters for submaps:
+            mp2p_icp_filters::FilterPipeline submap_final_filter;
+        };
+
+        // One copy of the state per working thread:
+        std::vector<PerThreadState> perThreadState_{
+            std::thread::hardware_concurrency()};
 
         // Submaps:
         std::map<submap_id_t, SubMap> submaps;
@@ -138,7 +149,10 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         // implementation of optimize_graph_spa_levmarq() for SE(3)
         mrpt::graphs::CNetworkOfPoses3DInf submapsGraph;
 
-        mp2p_icp::ICP::Ptr icp;
+        // Use information matrices alternative, which is the only
+        // implementation of optimize_graph_spa_levmarq() for SE(3)
+        /// A graph for all low-level keyframes
+        mrpt::graphs::CNetworkOfPoses3DInf keyframesGraph;
     };
 
     State state_;
@@ -146,7 +160,9 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
     mrpt::system::CTimeLogger profiler_{true, "sm_loop_closure"};
 
     // private methods:
-    void build_submap_from_kfs(const std::set<keyframe_id_t>& ids);
+    void build_submap_from_kfs_into(
+        const std::set<keyframe_id_t>& ids, SubMap& submap,
+        const size_t threadIdx);
 
     struct VizOptions
     {
@@ -165,7 +181,8 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         keyframe_id_t kfId, keyframe_id_t referenceKfId) const;
 
     void updatePipelineDynamicVariablesForKeyframe(
-        const keyframe_id_t id, const keyframe_id_t referenceId);
+        const keyframe_id_t id, const keyframe_id_t referenceId,
+        const size_t threadIdx);
 
     struct PotentialLoop
     {
