@@ -23,6 +23,7 @@
 #include <mrpt/core/WorkerThreadsPool.h>
 #include <mrpt/obs/CObservationPointCloud.h>
 #include <mrpt/poses/Lie/SO.h>
+#include <mrpt/poses/gtsam_wrappers.h>
 
 // MRPT graph-slam:
 #include <mrpt/graphs/dijkstra.h>
@@ -32,6 +33,17 @@
 #include <mrpt/opengl/CBox.h>
 #include <mrpt/opengl/Scene.h>
 #include <mrpt/opengl/graph_tools.h>
+
+// GTSAM:
+#include <gtsam/geometry/Point3.h>
+#include <gtsam/geometry/Pose3.h>
+#include <gtsam/inference/Symbol.h>
+#include <gtsam/nonlinear/ExpressionFactor.h>
+#include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
+#include <gtsam/nonlinear/Values.h>
+#include <gtsam/nonlinear/expressions.h>
+#include <gtsam/slam/BetweenFactor.h>
+#include <gtsam/slam/expressions.h>
 
 using namespace mola;
 
@@ -309,14 +321,26 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
     // Build a graph with the low-level keyframes:
     // -----------------------------------------------
+    using gtsam::symbol_shorthand::X;  // poses SE(3)
+
     for (const auto& [submapId, submap] : state_.submaps)
     {
         for (const auto id : submap.kf_ids)
         {
-            auto& kfPose = state_.keyframesGraph.nodes[id];
-            kfPose       = this->keyframe_pose_in_simplemap(id);
+            const gtsam::Pose3 p =
+                mrpt::gtsam_wrappers::toPose3(keyframe_pose_in_simplemap(id));
+
+            state_.kfGraphValues.insert(X(id), p);
+
+            // anchor for first KF:
+            if (state_.kfGraphFG.empty())
+            {
+                state_.kfGraphFG
+                    .emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(X(id), p);
+            }
         }
     }
+
     // create edges: i -> i-1
     for (size_t i = 1; i < sm.size(); i++)
     {
@@ -325,11 +349,20 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
         // TODO: extract cov from simplemap cov from icp odometry
 
+#if 0
         mrpt::poses::CPose3DPDFGaussianInf relPoseInf;
         relPoseInf.mean = pose_i->getMeanVal() - pose_im1->getMeanVal();
         relPoseInf.cov_inv.setIdentity();  // XXX
 
         state_.keyframesGraph.insertEdge(i - 1, i, relPoseInf);
+#endif
+        const gtsam::Pose3 deltaPose = mrpt::gtsam_wrappers::toPose3(
+            pose_i->getMeanVal() - pose_im1->getMeanVal());
+
+        state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+            X(i - 1), X(i), deltaPose);
+
+        MRPT_TODO("robust kernel");
     }
 
 #if 1
@@ -386,55 +419,42 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         // any change to the graph? re-optimize it:
         if (anyGraphChange)
         {
-            {
-                const double rmseInit = state_.submapsGraph.chi2();
-
-                mrpt::graphslam::TResultInfoSpaLevMarq lmOut;
-                mrpt::graphslam::optimize_graph_spa_levmarq(
-                    state_.submapsGraph, lmOut);
-
-                const double rmseFinal = state_.submapsGraph.chi2();
-
-                // Update submaps global pose:
-                double largestDelta = 0;
-
-                for (const auto& [id, newPose] : state_.submapsGraph.nodes)
-                {
-                    auto& targetPose = state_.submaps.at(id).global_pose;
-
-                    const auto deltaPose =
-                        (targetPose - newPose).translation().norm();
-                    mrpt::keep_max(largestDelta, deltaPose);
-
-                    targetPose = newPose;
-                }
-
-                MRPT_LOG_INFO_STREAM(
-                    "SUBMAP-LEVEL Graph re-optimized in "
-                    << lmOut.num_iters << " iters, RMSE=" << rmseInit << " ==> "
-                    << rmseFinal << " largestDelta: " << largestDelta);
-
-                // re-visit all areas again
-                if (largestDelta > 3.0) alreadyChecked.clear();
-            }
-
             // low-level KF graph:
+
+            auto lmParams = gtsam::LevenbergMarquardtParams::LegacyDefaults();
+
+            const double errorInit =
+                state_.kfGraphFG.error(state_.kfGraphValues);
+
+            gtsam::LevenbergMarquardtOptimizer lm(
+                state_.kfGraphFG, state_.kfGraphValues);
+            const auto& optimalValues = lm.optimize();
+
+            state_.kfGraphValues = optimalValues;
+
+            const double errorEnd = state_.kfGraphFG.error(optimalValues);
+
+            MRPT_LOG_INFO_STREAM(
+                "Graph re-optimized in " << lm.iterations() << " iters, ERROR="
+                                         << errorInit << " ==> " << errorEnd);
+
+            // Update submaps global pose:
+            double largestDelta = 0;
+
+            for (auto& [submapId, submap] : state_.submaps)
             {
-                const double rmseInit = state_.keyframesGraph.chi2();
+                const auto  refId      = *submap.kf_ids.begin();
+                const auto& newPose    = state_.kfGraph_get_pose(refId);
+                auto&       targetPose = submap.global_pose;
+                const auto  deltaPose =
+                    (targetPose - newPose).translation().norm();
+                mrpt::keep_max(largestDelta, deltaPose);
 
-                mrpt::graphslam::TResultInfoSpaLevMarq lmOut;
-                mrpt::graphslam::optimize_graph_spa_levmarq(
-                    state_.keyframesGraph, lmOut);
-
-                const double rmseFinal = state_.keyframesGraph.chi2();
-
-                MRPT_LOG_INFO_STREAM(
-                    "KF-LEVEL Graph re-optimized in "
-                    << lmOut.num_iters << " iters, RMSE=" << rmseInit << " ==> "
-                    << rmseFinal);
-
-                // The updated KF poses are used at the end of this function.
+                targetPose = newPose;
             }
+
+            // re-visit all areas again
+            if (largestDelta > 3.0) alreadyChecked.clear();
         }
     }
 
@@ -455,34 +475,11 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     // Now, update all low-level keyframes in the simplemap:
     mrpt::maps::CSimpleMap outSM;
 
-#if 0
-    for (const auto& [submapId, submap] : state_.submaps)
-    {
-        const keyframe_id_t refKfId = *submap.kf_ids.begin();
-
-        for (const auto kfId : submap.kf_ids)
-        {
-            const auto relPose =
-                keyframe_relative_pose_in_simplemap(kfId, refKfId);
-            const mrpt::poses::CPose3D newKfGlobalPose =
-                submap.global_pose + relPose;
-
-            auto& [oldPose, sf, twist] = state_.sm->get(kfId);
-
-            const auto newPose = mrpt::poses::CPose3DPDFGaussian::Create();
-            newPose->mean      = newKfGlobalPose;
-            newPose->cov.setIdentity();  // TODO! Get cov from optimizer?
-
-            outSM.insert(newPose, sf, twist);
-        }
-    }
-#endif
-
     for (size_t id = 0; id < sm.size(); id++)
     {
         auto& [oldPose, sf, twist] = state_.sm->get(id);
 
-        const auto& newKfGlobalPose = state_.keyframesGraph.nodes.at(id);
+        const auto& newKfGlobalPose = state_.kfGraph_get_pose(id);
 
         const auto newPose = mrpt::poses::CPose3DPDFGaussian::Create();
         newPose->mean      = newKfGlobalPose;
@@ -935,8 +932,36 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
     state_.submapsGraph.insertEdge(idGlobal, idLocal, newEdge);
 
     // and to the low-level graph too:
-    state_.keyframesGraph.insertEdge(
-        *submapGlobal.kf_ids.begin(), *submapLocal.kf_ids.begin(), newEdge);
+    const gtsam::Pose3 deltaPose =
+        mrpt::gtsam_wrappers::toPose3(icp_result.optimal_tf.mean);
+
+    using gtsam::symbol_shorthand::X;
+
+    const double icp_edge_sigma        = 0.3;
+    const double icp_edge_robust_param = 0.5;
+
+    auto icpNoise = gtsam::noiseModel::Isotropic::Sigma(6, icp_edge_sigma);
+
+    gtsam::noiseModel::Base::shared_ptr icpRobNoise;
+
+    if (icp_edge_robust_param > 0)
+        icpRobNoise = gtsam::noiseModel::Robust::Create(
+            gtsam::noiseModel::mEstimator::Fair::Create(icp_edge_robust_param),
+            icpNoise);
+    else
+        icpRobNoise = icpNoise;
+
+    state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+        X(*submapGlobal.kf_ids.begin()), X(*submapLocal.kf_ids.begin()),
+        deltaPose, icpRobNoise);
 
     return true;
+}
+
+mrpt::poses::CPose3D SimplemapLoopClosure::State::kfGraph_get_pose(
+    const keyframe_id_t id) const
+{
+    using gtsam::symbol_shorthand::X;
+    return mrpt::poses::CPose3D(
+        mrpt::gtsam_wrappers::toTPose3D(kfGraphValues.at<gtsam::Pose3>(X(id))));
 }

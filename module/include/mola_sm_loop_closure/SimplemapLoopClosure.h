@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <gtsam/nonlinear/NonlinearFactorGraph.h>
+#include <gtsam/nonlinear/Values.h>
 #include <mp2p_icp/icp_pipeline_from_yaml.h>
 #include <mp2p_icp/metricmap.h>
 #include <mp2p_icp_filters/FilterBase.h>
@@ -147,12 +149,15 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
 
         // Use information matrices alternative, which is the only
         // implementation of optimize_graph_spa_levmarq() for SE(3)
+        // (Used for Dijsktra):
         mrpt::graphs::CNetworkOfPoses3DInf submapsGraph;
 
-        // Use information matrices alternative, which is the only
-        // implementation of optimize_graph_spa_levmarq() for SE(3)
-        /// A graph for all low-level keyframes
-        mrpt::graphs::CNetworkOfPoses3DInf keyframesGraph;
+        // mrpt::graphs::CNetworkOfPoses3DInf keyframesGraph;
+
+        gtsam::Values               kfGraphValues;
+        gtsam::NonlinearFactorGraph kfGraphFG;
+
+        mrpt::poses::CPose3D kfGraph_get_pose(const keyframe_id_t id) const;
     };
 
     State state_;

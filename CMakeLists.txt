@@ -49,8 +49,8 @@ mola_add_library(
 		mola::mp2p_icp_filters
 		mola::mola_yaml
 		mola::mola_pose_list
-	PRIVATE_LINK_LIBRARIES
 		gtsam
+#	PRIVATE_LINK_LIBRARIES
 	CMAKE_DEPENDENCIES
 		mp2p_icp
 		mp2p_icp_filters

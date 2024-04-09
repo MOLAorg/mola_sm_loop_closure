@@ -18,9 +18,9 @@ params:
   submap_max_length: 75   # [m]
 
   # Minimum ICP quality to accept a loop closure:
-  min_icp_goodness: 0.70
+  min_icp_goodness: 0.80
 
-  min_volume_intersection_ratio_for_lc_candidate: 0.40
+  min_volume_intersection_ratio_for_lc_candidate: 0.50
 
   # Profiler:
   profiler_enabled: true
