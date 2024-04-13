@@ -104,6 +104,9 @@ void run_sm_to_mm(Cli& cli)
     if (cli.arg_lazy_load_base_dir.isSet())
         mrpt::io::setLazyLoadPathBase(cli.arg_lazy_load_base_dir.getValue());
 
+    // generate meaningful output debug files, if enabled:
+    lc.params_.debug_files_prefix = mrpt::system::extractFileName(filSM);
+
     // Main stuff here:
     lc.process(sm);
 

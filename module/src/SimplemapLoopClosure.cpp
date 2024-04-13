@@ -18,6 +18,7 @@
  * MOLA. If not, see <https://www.gnu.org/licenses/>.
  * ------------------------------------------------------------------------- */
 
+#include <mola_relocalization/relocalization.h>
 #include <mola_sm_loop_closure/SimplemapLoopClosure.h>
 #include <mola_yaml/yaml_helpers.h>
 #include <mrpt/core/WorkerThreadsPool.h>
@@ -85,8 +86,10 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_REQ(params_, min_icp_goodness, double);
     YAML_LOAD_OPT(params_, profiler_enabled, bool);
     YAML_LOAD_REQ(params_, submap_max_length, double);
+    YAML_LOAD_OPT(params_, do_first_gross_relocalize, bool);
 
-    YAML_LOAD_REQ(params_, threshold_sigma, double);
+    YAML_LOAD_REQ(params_, threshold_sigma_initial, double);
+    YAML_LOAD_REQ(params_, threshold_sigma_final, double);
     YAML_LOAD_REQ(params_, max_sensor_range, double);
 
     YAML_LOAD_OPT(
@@ -200,6 +203,8 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
 // Find and apply loop closures in the input/output simplemap
 void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 {
+    using namespace std::string_literals;
+
     ASSERT_(state_.initialized);
 
     state_.sm = &sm;
@@ -259,7 +264,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
                     mrpt::lockHelper(state_.perThreadState_.at(threadIdx).mtx);
 
                 build_submap_from_kfs_into(ids, *m, threadIdx);
-                MRPT_LOG_INFO_STREAM(
+                MRPT_LOG_DEBUG_STREAM(
                     "Done with submap #" << submapId << " / " << nSubMaps);
             },
             detectedSubMaps.at(submapId), &submap);
@@ -361,8 +366,6 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
         state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             X(i - 1), X(i), deltaPose);
-
-        MRPT_TODO("robust kernel");
     }
 
 #if 1
@@ -374,7 +377,8 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         mrpt::opengl::Scene scene;
         scene.insert(glMap);
 
-        scene.saveToFile("submaps_initial.3Dscene");
+        scene.saveToFile(
+            params_.debug_files_prefix + "_submaps_initial.3Dscene"s);
     }
 #endif
 
@@ -386,7 +390,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     // TODO: Consider a finer grade alreadyChecked reset?
 
     // repeat until checkedCount==0:
-    for (;;)
+    for (size_t lc_loop = 0; lc_loop < 1; lc_loop++)
     {
         size_t checkedCount   = 0;
         bool   anyGraphChange = false;
@@ -394,25 +398,23 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         const PotentialLoopOutput& LCs = find_next_loop_closures();
 
         // check them all, and accept those that seem valid:
-        for (const auto& [id0, lcs] : LCs)
+        for (const auto& lc : LCs)
         {
-            for (const auto& lc : lcs)
-            {
-                auto IDs = std::make_pair(lc.smallest_id, lc.largest_id);
-                ASSERT_EQUAL_(id0, IDs.first);
+            auto IDs = std::make_pair(lc.smallest_id, lc.largest_id);
 
-                if (alreadyChecked.count(IDs) != 0) continue;
-                // a new pair. add it:
-                alreadyChecked.insert(IDs);
-                checkedCount++;
+            if (alreadyChecked.count(IDs) != 0) continue;
 
-                MRPT_LOG_INFO_STREAM(
-                    "Considering potential LC: " << lc.smallest_id << "<=>"
-                                                 << lc.largest_id);
+            // a new pair. add it:
+            alreadyChecked.insert(IDs);
+            checkedCount++;
 
-                const bool accepted = process_loop_candidate(lc);
-                if (accepted) anyGraphChange = true;
-            }
+            MRPT_LOG_INFO_STREAM(
+                "Considering potential LC: " << lc.smallest_id << "<=>"
+                                             << lc.largest_id
+                                             << " score: " << lc.score);
+
+            const bool accepted = process_loop_candidate(lc);
+            if (accepted) anyGraphChange = true;
         }
         if (!checkedCount) break;  // no new LC was checked, we are done.
 
@@ -434,10 +436,6 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
             const double errorEnd = state_.kfGraphFG.error(optimalValues);
 
-            MRPT_LOG_INFO_STREAM(
-                "Graph re-optimized in " << lm.iterations() << " iters, ERROR="
-                                         << errorInit << " ==> " << errorEnd);
-
             // Update submaps global pose:
             double largestDelta = 0;
 
@@ -453,13 +451,18 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
                 targetPose = newPose;
             }
 
+            MRPT_LOG_INFO_STREAM(
+                "***** Graph re-optimized in "
+                << lm.iterations() << " iters, ERROR=" << errorInit << " ==> "
+                << errorEnd << " largestDelta=" << largestDelta);
+
             // re-visit all areas again
             if (largestDelta > 3.0) alreadyChecked.clear();
         }
     }
 
 #if 1
-    // Save viz of initial state:
+    // Save viz of final state:
     {
         VizOptions opts;
         auto       glMap = build_submaps_visualization(opts);
@@ -467,7 +470,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         mrpt::opengl::Scene scene;
         scene.insert(glMap);
 
-        scene.saveToFile("submaps_final.3Dscene");
+        scene.saveToFile(params_.debug_files_prefix + "_submaps_final.3Dscene");
     }
 #endif
 
@@ -656,6 +659,8 @@ void SimplemapLoopClosure::updatePipelineDynamicVariablesForKeyframe(
 {
     auto& pts = state_.perThreadState_.at(threadIdx);
 
+    auto& ps = pts.parameter_source;
+
     const auto& [globalPose, sf, twist] = state_.sm->get(id);
 
     // Set dynamic variables for twist usage within ICP pipelines
@@ -664,32 +669,35 @@ void SimplemapLoopClosure::updatePipelineDynamicVariablesForKeyframe(
         mrpt::math::TTwist3D twistForIcpVars = {0, 0, 0, 0, 0, 0};
         if (twist) twistForIcpVars = *twist;
 
-        pts.parameter_source.updateVariable("VX", twistForIcpVars.vx);
-        pts.parameter_source.updateVariable("VY", twistForIcpVars.vy);
-        pts.parameter_source.updateVariable("VZ", twistForIcpVars.vz);
-        pts.parameter_source.updateVariable("WX", twistForIcpVars.wx);
-        pts.parameter_source.updateVariable("WY", twistForIcpVars.wy);
-        pts.parameter_source.updateVariable("WZ", twistForIcpVars.wz);
+        ps.updateVariable("VX", twistForIcpVars.vx);
+        ps.updateVariable("VY", twistForIcpVars.vy);
+        ps.updateVariable("VZ", twistForIcpVars.vz);
+        ps.updateVariable("WX", twistForIcpVars.wx);
+        ps.updateVariable("WY", twistForIcpVars.wy);
+        ps.updateVariable("WZ", twistForIcpVars.wz);
     }
 
     // robot pose:
     const auto p = keyframe_relative_pose_in_simplemap(id, referenceId);
 
-    pts.parameter_source.updateVariable("ROBOT_X", p.x());
-    pts.parameter_source.updateVariable("ROBOT_Y", p.y());
-    pts.parameter_source.updateVariable("ROBOT_Z", p.z());
-    pts.parameter_source.updateVariable("ROBOT_YAW", p.yaw());
-    pts.parameter_source.updateVariable("ROBOT_PITCH", p.pitch());
-    pts.parameter_source.updateVariable("ROBOT_ROLL", p.roll());
+    ps.updateVariable("ROBOT_X", p.x());
+    ps.updateVariable("ROBOT_Y", p.y());
+    ps.updateVariable("ROBOT_Z", p.z());
+    ps.updateVariable("ROBOT_YAW", p.yaw());
+    ps.updateVariable("ROBOT_PITCH", p.pitch());
+    ps.updateVariable("ROBOT_ROLL", p.roll());
 
-    pts.parameter_source.updateVariable(
-        "ADAPTIVE_THRESHOLD_SIGMA", params_.threshold_sigma);
+    ps.updateVariable("SIGMA_INIT", params_.threshold_sigma_initial);
+    ps.updateVariable("SIGMA_FINAL", params_.threshold_sigma_final);
 
-    pts.parameter_source.updateVariable(
-        "ESTIMATED_SENSOR_MAX_RANGE", params_.max_sensor_range);
+    ps.updateVariable("ESTIMATED_SENSOR_MAX_RANGE", params_.max_sensor_range);
+
+    // This will be overwritten by the actual ICP loop later on,
+    // but we need to define all variables before building a local map:
+    ps.updateVariable("ICP_ITERATION", 0);
 
     // Make all changes effective and evaluate the variables now:
-    pts.parameter_source.realize();
+    ps.realize();
 }
 
 mrpt::opengl::CSetOfObjects::Ptr
@@ -773,6 +781,7 @@ SimplemapLoopClosure::PotentialLoopOutput
         std::map<submap_id_t, InfoPerSubmap> submapPoses;
 
         submapPoses[root_id] = {};  // perfect identity pose with zero cov.
+        submapPoses[root_id].pose.cov_inv.setDiagonal(1e6);
 
         auto lambdaVisitTree = [&](mrpt::graphs::TNodeID const parent,
                                    const tree_t::TEdgeInfo&    edgeToChild,
@@ -827,6 +836,7 @@ SimplemapLoopClosure::PotentialLoopOutput
             lc.largest_id           = max_id;
             lc.smallest_id          = min_id;
             lc.topological_distance = ips.depth;
+            lc.score                = intersectRatio;
             if (root_id == min_id)
                 lc.relative_pose_largest_wrt_smallest = ips.pose;
             else
@@ -847,32 +857,30 @@ SimplemapLoopClosure::PotentialLoopOutput
             << " topo_depth=" << lc.topological_distance);
     }
 
-    // filter them, and keep the most promising ones, sorted by "score",
-    // and remove those touching a submap already included in another
-    // candidate:
+    // filter them, and keep the most promising ones, sorted by "score"
     PotentialLoopOutput result;
     for (auto it = potentialLCs.rbegin(); it != potentialLCs.rend(); ++it)
     {
         const auto& [score, lc] = *it;
 
+        result.push_back(lc);
+#if 0
         // only store map entries for the "smallest_id" of each pair to
         // avoid duplicated checks:
         if (result.count(lc.largest_id) != 0) continue;
 
         auto& rs = result[lc.smallest_id];
         rs.emplace_back(lc);
+#endif
     }
 
     // debug, print potential LCs:
-    for (const auto& [id, lcs] : result)
+    for (const auto& lc : result)
     {
-        for (const auto& lc : lcs)
-        {
-            MRPT_LOG_INFO_STREAM(
-                "(2/2) Potential LC: "  //
-                << id << " <==> " << lc.largest_id
-                << " topo_depth=" << lc.topological_distance);
-        }
+        MRPT_LOG_INFO_STREAM(
+            "[find_lc] Potential LC: "  //
+            << lc.smallest_id << " <==> " << lc.largest_id
+            << " topo_depth=" << lc.topological_distance);
     }
 
     return result;
@@ -881,6 +889,7 @@ SimplemapLoopClosure::PotentialLoopOutput
 bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
 {
     using namespace std::string_literals;
+    using namespace mrpt::literals;
 
     mrpt::system::CTimeLoggerEntry tle(profiler_, "process_loop_candidate");
 
@@ -900,62 +909,207 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
     MRPT_LOG_DEBUG_STREAM(
         "LC candidate: relPose=" << lc.relative_pose_largest_wrt_smallest);
 
-    mrpt::math::TPose3D current_solution =
+    const mrpt::math::TPose3D initGuess =
         lc.relative_pose_largest_wrt_smallest.mean.asTPose();
 
-    mp2p_icp::Results icp_result;
+    std::vector<mrpt::math::TPose3D> initGuesses;
 
-    // Assume we are running this part in single thread (!)
-    const size_t threadIdx = 0;
+    // 1) gross relocalization:
+    if (params_.do_first_gross_relocalize)
+    {
+        // Build a reference map
+        mp2p_icp::metric_map_t refMap;
+        auto                   refPtsMap =
+            pcs_global.layers.at("points_to_register");  // "localmap"
+        refMap.layers["raw"] = refPtsMap;
 
-    auto& pts = state_.perThreadState_.at(threadIdx);
+        // These options may be loaded from an INI file, etc.
+        auto& likOpts =
+            std::dynamic_pointer_cast<mrpt::maps::CPointsMap>(refPtsMap)
+                ->likelihoodOptions;
 
-    pts.icp->align(
-        pcs_local, pcs_global, current_solution, params_.icp_parameters,
-        icp_result);
+        likOpts.max_corr_distance = 1.5;
+        likOpts.decimation        = 1;
+        likOpts.sigma_dist        = mrpt::square(0.2);  // variance
 
-    MRPT_LOG_INFO_FMT(
-        "ICP: goodness=%.02f%% iters=%u pose=%s "
-        "termReason=%s",
-        100.0 * icp_result.quality,
-        static_cast<unsigned int>(icp_result.nIterations),
-        icp_result.optimal_tf.getMeanVal().asString().c_str(),
-        mrpt::typemeta::enum2str(icp_result.terminationReason).c_str());
+        // query observation:
+        mrpt::obs::CSensoryFrame querySf;
+        auto obs2        = mrpt::obs::CObservationPointCloud::Create();
+        obs2->pointcloud = std::dynamic_pointer_cast<mrpt::maps::CPointsMap>(
+            pcs_local.layers.at("points_to_register"));
+        querySf.insert(obs2);
 
-    if (icp_result.quality < params_.min_icp_goodness) return false;
+        mola::Relocalization_SE2::Input in;
+        in.corner_min = mrpt::math::TPose2D(initGuess);
+        in.corner_max = mrpt::math::TPose2D(initGuess);
 
-    // add a new graph edge:
-    mrpt::poses::CPose3DPDFGaussianInf newEdge;  // to Information matrix
-    newEdge.copyFrom(icp_result.optimal_tf);
-    newEdge.cov_inv.setIdentity();  // XXX
+        in.corner_min.x -= 10.0;
+        in.corner_max.x += 10.0;
 
-    state_.submapsGraph.insertEdge(idGlobal, idLocal, newEdge);
+        in.corner_min.y -= 10.0;
+        in.corner_max.y += 10.0;
 
-    // and to the low-level graph too:
-    const gtsam::Pose3 deltaPose =
-        mrpt::gtsam_wrappers::toPose3(icp_result.optimal_tf.mean);
+        in.corner_min.phi -= 5.0_deg;
+        in.corner_max.phi += 5.0_deg;
 
-    using gtsam::symbol_shorthand::X;
+        in.observations   = querySf;
+        in.reference_map  = refMap;
+        in.resolution_xy  = 1.0;
+        in.resolution_phi = 5.0_deg;
 
-    const double icp_edge_sigma        = 0.3;
-    const double icp_edge_robust_param = 0.5;
+        MRPT_LOG_DEBUG_STREAM(
+            "[Relocalize SE(2)] About to run with localPts="
+            << obs2->pointcloud->size() << " globalPts=" << refMap.size()
+            << " corner_min=" << in.corner_min
+            << " corner_max=" << in.corner_max);
 
-    auto icpNoise = gtsam::noiseModel::Isotropic::Sigma(6, icp_edge_sigma);
+        const auto out = mola::Relocalization_SE2::run(in);
 
-    gtsam::noiseModel::Base::shared_ptr icpRobNoise;
+        // search top candidates:
+        auto bestPoses = mola::find_best_poses_se2(out.likelihood_grid, 0.95);
 
-    if (icp_edge_robust_param > 0)
-        icpRobNoise = gtsam::noiseModel::Robust::Create(
-            gtsam::noiseModel::mEstimator::Fair::Create(icp_edge_robust_param),
-            icpNoise);
+        constexpr size_t MAX_BEST_POSES = 10;
+
+        while (bestPoses.size() > MAX_BEST_POSES)
+            bestPoses.erase(--bestPoses.end());
+
+        MRPT_LOG_INFO_STREAM(
+            "[Relocalize SE(2)] time_cost: " <<  //
+            out.time_cost << " Top poses: " << bestPoses.size());
+
+        for (const auto& [score, pose2D] : bestPoses)
+        {
+            auto pose  = mrpt::math::TPose3D(pose2D);
+            pose.z     = initGuess.z;
+            pose.roll  = initGuess.roll;
+            pose.pitch = initGuess.pitch;
+            initGuesses.push_back(pose);
+        }
+
+#if 0
+    const auto nPhis = out.likelihood_grid.getSizePhi();
+    std::vector<mrpt::math::CMatrixDouble> slices;
+    slices.resize(nPhis);
+    double maxLik = 0, minLik = 0;
+
+    for (size_t iPhi = 0; iPhi < nPhis; iPhi++) {
+      const double phi = out.likelihood_grid.idx2phi(iPhi);
+
+      auto &s = slices.at(iPhi);
+      out.likelihood_grid.getAsMatrix(phi, s);
+
+      mrpt::keep_max(maxLik, s.maxCoeff());
+      mrpt::keep_min(minLik, s.minCoeff());
+    }
+
+    // normalize all:
+    for (size_t iPhi = 0; iPhi < nPhis; iPhi++) {
+      auto &s = slices.at(iPhi);
+      s -= minLik;
+      s *= 1.0 / (maxLik - minLik);
+    }
+
+    // save:
+    for (size_t iPhi = 0; iPhi < nPhis; iPhi++) {
+      auto &s = slices.at(iPhi);
+
+      s.saveToTextFile(mrpt::format("/tmp/slice_gid_%02u_lid_%02u_phi_%02u.txt",
+                                    static_cast<unsigned int>(idGlobal),
+                                    static_cast<unsigned int>(idLocal),
+                                    static_cast<unsigned int>(iPhi)));
+
+      mrpt::img::CImage im;
+      im.setFromMatrix(s, true /*normalized [0,1]*/);
+      bool savedOk = im.saveToFile(mrpt::format(
+          "/tmp/slice_gid_%02u_lid_%02u_phi_%02u.png",
+          static_cast<unsigned int>(idGlobal),
+          static_cast<unsigned int>(idLocal), static_cast<unsigned int>(iPhi)));
+
+      ASSERT_(savedOk);
+    }
+
+#endif
+    }
     else
-        icpRobNoise = icpNoise;
+    {
+        // do not re-localize, just start with the first initial guess:
+        initGuesses.push_back(initGuess);
+    }
 
-    state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-        X(*submapGlobal.kf_ids.begin()), X(*submapLocal.kf_ids.begin()),
-        deltaPose, icpRobNoise);
+    // 2) refine with ICP:
+    // Goal: add as many graph edges as good ICP results, even if it seems
+    // redundant. the robust kernels may help later on to tell which is the
+    // correct one.
 
-    return true;
+    bool atLeastOneGoodIcp = false;
+
+    for (const auto& initPose : initGuesses)
+    {
+        mp2p_icp::Results icp_result;
+
+        // Assume we are running this part in single thread (!)
+        const size_t threadIdx = 0;
+
+        auto& pts = state_.perThreadState_.at(threadIdx);
+
+        pts.icp->align(
+            pcs_local, pcs_global, initPose, params_.icp_parameters,
+            icp_result);
+
+        MRPT_LOG_INFO_FMT(
+            "ICP: goodness=%.02f%% iters=%u pose=%s "
+            "termReason=%s for initPose=%s",
+            100.0 * icp_result.quality,
+            static_cast<unsigned int>(icp_result.nIterations),
+            icp_result.optimal_tf.getMeanVal().asString().c_str(),
+            mrpt::typemeta::enum2str(icp_result.terminationReason).c_str(),
+            initPose.asString().c_str());
+
+        // keep the best:
+        if (icp_result.quality < params_.min_icp_goodness) continue;
+
+        // add a new graph edge:
+        mrpt::poses::CPose3DPDFGaussianInf newEdge;  // to Information matrix
+        newEdge.copyFrom(icp_result.optimal_tf);
+        newEdge.cov_inv.setIdentity();  // XXX
+
+        state_.submapsGraph.insertEdge(idGlobal, idLocal, newEdge);
+
+        // and to the low-level graph too:
+        const gtsam::Pose3 deltaPose =
+            mrpt::gtsam_wrappers::toPose3(icp_result.optimal_tf.mean);
+
+        using gtsam::symbol_shorthand::X;
+
+        const double edge_std_xyz = 0.3;
+        const double edge_std_ang = mrpt::DEG2RAD(5.0);
+
+        const double icp_edge_robust_param = 2.0;
+
+        gtsam::Vector6 sigmas;
+        sigmas << edge_std_ang, edge_std_ang, edge_std_ang,  //
+            edge_std_xyz, edge_std_xyz, edge_std_xyz;
+
+        auto icpNoise = gtsam::noiseModel::Diagonal::Sigmas(sigmas);
+
+        gtsam::noiseModel::Base::shared_ptr icpRobNoise;
+
+        if (icp_edge_robust_param > 0)
+            icpRobNoise = gtsam::noiseModel::Robust::Create(
+                gtsam::noiseModel::mEstimator::GemanMcClure::Create(
+                    icp_edge_robust_param),
+                icpNoise);
+        else
+            icpRobNoise = icpNoise;
+
+        state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+            X(*submapGlobal.kf_ids.begin()), X(*submapLocal.kf_ids.begin()),
+            deltaPose, icpRobNoise);
+
+        atLeastOneGoodIcp = true;
+    }
+
+    return atLeastOneGoodIcp;
 }
 
 mrpt::poses::CPose3D SimplemapLoopClosure::State::kfGraph_get_pose(

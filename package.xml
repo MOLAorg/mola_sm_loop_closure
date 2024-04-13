@@ -20,6 +20,7 @@
   <depend>mp2p_icp</depend>
   <depend>mrpt2</depend>
   <depend>mola_pose_list</depend>
+  <depend>mola_relocalization</depend>
 
   <depend>gtsam</depend>
 

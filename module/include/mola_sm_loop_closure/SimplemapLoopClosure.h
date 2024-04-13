@@ -73,15 +73,19 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
 
         mp2p_icp::Parameters icp_parameters;
 
-        double threshold_sigma  = 0.50;
+        double threshold_sigma_initial = 5.0;
+        double threshold_sigma_final   = 0.5;
+
         double max_sensor_range = 100.0;
 
         double submap_max_length = 75.0;
 
         double min_volume_intersection_ratio_for_lc_candidate = 0.6;
 
-        double min_icp_goodness = 0.60;
-        bool   profiler_enabled = true;
+        double      min_icp_goodness          = 0.60;
+        bool        profiler_enabled          = true;
+        bool        do_first_gross_relocalize = true;
+        std::string debug_files_prefix        = "sm_lc_";
     };
 
     /** Algorithm parameters */
@@ -196,12 +200,12 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         submap_id_t                        smallest_id = 0, largest_id = 0;
         size_t                             topological_distance = 0;
         mrpt::poses::CPose3DPDFGaussianInf relative_pose_largest_wrt_smallest;
+        double                             score = 0;
     };
 
     /** For each submap, a list of potential LCs to check, already sorted by
      * decreasing score */
-    using PotentialLoopOutput =
-        std::map<submap_id_t, std::vector<PotentialLoop>>;
+    using PotentialLoopOutput = std::vector<PotentialLoop>;
 
     PotentialLoopOutput find_next_loop_closures() const;
 

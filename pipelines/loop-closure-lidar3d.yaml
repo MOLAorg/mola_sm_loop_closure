@@ -18,14 +18,18 @@ params:
   submap_max_length: 75   # [m]
 
   # Minimum ICP quality to accept a loop closure:
-  min_icp_goodness: 0.80
+  min_icp_goodness: 0.40
 
-  min_volume_intersection_ratio_for_lc_candidate: 0.50
+  min_volume_intersection_ratio_for_lc_candidate: 0.40
+  
+  do_first_gross_relocalize: false
 
   # Profiler:
   profiler_enabled: true
   
-  threshold_sigma: 1.5
+  threshold_sigma_initial: 10.0
+  threshold_sigma_final: 1.0
+  
   max_sensor_range: 100
 
 
@@ -47,7 +51,7 @@ icp_settings:
 
     #debugPrintIterationProgress: true  # Print iteration progress
     #generateDebugFiles: true  # Can be override with env var "MP2P_ICP_GENERATE_DEBUG_FILES=1"
-    saveIterationDetails: false  # Store partial solutions and pairings for each ICP iteration
+    saveIterationDetails: true # Store partial solutions and pairings for each ICP iteration
     decimationIterationDetails: 3
     debugFileNameFormat: "${HOME}/ros2_ws/icp-logs/lc-$UNIQUE_ID-local_$LOCAL_ID$LOCAL_LABEL-to-global_$GLOBAL_ID$GLOBAL_LABEL.icplog"
     decimationDebugFiles: ${MP2P_ICP_LOG_FILES_DECIMATION|1}
@@ -57,7 +61,7 @@ icp_settings:
       params:
         maxIterations: 2
         robustKernel: 'RobustKernel::GemanMcClure'
-        robustKernelParam: '0.5*ADAPTIVE_THRESHOLD_SIGMA'  # [m]  # (adaptive)
+        robustKernelParam: '0.5*max(SIGMA_FINAL, SIGMA_INIT-(SIGMA_INIT-SIGMA_FINAL)*ICP_ITERATION/300)'  # [m]  # (adaptive)
         #innerLoopVerbose: true
 
   # Sequence of one or more pairs (class, params) defining mp2p_icp::Matcher
@@ -65,7 +69,7 @@ icp_settings:
   matchers:
     - class: mp2p_icp::Matcher_Points_DistanceThreshold
       params:
-        threshold: '2.0*ADAPTIVE_THRESHOLD_SIGMA'   # [m]
+        threshold: '2.0*max(SIGMA_FINAL, SIGMA_INIT-(SIGMA_INIT-SIGMA_FINAL)*ICP_ITERATION/300)'   # [m]
         thresholdAngularDeg: 0  # deg
         pairingsPerPoint: 1
         allowMatchAlreadyMatchedGlobalPoints: true # faster

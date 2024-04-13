@@ -21,6 +21,7 @@ project(mola_sm_loop_closure LANGUAGES CXX)
 find_package(mola_common REQUIRED)
 find_package(mola_yaml REQUIRED)
 find_package(mola_pose_list REQUIRED)
+find_package(mola_relocalization REQUIRED)
 
 # find dependencies:
 find_package(mrpt-maps REQUIRED)
@@ -49,12 +50,14 @@ mola_add_library(
 		mola::mp2p_icp_filters
 		mola::mola_yaml
 		mola::mola_pose_list
+		mola::mola_relocalization
 		gtsam
 #	PRIVATE_LINK_LIBRARIES
 	CMAKE_DEPENDENCIES
 		mp2p_icp
 		mp2p_icp_filters
 		mola_pose_list
+		mola_relocalization
 		mrpt-maps
 )
 
