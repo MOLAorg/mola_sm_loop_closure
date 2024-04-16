@@ -939,7 +939,7 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
             pcs_local.layers.at("points_to_register"));
         querySf.insert(obs2);
 
-        mola::Relocalization_SE2::Input in;
+        mola::RelocalizationLikelihood_SE2::Input in;
         in.corner_min = mrpt::math::TPose2D(initGuess);
         in.corner_max = mrpt::math::TPose2D(initGuess);
 
@@ -963,7 +963,7 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
             << " corner_min=" << in.corner_min
             << " corner_max=" << in.corner_max);
 
-        const auto out = mola::Relocalization_SE2::run(in);
+        const auto out = mola::RelocalizationLikelihood_SE2::run(in);
 
         // search top candidates:
         auto bestPoses = mola::find_best_poses_se2(out.likelihood_grid, 0.95);
