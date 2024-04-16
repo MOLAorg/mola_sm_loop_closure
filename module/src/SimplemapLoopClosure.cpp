@@ -28,7 +28,7 @@
 
 // MRPT graph-slam:
 #include <mrpt/graphs/dijkstra.h>
-#include <mrpt/graphslam/levmarq.h>
+//#include <mrpt/graphslam/levmarq.h> // replaced by GTSAM
 
 // visualization:
 #include <mrpt/opengl/CBox.h>
@@ -290,6 +290,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     // Nodes:
     for (const auto& [id, submap] : state_.submaps)
     {
+        // These are poses without uncertainty:
         auto& globalPose = state_.submapsGraph.nodes[id];
         globalPose       = submap.global_pose;
     }
@@ -310,14 +311,12 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
                 mrpt::poses::CPose3DPDFGaussian relPose;
                 relPose.mean = thisGlobalPose - lastGlobalPose;
 
-                // TODO: extract cov from simplemap cov from icp odometry
+                // Note: this uncertainty for the SUBMAPS graph is actually
+                // not used. The important one is the cov in the KEYFRAMES
+                // graph.
                 relPose.cov.setDiagonal(0.10);
 
-                mrpt::poses::CPose3DPDFGaussianInf relPoseInf;
-                relPoseInf.copyFrom(relPose);
-                relPoseInf.cov_inv.setIdentity();  // XXX
-
-                state_.submapsGraph.insertEdge(last_id, this_id, relPoseInf);
+                state_.submapsGraph.insertEdge(last_id, this_id, relPose);
             }
 
             lastSubmap = &submap;
@@ -349,23 +348,42 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     // create edges: i -> i-1
     for (size_t i = 1; i < sm.size(); i++)
     {
-        const auto& [pose_i, sf_i, twist_i]       = state_.sm->get(i);
-        const auto& [pose_im1, sf_im1, twist_im1] = state_.sm->get(i - 1);
+        // Extract cov from simplemap cov from icp odometry:
+        mrpt::poses::CPose3DPDFGaussian ppi, ppim1;
+        {
+            const auto& [pose_i, sf_i, twist_i]       = state_.sm->get(i);
+            const auto& [pose_im1, sf_im1, twist_im1] = state_.sm->get(i - 1);
 
-        // TODO: extract cov from simplemap cov from icp odometry
+            ppi.copyFrom(*pose_i);
+            ppim1.copyFrom(*pose_im1);
+        }
+
+        const mrpt::poses::CPose3DPDFGaussian relPose = ppi - ppim1;
+
+        const gtsam::Vector6 sigmasXYZYPR =
+            relPose.cov.asEigen().diagonal().array().sqrt().eval();
 
 #if 0
-        mrpt::poses::CPose3DPDFGaussianInf relPoseInf;
-        relPoseInf.mean = pose_i->getMeanVal() - pose_im1->getMeanVal();
-        relPoseInf.cov_inv.setIdentity();  // XXX
-
-        state_.keyframesGraph.insertEdge(i - 1, i, relPoseInf);
+        MRPT_LOG_INFO_STREAM(
+            "[FG] Adding edge: "
+            << i - 1 << " => " << i << " pose: " << relPose.getPoseMean()
+            << " sigmas: " << sigmasXYZYPR.transpose() << "\n"
+            << "relPose: " << relPose.cov << "\n"
+            << "ppi: " << ppi << "\n"
+            << "ppim1: " << ppim1 << "\n\n");
 #endif
-        const gtsam::Pose3 deltaPose = mrpt::gtsam_wrappers::toPose3(
-            pose_i->getMeanVal() - pose_im1->getMeanVal());
+
+        const gtsam::Pose3 deltaPose =
+            mrpt::gtsam_wrappers::toPose3(relPose.getPoseMean());
+
+        gtsam::Vector6 sigmas;
+        sigmas << sigmasXYZYPR[5], sigmasXYZYPR[4], sigmasXYZYPR[3],  //
+            sigmasXYZYPR[0], sigmasXYZYPR[1], sigmasXYZYPR[2];
+
+        auto edgeNoise = gtsam::noiseModel::Diagonal::Sigmas(sigmas);
 
         state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-            X(i - 1), X(i), deltaPose);
+            X(i - 1), X(i), deltaPose, edgeNoise);
     }
 
 #if 1
@@ -398,8 +416,10 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         const PotentialLoopOutput& LCs = find_next_loop_closures();
 
         // check them all, and accept those that seem valid:
-        for (const auto& lc : LCs)
+        for (size_t lcIdx = 0; lcIdx < LCs.size(); lcIdx++)
         {
+            const auto& lc = LCs.at(lcIdx);
+
             auto IDs = std::make_pair(lc.smallest_id, lc.largest_id);
 
             if (alreadyChecked.count(IDs) != 0) continue;
@@ -409,9 +429,9 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             checkedCount++;
 
             MRPT_LOG_INFO_STREAM(
-                "Considering potential LC: " << lc.smallest_id << "<=>"
-                                             << lc.largest_id
-                                             << " score: " << lc.score);
+                "Considering potential LC "
+                << lcIdx << "/" << LCs.size() << ": " << lc.smallest_id << "<=>"
+                << lc.largest_id << " score: " << lc.score);
 
             const bool accepted = process_loop_candidate(lc);
             if (accepted) anyGraphChange = true;
@@ -422,7 +442,6 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         if (anyGraphChange)
         {
             // low-level KF graph:
-
             auto lmParams = gtsam::LevenbergMarquardtParams::LegacyDefaults();
 
             const double errorInit =
@@ -758,8 +777,8 @@ SimplemapLoopClosure::PotentialLoopOutput
 
     struct InfoPerSubmap
     {
-        mrpt::poses::CPose3DPDFGaussianInf pose;
-        size_t                             depth = 0;
+        mrpt::poses::CPose3DPDFGaussian pose;
+        size_t                          depth = 0;
     };
 
     std::multimap<double /*intersectRatio*/, PotentialLoop> potentialLCs;
@@ -774,14 +793,13 @@ SimplemapLoopClosure::PotentialLoopOutput
             state_.submapsGraph, root_id);
 
         using tree_t = mrpt::graphs::CDirectedTree<
-            const mrpt::graphs::CNetworkOfPoses3DInf::edge_t*>;
+            const mrpt::graphs::CNetworkOfPoses3DCov::edge_t*>;
 
         const tree_t tree = dijkstra.getTreeGraph();
 
         std::map<submap_id_t, InfoPerSubmap> submapPoses;
 
         submapPoses[root_id] = {};  // perfect identity pose with zero cov.
-        submapPoses[root_id].pose.cov_inv.setDiagonal(1e6);
 
         auto lambdaVisitTree = [&](mrpt::graphs::TNodeID const parent,
                                    const tree_t::TEdgeInfo&    edgeToChild,
@@ -880,7 +898,8 @@ SimplemapLoopClosure::PotentialLoopOutput
         MRPT_LOG_INFO_STREAM(
             "[find_lc] Potential LC: "  //
             << lc.smallest_id << " <==> " << lc.largest_id
-            << " topo_depth=" << lc.topological_distance);
+            << " topo_depth=" << lc.topological_distance
+            << " relPose: " << lc.relative_pose_largest_wrt_smallest.mean);
     }
 
     return result;
@@ -1069,9 +1088,9 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         if (icp_result.quality < params_.min_icp_goodness) continue;
 
         // add a new graph edge:
-        mrpt::poses::CPose3DPDFGaussianInf newEdge;  // to Information matrix
+        mrpt::poses::CPose3DPDFGaussian newEdge;
         newEdge.copyFrom(icp_result.optimal_tf);
-        newEdge.cov_inv.setIdentity();  // XXX
+        newEdge.cov.setIdentity();  // Not used anyway
 
         state_.submapsGraph.insertEdge(idGlobal, idLocal, newEdge);
 
@@ -1081,10 +1100,10 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
 
         using gtsam::symbol_shorthand::X;
 
-        const double edge_std_xyz = 0.3;
+        const double edge_std_xyz = 1.0;
         const double edge_std_ang = mrpt::DEG2RAD(5.0);
 
-        const double icp_edge_robust_param = 2.0;
+        const double icp_edge_robust_param = 1.0;
 
         gtsam::Vector6 sigmas;
         sigmas << edge_std_ang, edge_std_ang, edge_std_ang,  //

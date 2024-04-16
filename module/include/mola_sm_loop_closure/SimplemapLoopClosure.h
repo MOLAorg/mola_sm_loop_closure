@@ -151,10 +151,8 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         // Submaps:
         std::map<submap_id_t, SubMap> submaps;
 
-        // Use information matrices alternative, which is the only
-        // implementation of optimize_graph_spa_levmarq() for SE(3)
-        // (Used for Dijsktra):
-        mrpt::graphs::CNetworkOfPoses3DInf submapsGraph;
+        // This graph is used for Dijsktra only:
+        mrpt::graphs::CNetworkOfPoses3DCov submapsGraph;
 
         // mrpt::graphs::CNetworkOfPoses3DInf keyframesGraph;
 
@@ -197,10 +195,10 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
     {
         PotentialLoop() = default;
 
-        submap_id_t                        smallest_id = 0, largest_id = 0;
-        size_t                             topological_distance = 0;
-        mrpt::poses::CPose3DPDFGaussianInf relative_pose_largest_wrt_smallest;
-        double                             score = 0;
+        submap_id_t                     smallest_id = 0, largest_id = 0;
+        size_t                          topological_distance = 0;
+        mrpt::poses::CPose3DPDFGaussian relative_pose_largest_wrt_smallest;
+        double                          score = 0;
     };
 
     /** For each submap, a list of potential LCs to check, already sorted by
