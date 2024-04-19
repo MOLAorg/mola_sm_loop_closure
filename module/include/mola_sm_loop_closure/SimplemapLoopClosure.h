@@ -99,19 +99,23 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
     {
         SubMap() = default;
 
-        submap_id_t id = 0;
-
         /// Global SE(3) pose of the submap in the global frame:
         mrpt::poses::CPose3D global_pose;
 
         /// Local metric map in the frame of coordinates of the submap:
-        mp2p_icp::metric_map_t::Ptr local_map;
+        mutable mp2p_icp::metric_map_t::Ptr local_map;
 
-        mrpt::math::TBoundingBox bbox;  // in the submap local frame
+        submap_id_t id = 0;
+
+        mutable mrpt::math::TBoundingBox bbox;  // in the submap local frame
 
         /// IDs are indices from the simplemap:
         std::set<keyframe_id_t> kf_ids;
     };
+
+    /** Get (or build upon first request) the metric local map of a submap
+     */
+    mp2p_icp::metric_map_t::Ptr get_submap_local_map(const SubMap& submap);
 
     struct State
     {
@@ -153,8 +157,6 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
 
         // This graph is used for Dijsktra only:
         mrpt::graphs::CNetworkOfPoses3DCov submapsGraph;
-
-        // mrpt::graphs::CNetworkOfPoses3DInf keyframesGraph;
 
         gtsam::Values               kfGraphValues;
         gtsam::NonlinearFactorGraph kfGraphFG;

@@ -22,6 +22,7 @@
 #include <mola_sm_loop_closure/SimplemapLoopClosure.h>
 #include <mola_yaml/yaml_helpers.h>
 #include <mrpt/core/WorkerThreadsPool.h>
+#include <mrpt/obs/CObservationComment.h>
 #include <mrpt/obs/CObservationPointCloud.h>
 #include <mrpt/poses/Lie/SO.h>
 #include <mrpt/poses/gtsam_wrappers.h>
@@ -242,7 +243,9 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     }
 
     // process pending submap creation, in parallel threads:
-    mrpt::WorkerThreadsPool        threads(state_.perThreadState_.size());
+    mrpt::WorkerThreadsPool threads(state_.perThreadState_.size());
+    threads.name("sm_localmaps_build");
+
     std::vector<std::future<void>> futures;
     const size_t                   nSubMaps = detectedSubMaps.size();
 
@@ -413,9 +416,51 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         size_t checkedCount   = 0;
         bool   anyGraphChange = false;
 
-        const PotentialLoopOutput& LCs = find_next_loop_closures();
+        PotentialLoopOutput LCs = find_next_loop_closures();
 
-        // check them all, and accept those that seem valid:
+        const size_t MAX_LC_CANDIDATES = 40;
+        if (LCs.size() > MAX_LC_CANDIDATES) LCs.resize(MAX_LC_CANDIDATES);
+
+        // Build a list of affected submaps:
+        std::set<submap_id_t> LC_submap_IDs;
+        for (const auto& lc : LCs)
+        {
+            LC_submap_IDs.insert(lc.smallest_id);
+            LC_submap_IDs.insert(lc.largest_id);
+        }
+
+        std::vector<std::future<void>> futs;
+
+        for (submap_id_t submapId : LC_submap_IDs)
+        {
+            const size_t threadIdx = submapId % state_.perThreadState_.size();
+
+            // Modify the submaps[] std::map here in this main thread:
+            SubMap& submap = state_.submaps[submapId];
+            submap.id      = submapId;
+
+            // then process the observations in parallel:
+            auto fut = threads.enqueue(
+                [this, threadIdx, submapId](SubMap* m)
+                {
+                    // ensure only 1 thread is running for each per-thread data:
+                    auto lck = mrpt::lockHelper(
+                        state_.perThreadState_.at(threadIdx).mtx);
+
+                    const auto mm = this->get_submap_local_map(*m);
+                    (void)mm;
+                    MRPT_LOG_DEBUG_STREAM(
+                        "Built metric map for submap #" << submapId);
+                },
+                &submap);
+
+            futs.emplace_back(std::move(fut));
+        }
+
+        // wait for all them:
+        for (auto& f : futs) f.get();
+
+        // check all LCs, and accept those that seem valid:
         for (size_t lcIdx = 0; lcIdx < LCs.size(); lcIdx++)
         {
             const auto& lc = LCs.at(lcIdx);
@@ -527,134 +572,56 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
                               << " keyframes... (threadIdx=" << threadIdx
                               << ")");
 
-    auto& pts = state_.perThreadState_.at(threadIdx);
-
+    // Load the bbox of the frame from the SimpleMap metadata entry:
     // Insert all observations in this submap:
-    for (const auto& id : ids)
+
+    std::optional<mrpt::math::TBoundingBox> bbox;
+
+    for (const auto& id : submap.kf_ids)
     {
-        // (this defines the local robot pose on the submap)
-        updatePipelineDynamicVariablesForKeyframe(id, refFrameId, threadIdx);
-
-        // now that we have valid dynamic variables, check if we need to
-        // create the submap on the first KF:
-        if (!submap.local_map)
-        {
-            // Create empty local map:
-            submap.local_map = mp2p_icp::metric_map_t::Create();
-
-            // and populate with empty metric maps:
-            pts.parameter_source.realize();
-
-            mrpt::obs::CSensoryFrame dummySF;
-            {
-                auto obs = mrpt::obs::CObservationPointCloud::Create();
-                dummySF.insert(obs);
-            }
-
-            mp2p_icp_filters::apply_generators(
-                pts.local_map_generators, dummySF, *submap.local_map);
-        }
-
-        // insert observations from the keyframe:
-        // -------------------------------------------
-
-        // Extract points from observation:
-        auto observation = mp2p_icp::metric_map_t::Create();
-
         const auto& [pose, sf, twist] = state_.sm->get(id);
 
-        MRPT_LOG_DEBUG_STREAM(
-            "Processing KF#" << id << " with |SF|=" << sf->size());
+        auto oc = sf->getObservationByClass<mrpt::obs::CObservationComment>();
+        if (!oc) continue;
 
-        // Some frames may be empty:
-        if (sf->empty()) continue;
+        auto yml = mrpt::containers::yaml::FromText(oc->text);
 
-        mrpt::system::CTimeLoggerEntry tle0(
-            profiler_, "add_submap_from_kfs.apply_generators");
+        auto pMin = mrpt::math::TPoint3D::FromString(
+            yml["frame_bbox_min"].as<std::string>());
+        auto pMax = mrpt::math::TPoint3D::FromString(
+            yml["frame_bbox_max"].as<std::string>());
 
-        for (const auto& o : *sf)
-            mp2p_icp_filters::apply_generators(
-                pts.obs_generators, *o, *observation);
+        // transform bbox and extend bbox in local submap coordinates:
+        const auto p = keyframe_relative_pose_in_simplemap(id, refFrameId);
 
-        tle0.stop();
-
-        // Filter/segment the point cloud (optional, but normally will be
-        // present):
-        mrpt::system::CTimeLoggerEntry tle1(
-            profiler_, "add_submap_from_kfs.filter_pointclouds");
-
-        mp2p_icp_filters::apply_filter_pipeline(
-            pts.pc_filter, *observation, profiler_);
-
-        tle1.stop();
-
-        // Merge "observation_layers_to_merge_local_map" in local map:
-        // ---------------------------------------------------------------
-        mrpt::system::CTimeLoggerEntry tle3(
-            profiler_, "add_submap_from_kfs.update_local_map");
-
-        // Input  metric_map_t: observation
-        // Output metric_map_t: state_.local_map
-
-        // 1/4: temporarily make a (shallow) copy of the observation layers
-        // into the local map:
-        ASSERT_(submap.local_map);
-        for (const auto& [lyName, lyMap] : observation->layers)
-        {
-            ASSERTMSG_(
-                submap.local_map->layers.count(lyName) == 0,
-                mrpt::format(
-                    "Error: local map layer name '%s' collides with one of "
-                    "the "
-                    "observation layers, please use different layer names.",
-                    lyName.c_str()));
-
-            submap.local_map->layers[lyName] = lyMap;  // shallow copy
-        }
-
-        // 2/4: Make sure dynamic variables are up-to-date,
-        // in particular, [robot_x, ..., robot_roll]
-        // already done above: updatePipelineDynamicVariables();
-
-        // 3/4: Apply pipeline
-        mp2p_icp_filters::apply_filter_pipeline(
-            pts.obs2map_merge, *submap.local_map, profiler_);
-
-        // 4/4: remove temporary layers:
-        for (const auto& [lyName, lyMap] : observation->layers)
-            submap.local_map->layers.erase(lyName);
-
-        tle3.stop();
-    }  // end for each keyframe ID
-
-    mp2p_icp_filters::apply_filter_pipeline(
-        pts.submap_final_filter, *submap.local_map, profiler_);
-
-    // add metadata:
-    submap.local_map->id = submap.id;
-
-    // Bbox: from point cloud layer:
-    std::optional<mrpt::math::TBoundingBoxf> theBBox;
-
-    for (const auto& [name, map] : submap.local_map->layers)
-    {
-        const auto* ptsMap = mp2p_icp::MapToPointsMap(*map);
-        if (!ptsMap || ptsMap->empty()) continue;
-
-        auto bbox = ptsMap->boundingBox();
-        if (!theBBox)
-            theBBox = bbox;
+        const auto pMinLoc = p.composePoint(pMin);
+        const auto pMaxLoc = p.composePoint(pMax);
+        if (!bbox)
+            bbox =
+                mrpt::math::TBoundingBox::FromUnsortedPoints(pMinLoc, pMaxLoc);
         else
-            theBBox = theBBox->unionWith(bbox);
+        {
+            bbox->updateWithPoint(pMinLoc);
+            bbox->updateWithPoint(pMaxLoc);
+        }
     }
 
-    ASSERT_(theBBox.has_value());
+    if (bbox.has_value())
+    {
+        // Use bbox from SimpleMap metadata annotations:
+        submap.bbox = *bbox;
 
-    submap.bbox.min = theBBox->min.cast<double>();
-    submap.bbox.max = theBBox->max.cast<double>();
-
-    MRPT_LOG_DEBUG_STREAM(
-        "Done. Submap metric map: " << submap.local_map->contents_summary());
+        MRPT_LOG_DEBUG_STREAM(
+            "[build_submap_from_kfs_into] Built bbox from metadata: "
+            << bbox->asString());
+    }
+    else
+    {
+        // We have as input a simplemap without metadata.
+        // Just build the whole metric map now:
+        auto mm = get_submap_local_map(submap);
+        (void)mm;
+    }
 }
 
 mrpt::poses::CPose3D SimplemapLoopClosure::keyframe_pose_in_simplemap(
@@ -750,7 +717,7 @@ mrpt::opengl::CSetOfObjects::Ptr
             glBox->setBoxCorners(bbox.min, bbox.max);
             glSubmap->insert(glBox);
         }
-        if (!p.viz_point_layer.empty() &&
+        if (!p.viz_point_layer.empty() && submap.local_map &&
             submap.local_map->layers.count(p.viz_point_layer) != 0)
         {
             auto& m = submap.local_map->layers.at(p.viz_point_layer);
@@ -915,13 +882,13 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
     // Apply ICP between the two submaps:
     const auto  idGlobal     = lc.smallest_id;
     const auto& submapGlobal = state_.submaps.at(idGlobal);
-    const auto& mapGlobal    = submapGlobal.local_map;
+    const auto& mapGlobal    = get_submap_local_map(submapGlobal);
     ASSERT_(mapGlobal);
     const auto& pcs_global = *mapGlobal;
 
     const auto  idLocal     = lc.largest_id;
     const auto& submapLocal = state_.submaps.at(idLocal);
-    const auto& mapLocal    = submapLocal.local_map;
+    const auto& mapLocal    = get_submap_local_map(submapLocal);
     ASSERT_(mapLocal);
     const auto& pcs_local = *mapLocal;
 
@@ -1071,6 +1038,11 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
 
         auto& pts = state_.perThreadState_.at(threadIdx);
 
+        // (this defines the local robot pose on the submap)
+        updatePipelineDynamicVariablesForKeyframe(
+            *submapLocal.kf_ids.begin(), *submapLocal.kf_ids.begin(),
+            threadIdx);
+
         pts.icp->align(
             pcs_local, pcs_global, initPose, params_.icp_parameters,
             icp_result);
@@ -1137,4 +1109,145 @@ mrpt::poses::CPose3D SimplemapLoopClosure::State::kfGraph_get_pose(
     using gtsam::symbol_shorthand::X;
     return mrpt::poses::CPose3D(
         mrpt::gtsam_wrappers::toTPose3D(kfGraphValues.at<gtsam::Pose3>(X(id))));
+}
+
+mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::get_submap_local_map(
+    const SubMap& submap)
+{
+    if (submap.local_map) return submap.local_map;
+
+    const size_t threadIdx = submap.id % state_.perThreadState_.size();
+
+    const keyframe_id_t refFrameId = *submap.kf_ids.begin();
+
+    auto& pts = state_.perThreadState_.at(threadIdx);
+
+    // Insert all observations in this submap:
+    for (const auto& id : submap.kf_ids)
+    {
+        // (this defines the local robot pose on the submap)
+        updatePipelineDynamicVariablesForKeyframe(id, refFrameId, threadIdx);
+
+        // now that we have valid dynamic variables, check if we need to
+        // create the submap on the first KF:
+        if (!submap.local_map)
+        {
+            // Create empty local map:
+            submap.local_map = mp2p_icp::metric_map_t::Create();
+
+            // and populate with empty metric maps:
+            pts.parameter_source.realize();
+
+            mrpt::obs::CSensoryFrame dummySF;
+            {
+                auto obs = mrpt::obs::CObservationPointCloud::Create();
+                dummySF.insert(obs);
+            }
+
+            mp2p_icp_filters::apply_generators(
+                pts.local_map_generators, dummySF, *submap.local_map);
+        }
+
+        // insert observations from the keyframe:
+        // -------------------------------------------
+
+        // Extract points from observation:
+        auto observation = mp2p_icp::metric_map_t::Create();
+
+        const auto& [pose, sf, twist] = state_.sm->get(id);
+
+        MRPT_LOG_DEBUG_STREAM(
+            "Processing KF#" << id << " with |SF|=" << sf->size());
+
+        // Some frames may be empty:
+        if (sf->empty()) continue;
+
+        mrpt::system::CTimeLoggerEntry tle0(
+            profiler_, "add_submap_from_kfs.apply_generators");
+
+        for (const auto& o : *sf)
+            mp2p_icp_filters::apply_generators(
+                pts.obs_generators, *o, *observation);
+
+        tle0.stop();
+
+        // Filter/segment the point cloud (optional, but normally will be
+        // present):
+        mrpt::system::CTimeLoggerEntry tle1(
+            profiler_, "add_submap_from_kfs.filter_pointclouds");
+
+        mp2p_icp_filters::apply_filter_pipeline(
+            pts.pc_filter, *observation, profiler_);
+
+        tle1.stop();
+
+        // Merge "observation_layers_to_merge_local_map" in local map:
+        // ---------------------------------------------------------------
+        mrpt::system::CTimeLoggerEntry tle3(
+            profiler_, "add_submap_from_kfs.update_local_map");
+
+        // Input  metric_map_t: observation
+        // Output metric_map_t: state_.local_map
+
+        // 1/4: temporarily make a (shallow) copy of the observation layers
+        // into the local map:
+        ASSERT_(submap.local_map);
+        for (const auto& [lyName, lyMap] : observation->layers)
+        {
+            ASSERTMSG_(
+                submap.local_map->layers.count(lyName) == 0,
+                mrpt::format(
+                    "Error: local map layer name '%s' collides with one of "
+                    "the "
+                    "observation layers, please use different layer names.",
+                    lyName.c_str()));
+
+            submap.local_map->layers[lyName] = lyMap;  // shallow copy
+        }
+
+        // 2/4: Make sure dynamic variables are up-to-date,
+        // in particular, [robot_x, ..., robot_roll]
+        // already done above: updatePipelineDynamicVariables();
+
+        // 3/4: Apply pipeline
+        mp2p_icp_filters::apply_filter_pipeline(
+            pts.obs2map_merge, *submap.local_map, profiler_);
+
+        // 4/4: remove temporary layers:
+        for (const auto& [lyName, lyMap] : observation->layers)
+            submap.local_map->layers.erase(lyName);
+
+        tle3.stop();
+    }  // end for each keyframe ID
+
+    mp2p_icp_filters::apply_filter_pipeline(
+        pts.submap_final_filter, *submap.local_map, profiler_);
+
+    // add metadata to local map (for generated debug .icplog files):
+    submap.local_map->id = submap.id;
+
+    // Actual bbox: from point cloud layer:
+    std::optional<mrpt::math::TBoundingBoxf> theBBox;
+
+    for (const auto& [name, map] : submap.local_map->layers)
+    {
+        const auto* ptsMap = mp2p_icp::MapToPointsMap(*map);
+        if (!ptsMap || ptsMap->empty()) continue;
+
+        auto bbox = ptsMap->boundingBox();
+        if (!theBBox)
+            theBBox = bbox;
+        else
+            theBBox = theBBox->unionWith(bbox);
+    }
+
+    ASSERT_(theBBox.has_value());
+
+    submap.bbox.min = theBBox->min.cast<double>();
+    submap.bbox.max = theBBox->max.cast<double>();
+
+    MRPT_LOG_DEBUG_STREAM(
+        "Done. Submap metric map: " << submap.local_map->contents_summary());
+
+    return submap.local_map;
 }
