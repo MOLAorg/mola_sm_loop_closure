@@ -1188,6 +1188,8 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
                 << out.found_poses.voxels().size()
                 << " voxels, most populated one |V|="
                 << bestVoxels.rbegin()->first << " bestPose: " << bestPose);
+
+            return;  // done
         }
     }
 
