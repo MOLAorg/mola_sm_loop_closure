@@ -150,7 +150,7 @@ observations_filter:
     params:
       input_pointcloud_layer: 'deskewed'
       output_pointcloud_layer: 'decimated_for_map_raw'
-      voxel_filter_resolution: 1.50*1e-2*ESTIMATED_SENSOR_MAX_RANGE  # [m]
+      voxel_filter_resolution: 0.70*1e-2*ESTIMATED_SENSOR_MAX_RANGE  # [m]
       decimate_method: DecimateMethod::FirstPoint
       #decimate_method: DecimateMethod::ClosestToAverage
 
@@ -215,6 +215,6 @@ submap_final_filter:
     params:
       input_pointcloud_layer: 'localmap'
       output_pointcloud_layer: 'points_to_register'
-      voxel_filter_resolution: 3.0
+      voxel_filter_resolution: 1.5
       decimate_method: DecimateMethod::FirstPoint
 

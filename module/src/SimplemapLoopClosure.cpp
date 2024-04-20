@@ -1121,8 +1121,11 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         double       std_y   = std::sqrt(pdf_SE2.cov(1, 1));
         const double std_yaw = std::sqrt(pdf_SE2.cov(2, 2));
 
-        mrpt::saturate(std_x, 1.0, 30.0);
-        mrpt::saturate(std_y, 1.0, 30.0);
+        const double maxMapLenght =
+            (submapLocal.bbox.max - submapLocal.bbox.min).norm();
+
+        mrpt::saturate(std_x, 1.0, 0.5 * maxMapLenght);
+        mrpt::saturate(std_y, 1.0, 0.5 * maxMapLenght);
 
         in.initial_guess_lattice.corner_min = {
             pdf_SE2.mean.x() - 3 * std_x,
@@ -1134,8 +1137,8 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
             pdf_SE2.mean.y() + 3 * std_y,
             pdf_SE2.mean.phi() + 3 * std_yaw,
         };
-        in.initial_guess_lattice.resolution_xy =
-            mrpt::saturate_val<double>(std::max(std_x, std_y) * 3, 2.0, 20.0);
+        in.initial_guess_lattice.resolution_xy = mrpt::saturate_val<double>(
+            std::max(std_x, std_y) * 3, 2.0, 0.2 * maxMapLenght);
         in.initial_guess_lattice.resolution_phi =
             mrpt::saturate_val<double>(std_yaw * 3, 10.0_deg, 30.0_deg);
 
