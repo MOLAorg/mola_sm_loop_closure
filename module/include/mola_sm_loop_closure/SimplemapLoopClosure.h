@@ -27,6 +27,7 @@
 #include <mp2p_icp_filters/FilterBase.h>
 #include <mp2p_icp_filters/Generator.h>
 #include <mrpt/containers/yaml.h>
+#include <mrpt/core/WorkerThreadsPool.h>
 #include <mrpt/graphs/CNetworkOfPoses.h>
 #include <mrpt/maps/CSimpleMap.h>
 #include <mrpt/maps/CSimplePointsMap.h>
@@ -84,7 +85,8 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
 
         double      min_icp_goodness          = 0.60;
         bool        profiler_enabled          = true;
-        bool        do_first_gross_relocalize = true;
+        bool        do_first_gross_relocalize = false;
+        bool        do_montecarlo_icp         = true;
         std::string debug_files_prefix        = "sm_lc_";
     };
 
@@ -115,7 +117,10 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
 
     /** Get (or build upon first request) the metric local map of a submap
      */
-    mp2p_icp::metric_map_t::Ptr get_submap_local_map(const SubMap& submap);
+    std::future<mp2p_icp::metric_map_t::Ptr> get_submap_local_map(
+        const SubMap& submap);
+
+    mp2p_icp::metric_map_t::Ptr impl_get_submap_local_map(const SubMap& submap);
 
     struct State
     {
@@ -170,8 +175,7 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
 
     // private methods:
     void build_submap_from_kfs_into(
-        const std::set<keyframe_id_t>& ids, SubMap& submap,
-        const size_t threadIdx);
+        const std::set<keyframe_id_t>& ids, SubMap& submap);
 
     struct VizOptions
     {
@@ -197,10 +201,10 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
     {
         PotentialLoop() = default;
 
-        submap_id_t                     smallest_id = 0, largest_id = 0;
-        size_t                          topological_distance = 0;
         mrpt::poses::CPose3DPDFGaussian relative_pose_largest_wrt_smallest;
-        double                          score = 0;
+        size_t                          topological_distance = 0;
+        double                          score                = 0;
+        submap_id_t                     smallest_id = 0, largest_id = 0;
     };
 
     /** For each submap, a list of potential LCs to check, already sorted by
@@ -208,8 +212,9 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
     using PotentialLoopOutput = std::vector<PotentialLoop>;
 
     PotentialLoopOutput find_next_loop_closures() const;
+    [[nodiscard]] bool  process_loop_candidate(const PotentialLoop& lc);
 
-    [[nodiscard]] bool process_loop_candidate(const PotentialLoop& lc);
+    mrpt::WorkerThreadsPool threads_{state_.perThreadState_.size()};
 };
 
 }  // namespace mola

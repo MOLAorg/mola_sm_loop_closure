@@ -20,9 +20,10 @@ params:
   # Minimum ICP quality to accept a loop closure:
   min_icp_goodness: 0.40
 
-  min_volume_intersection_ratio_for_lc_candidate: 0.40
+  min_volume_intersection_ratio_for_lc_candidate: 0.55
   
   do_first_gross_relocalize: false
+  do_montecarlo_icp: true
 
   # Profiler:
   profiler_enabled: true
@@ -149,7 +150,7 @@ observations_filter:
     params:
       input_pointcloud_layer: 'deskewed'
       output_pointcloud_layer: 'decimated_for_map_raw'
-      voxel_filter_resolution: 0.55*1e-2*ESTIMATED_SENSOR_MAX_RANGE  # [m]
+      voxel_filter_resolution: 1.50*1e-2*ESTIMATED_SENSOR_MAX_RANGE  # [m]
       decimate_method: DecimateMethod::FirstPoint
       #decimate_method: DecimateMethod::ClosestToAverage
 
@@ -176,7 +177,7 @@ observations_filter:
     params:
       input_pointcloud_layer: 'decimated_for_map'
       output_pointcloud_layer: 'decimated_for_icp'
-      voxel_filter_resolution: 1.6*1e-2*ESTIMATED_SENSOR_MAX_RANGE  # [m]
+      voxel_filter_resolution: 3.00*1e-2*ESTIMATED_SENSOR_MAX_RANGE  # [m]
       decimate_method: DecimateMethod::FirstPoint
       #decimate_method: DecimateMethod::ClosestToAverage
 
@@ -214,6 +215,6 @@ submap_final_filter:
     params:
       input_pointcloud_layer: 'localmap'
       output_pointcloud_layer: 'points_to_register'
-      voxel_filter_resolution: 2.0
+      voxel_filter_resolution: 3.0
       decimate_method: DecimateMethod::FirstPoint
 

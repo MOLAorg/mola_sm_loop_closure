@@ -18,14 +18,18 @@
  * MOLA. If not, see <https://www.gnu.org/licenses/>.
  * ------------------------------------------------------------------------- */
 
+// MRPT:
+#include <mrpt/core/get_env.h>
+#include <mrpt/obs/CObservationComment.h>
+#include <mrpt/obs/CObservationPointCloud.h>
+#include <mrpt/poses/CPoseRandomSampler.h>
+#include <mrpt/poses/Lie/SO.h>
+#include <mrpt/poses/gtsam_wrappers.h>
+
+// MOLA:
 #include <mola_relocalization/relocalization.h>
 #include <mola_sm_loop_closure/SimplemapLoopClosure.h>
 #include <mola_yaml/yaml_helpers.h>
-#include <mrpt/core/WorkerThreadsPool.h>
-#include <mrpt/obs/CObservationComment.h>
-#include <mrpt/obs/CObservationPointCloud.h>
-#include <mrpt/poses/Lie/SO.h>
-#include <mrpt/poses/gtsam_wrappers.h>
 
 // MRPT graph-slam:
 #include <mrpt/graphs/dijkstra.h>
@@ -49,9 +53,12 @@
 
 using namespace mola;
 
+const bool PRINT_ALL_SCORES = mrpt::get_env<bool>("PRINT_ALL_SCORES", false);
+
 SimplemapLoopClosure::SimplemapLoopClosure()
 {
     mrpt::system::COutputLogger::setLoggerName("SimplemapLoopClosure");
+    threads_.name("sm_localmaps_build");
 }
 
 SimplemapLoopClosure::~SimplemapLoopClosure() = default;
@@ -88,6 +95,7 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, profiler_enabled, bool);
     YAML_LOAD_REQ(params_, submap_max_length, double);
     YAML_LOAD_OPT(params_, do_first_gross_relocalize, bool);
+    YAML_LOAD_OPT(params_, do_montecarlo_icp, bool);
 
     YAML_LOAD_REQ(params_, threshold_sigma_initial, double);
     YAML_LOAD_REQ(params_, threshold_sigma_final, double);
@@ -243,40 +251,19 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     }
 
     // process pending submap creation, in parallel threads:
-    mrpt::WorkerThreadsPool threads(state_.perThreadState_.size());
-    threads.name("sm_localmaps_build");
-
-    std::vector<std::future<void>> futures;
-    const size_t                   nSubMaps = detectedSubMaps.size();
+    const size_t nSubMaps = detectedSubMaps.size();
 
     for (submap_id_t submapId = 0; submapId < nSubMaps; submapId++)
     {
-        const size_t threadIdx = submapId % state_.perThreadState_.size();
-
         // Modify the submaps[] std::map here in this main thread:
         SubMap& submap = state_.submaps[submapId];
         submap.id      = submapId;
 
-        // then process the observations in parallel:
-        auto fut = threads.enqueue(
-            [this, threadIdx, submapId, nSubMaps](
-                std::set<keyframe_id_t> ids, SubMap* m)
-            {
-                // ensure only 1 thread is running for each per-thread data:
-                auto lck =
-                    mrpt::lockHelper(state_.perThreadState_.at(threadIdx).mtx);
+        build_submap_from_kfs_into(detectedSubMaps.at(submapId), submap);
 
-                build_submap_from_kfs_into(ids, *m, threadIdx);
-                MRPT_LOG_DEBUG_STREAM(
-                    "Done with submap #" << submapId << " / " << nSubMaps);
-            },
-            detectedSubMaps.at(submapId), &submap);
-
-        futures.emplace_back(std::move(fut));
+        MRPT_LOG_DEBUG_STREAM(
+            "Done with submap #" << submapId << " / " << nSubMaps);
     }
-
-    // wait for all them:
-    for (auto& f : futures) f.get();
 
 #if 0
     // Debug: save all local maps:
@@ -314,10 +301,14 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
                 mrpt::poses::CPose3DPDFGaussian relPose;
                 relPose.mean = thisGlobalPose - lastGlobalPose;
 
-                // Note: this uncertainty for the SUBMAPS graph is actually
-                // not used. The important one is the cov in the KEYFRAMES
-                // graph.
-                relPose.cov.setDiagonal(0.10);
+                // Note: this uncertainty for the SUBMAPS graph is used to
+                // estimate submap overlap probabilities:
+                using namespace mrpt::literals;  // _deg
+
+                relPose.cov.setDiagonal(
+                    {mrpt::square(0.10), mrpt::square(0.10), mrpt::square(0.15),
+                     mrpt::square(1.0_deg), mrpt::square(1.5_deg),
+                     mrpt::square(1.0_deg)});
 
                 state_.submapsGraph.insertEdge(last_id, this_id, relPose);
             }
@@ -418,47 +409,14 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
         PotentialLoopOutput LCs = find_next_loop_closures();
 
-        const size_t MAX_LC_CANDIDATES = 40;
-        if (LCs.size() > MAX_LC_CANDIDATES) LCs.resize(MAX_LC_CANDIDATES);
-
-        // Build a list of affected submaps:
-        std::set<submap_id_t> LC_submap_IDs;
+        // Build a list of affected submaps, including how many times they
+        // appear:
+        std::map<submap_id_t, size_t> LC_submap_IDs_count;
         for (const auto& lc : LCs)
         {
-            LC_submap_IDs.insert(lc.smallest_id);
-            LC_submap_IDs.insert(lc.largest_id);
+            LC_submap_IDs_count[lc.smallest_id]++;
+            LC_submap_IDs_count[lc.largest_id]++;
         }
-
-        std::vector<std::future<void>> futs;
-
-        for (submap_id_t submapId : LC_submap_IDs)
-        {
-            const size_t threadIdx = submapId % state_.perThreadState_.size();
-
-            // Modify the submaps[] std::map here in this main thread:
-            SubMap& submap = state_.submaps[submapId];
-            submap.id      = submapId;
-
-            // then process the observations in parallel:
-            auto fut = threads.enqueue(
-                [this, threadIdx, submapId](SubMap* m)
-                {
-                    // ensure only 1 thread is running for each per-thread data:
-                    auto lck = mrpt::lockHelper(
-                        state_.perThreadState_.at(threadIdx).mtx);
-
-                    const auto mm = this->get_submap_local_map(*m);
-                    (void)mm;
-                    MRPT_LOG_DEBUG_STREAM(
-                        "Built metric map for submap #" << submapId);
-                },
-                &submap);
-
-            futs.emplace_back(std::move(fut));
-        }
-
-        // wait for all them:
-        for (auto& f : futs) f.get();
 
         // check all LCs, and accept those that seem valid:
         for (size_t lcIdx = 0; lcIdx < LCs.size(); lcIdx++)
@@ -480,7 +438,21 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
             const bool accepted = process_loop_candidate(lc);
             if (accepted) anyGraphChange = true;
+
+            // free the RAM space of submaps not used any more:
+            auto lambdaDereferenceLocalMapOnce = [&](submap_id_t id)
+            {
+                if (0 == --LC_submap_IDs_count[id])
+                {
+                    MRPT_LOG_INFO_STREAM(
+                        "Freeing memory for submap local map #" << id);
+                    state_.submaps[id].local_map.reset();
+                };
+            };
+            lambdaDereferenceLocalMapOnce(lc.smallest_id);
+            lambdaDereferenceLocalMapOnce(lc.largest_id);
         }
+
         if (!checkedCount) break;  // no new LC was checked, we are done.
 
         // any change to the graph? re-optimize it:
@@ -560,17 +532,16 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 }
 
 void SimplemapLoopClosure::build_submap_from_kfs_into(
-    const std::set<keyframe_id_t>& ids, SubMap& submap, const size_t threadIdx)
+    const std::set<keyframe_id_t>& ids, SubMap& submap)
 {
     const keyframe_id_t refFrameId = *ids.begin();
 
     submap.kf_ids      = ids;
     submap.global_pose = keyframe_pose_in_simplemap(refFrameId);
 
-    MRPT_LOG_INFO_STREAM(
-        "Populating submap #" << submap.id << " with " << ids.size()
-                              << " keyframes... (threadIdx=" << threadIdx
-                              << ")");
+    MRPT_LOG_DEBUG_STREAM(
+        "Defining submap #" << submap.id << " with " << ids.size()
+                            << " keyframes.");
 
     // Load the bbox of the frame from the SimpleMap metadata entry:
     // Insert all observations in this submap:
@@ -620,7 +591,7 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
         // We have as input a simplemap without metadata.
         // Just build the whole metric map now:
         auto mm = get_submap_local_map(submap);
-        (void)mm;
+        mm.get();  // get future
     }
 }
 
@@ -797,31 +768,71 @@ SimplemapLoopClosure::PotentialLoopOutput
             // we need at least topological distance>=2 for this to be L.C.
             if (ips.depth <= 1) continue;
 
-            // TODO(jlbc): finer approach without enlarging bboxes to their
-            // global XYZ axis alined boxes:
-            const auto relativeBBox = state_.submaps.at(submapId).bbox.compose(
-                ips.pose.mean.asTPose());
-
-            const auto bboxIntersect = rootBbox.intersection(relativeBBox);
-
-            if (!bboxIntersect.has_value()) continue;  // no overlap at all
-
-            const double intersectRatio =
-                bboxIntersect->volume() /
-                (0.5 * rootBbox.volume() + 0.5 * relativeBBox.volume());
-
-            if (intersectRatio <
-                params_.min_volume_intersection_ratio_for_lc_candidate)
-                continue;
-
             const auto min_id = std::min<submap_id_t>(root_id, submapId);
             const auto max_id = std::max<submap_id_t>(root_id, submapId);
+
+            // TODO(jlbc): finer approach without enlarging bboxes to their
+            // global XYZ axis alined boxes:
+            // Idea: run a small MonteCarlo run to estimate the likelihood of an
+            // overlap for large uncertainties:
+            const size_t MC_RUNS =
+                mrpt::saturate_val<size_t>(10 * ips.depth, 10, 400);
+
+            mrpt::poses::CPoseRandomSampler sampler;
+            sampler.setPosePDF(ips.pose);
+
+            if (PRINT_ALL_SCORES)
+            {
+                MRPT_LOG_INFO_STREAM(
+                    "Relative pose: " << min_id << " <==> " << max_id
+                                      << " pose: " << ips.pose);
+            }
+
+            double               bestScore = .0;
+            mrpt::poses::CPose3D bestRelPose;
+
+            for (size_t i = 0; i < MC_RUNS; i++)
+            {
+                mrpt::poses::CPose3D relPoseSample;
+                sampler.drawSample(relPoseSample);
+
+                const auto relativeBBox =
+                    state_.submaps.at(submapId).bbox.compose(
+                        relPoseSample.asTPose());
+
+                const auto bboxIntersect = rootBbox.intersection(relativeBBox);
+
+                if (!bboxIntersect.has_value()) continue;  // no overlap at all
+
+                const double intersectRatio =
+                    bboxIntersect->volume() /
+                    (0.5 * rootBbox.volume() + 0.5 * relativeBBox.volume());
+
+                if (intersectRatio > bestScore)
+                {
+                    bestScore   = intersectRatio;
+                    bestRelPose = relPoseSample;
+                }
+            }
+
+            if (PRINT_ALL_SCORES)
+            {
+                MRPT_LOG_INFO_STREAM(
+                    "Score for LC: " << min_id << " <==> " << max_id
+                                     << " bestScore=" << bestScore
+                                     << " topo_depth=" << ips.depth
+                                     << " MC_RUNS=" << MC_RUNS);
+            }
+
+            if (bestScore <
+                params_.min_volume_intersection_ratio_for_lc_candidate)
+                continue;
 
             PotentialLoop lc;
             lc.largest_id           = max_id;
             lc.smallest_id          = min_id;
             lc.topological_distance = ips.depth;
-            lc.score                = intersectRatio;
+            lc.score                = bestScore;
             if (root_id == min_id)
                 lc.relative_pose_largest_wrt_smallest = ips.pose;
             else
@@ -829,7 +840,17 @@ SimplemapLoopClosure::PotentialLoopOutput
                 ips.pose.inverse(lc.relative_pose_largest_wrt_smallest);
             }
 
-            potentialLCs.emplace(intersectRatio, lc);
+            // for very long loops, replace the (probably too bad) relative pose
+            // with the best one from the MonteCarlo sample above:
+            if (ips.depth > 10)
+            {
+                if (root_id == min_id)
+                    lc.relative_pose_largest_wrt_smallest.mean = bestRelPose;
+                else
+                    lc.relative_pose_largest_wrt_smallest.mean = -bestRelPose;
+            }
+
+            potentialLCs.emplace(bestScore, lc);
         }
     }  // end for each root_id
 
@@ -865,8 +886,9 @@ SimplemapLoopClosure::PotentialLoopOutput
         MRPT_LOG_INFO_STREAM(
             "[find_lc] Potential LC: "  //
             << lc.smallest_id << " <==> " << lc.largest_id
-            << " topo_depth=" << lc.topological_distance
-            << " relPose: " << lc.relative_pose_largest_wrt_smallest.mean);
+            << " topo_depth=" << lc.topological_distance << " relPose: "
+            << lc.relative_pose_largest_wrt_smallest.mean.asString()
+            << " score: " << lc.score);
     }
 
     return result;
@@ -882,21 +904,74 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
     // Apply ICP between the two submaps:
     const auto  idGlobal     = lc.smallest_id;
     const auto& submapGlobal = state_.submaps.at(idGlobal);
-    const auto& mapGlobal    = get_submap_local_map(submapGlobal);
-    ASSERT_(mapGlobal);
-    const auto& pcs_global = *mapGlobal;
 
     const auto  idLocal     = lc.largest_id;
     const auto& submapLocal = state_.submaps.at(idLocal);
-    const auto& mapLocal    = get_submap_local_map(submapLocal);
+
+    auto mapGlobalFut = get_submap_local_map(submapGlobal);
+    auto mapLocalFut  = get_submap_local_map(submapLocal);
+
+    const auto& mapGlobal = mapGlobalFut.get();
+    const auto& mapLocal  = mapLocalFut.get();
+
+    ASSERT_(mapGlobal);
     ASSERT_(mapLocal);
-    const auto& pcs_local = *mapLocal;
+
+    const auto& pcs_global = *mapGlobal;
+    const auto& pcs_local  = *mapLocal;
 
     MRPT_LOG_DEBUG_STREAM(
         "LC candidate: relPose=" << lc.relative_pose_largest_wrt_smallest);
 
     const mrpt::math::TPose3D initGuess =
         lc.relative_pose_largest_wrt_smallest.mean.asTPose();
+
+    bool atLeastOneGoodIcp = false;
+
+    auto lambdaAddIcpEdge = [&](const mrpt::poses::CPose3D& icpRelPose)
+    {
+        if (!state_.submapsGraph.edgeExists(idGlobal, idLocal))
+        {
+            mrpt::poses::CPose3DPDFGaussian newEdge;
+            newEdge.mean = icpRelPose;
+            newEdge.cov.setIdentity();  // Not used anyway
+
+            state_.submapsGraph.insertEdge(idGlobal, idLocal, newEdge);
+        }
+
+        // and to the low-level graph too:
+        const gtsam::Pose3 deltaPose =
+            mrpt::gtsam_wrappers::toPose3(icpRelPose);
+
+        using gtsam::symbol_shorthand::X;
+
+        const double edge_std_xyz = 1.0;
+        const double edge_std_ang = mrpt::DEG2RAD(5.0);
+
+        const double icp_edge_robust_param = 1.0;
+
+        gtsam::Vector6 sigmas;
+        sigmas << edge_std_ang, edge_std_ang, edge_std_ang,  //
+            edge_std_xyz, edge_std_xyz, edge_std_xyz;
+
+        auto icpNoise = gtsam::noiseModel::Diagonal::Sigmas(sigmas);
+
+        gtsam::noiseModel::Base::shared_ptr icpRobNoise;
+
+        if (icp_edge_robust_param > 0)
+            icpRobNoise = gtsam::noiseModel::Robust::Create(
+                gtsam::noiseModel::mEstimator::GemanMcClure::Create(
+                    icp_edge_robust_param),
+                icpNoise);
+        else
+            icpRobNoise = icpNoise;
+
+        state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+            X(*submapGlobal.kf_ids.begin()), X(*submapLocal.kf_ids.begin()),
+            deltaPose, icpRobNoise);
+
+        atLeastOneGoodIcp = true;
+    };
 
     std::vector<mrpt::math::TPose3D> initGuesses;
 
@@ -1016,7 +1091,105 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
 
 #endif
     }
-    else
+    else if (params_.do_montecarlo_icp)
+    {
+        // Convert pose with uncertainty SE(3) -> SE(2)
+        mrpt::poses::CPosePDFGaussian pdf_SE2;
+        pdf_SE2.copyFrom(lc.relative_pose_largest_wrt_smallest);
+
+        mola::RelocalizationICP_SE2::Input in;
+        in.icp_minimum_quality = params_.min_icp_goodness;
+
+        // Use multi-thread ICP:
+        for (size_t threadIdx = 0; threadIdx < state_.perThreadState_.size();
+             threadIdx++)
+        {
+            auto& pts = state_.perThreadState_.at(threadIdx);
+
+            // (this defines the local robot pose on the submap)
+            updatePipelineDynamicVariablesForKeyframe(
+                *submapLocal.kf_ids.begin(), *submapLocal.kf_ids.begin(),
+                threadIdx);
+
+            in.icp_pipeline.push_back(pts.icp);
+        }
+
+        // All threads with the same params:
+        in.icp_parameters = params_.icp_parameters;
+
+        double       std_x   = std::sqrt(pdf_SE2.cov(0, 0));
+        double       std_y   = std::sqrt(pdf_SE2.cov(1, 1));
+        const double std_yaw = std::sqrt(pdf_SE2.cov(2, 2));
+
+        mrpt::saturate(std_x, 1.0, 30.0);
+        mrpt::saturate(std_y, 1.0, 30.0);
+
+        in.initial_guess_lattice.corner_min = {
+            pdf_SE2.mean.x() - 3 * std_x,
+            pdf_SE2.mean.y() - 3 * std_y,
+            pdf_SE2.mean.phi() - 3 * std_yaw,
+        };
+        in.initial_guess_lattice.corner_max = {
+            pdf_SE2.mean.x() + 3 * std_x,
+            pdf_SE2.mean.y() + 3 * std_y,
+            pdf_SE2.mean.phi() + 3 * std_yaw,
+        };
+        in.initial_guess_lattice.resolution_xy =
+            mrpt::saturate_val<double>(std::max(std_x, std_y) * 3, 2.0, 20.0);
+        in.initial_guess_lattice.resolution_phi =
+            mrpt::saturate_val<double>(std_yaw * 3, 10.0_deg, 30.0_deg);
+
+        in.output_lattice.resolution_xyz   = 0.35;
+        in.output_lattice.resolution_yaw   = 5.0_deg;
+        in.output_lattice.resolution_pitch = 5.0_deg;
+        in.output_lattice.resolution_roll  = 5.0_deg;
+
+        in.reference_map = pcs_global;
+        in.local_map     = pcs_local;
+
+        in.on_progress_callback =
+            [&](const mola::RelocalizationICP_SE2::ProgressFeedback& fb)
+        {
+            MRPT_LOG_INFO_STREAM(
+                "[Relocalize SE(2)] Progress " << fb.current_cell << "/"
+                                               << fb.total_cells);
+        };
+
+        MRPT_LOG_INFO_STREAM(
+            "[Relocalize SE(2)] About to run with "
+            << " corner_min=" << in.initial_guess_lattice.corner_min
+            << " corner_max=" << in.initial_guess_lattice.corner_max);
+
+        const auto out = mola::RelocalizationICP_SE2::run(in);
+
+        // search top candidates:
+
+        // Take the voxel with the largest number of poses:
+        std::map<size_t, mrpt::math::TPose3D> bestVoxels;
+
+        out.found_poses.visitAllVoxels(
+            [&](const mola::HashedSetSE3::global_index3d_t&,
+                const mola::HashedSetSE3::VoxelData& v)
+            {
+                if (v.poses().empty()) return;
+                bestVoxels[v.poses().size()] = v.poses().front();
+            });
+
+        if (!bestVoxels.empty())
+        {
+            const auto& bestPose = bestVoxels.rbegin()->second;
+            lambdaAddIcpEdge(mrpt::poses::CPose3D(bestPose));
+
+            MRPT_LOG_INFO_STREAM(
+                "[Relocalize SE(2)] Result has "
+                << out.found_poses.voxels().size()
+                << " voxels, most populated one |V|="
+                << bestVoxels.rbegin()->first << " bestPose: " << bestPose);
+        }
+    }
+
+    // Default:
+    if (initGuesses.empty())
     {
         // do not re-localize, just start with the first initial guess:
         initGuesses.push_back(initGuess);
@@ -1026,8 +1199,6 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
     // Goal: add as many graph edges as good ICP results, even if it seems
     // redundant. the robust kernels may help later on to tell which is the
     // correct one.
-
-    bool atLeastOneGoodIcp = false;
 
     for (const auto& initPose : initGuesses)
     {
@@ -1060,44 +1231,7 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         if (icp_result.quality < params_.min_icp_goodness) continue;
 
         // add a new graph edge:
-        mrpt::poses::CPose3DPDFGaussian newEdge;
-        newEdge.copyFrom(icp_result.optimal_tf);
-        newEdge.cov.setIdentity();  // Not used anyway
-
-        state_.submapsGraph.insertEdge(idGlobal, idLocal, newEdge);
-
-        // and to the low-level graph too:
-        const gtsam::Pose3 deltaPose =
-            mrpt::gtsam_wrappers::toPose3(icp_result.optimal_tf.mean);
-
-        using gtsam::symbol_shorthand::X;
-
-        const double edge_std_xyz = 1.0;
-        const double edge_std_ang = mrpt::DEG2RAD(5.0);
-
-        const double icp_edge_robust_param = 1.0;
-
-        gtsam::Vector6 sigmas;
-        sigmas << edge_std_ang, edge_std_ang, edge_std_ang,  //
-            edge_std_xyz, edge_std_xyz, edge_std_xyz;
-
-        auto icpNoise = gtsam::noiseModel::Diagonal::Sigmas(sigmas);
-
-        gtsam::noiseModel::Base::shared_ptr icpRobNoise;
-
-        if (icp_edge_robust_param > 0)
-            icpRobNoise = gtsam::noiseModel::Robust::Create(
-                gtsam::noiseModel::mEstimator::GemanMcClure::Create(
-                    icp_edge_robust_param),
-                icpNoise);
-        else
-            icpRobNoise = icpNoise;
-
-        state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-            X(*submapGlobal.kf_ids.begin()), X(*submapLocal.kf_ids.begin()),
-            deltaPose, icpRobNoise);
-
-        atLeastOneGoodIcp = true;
+        lambdaAddIcpEdge(icp_result.optimal_tf.mean);
     }
 
     return atLeastOneGoodIcp;
@@ -1111,7 +1245,28 @@ mrpt::poses::CPose3D SimplemapLoopClosure::State::kfGraph_get_pose(
         mrpt::gtsam_wrappers::toTPose3D(kfGraphValues.at<gtsam::Pose3>(X(id))));
 }
 
-mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::get_submap_local_map(
+std::future<mp2p_icp::metric_map_t::Ptr>
+    SimplemapLoopClosure::get_submap_local_map(const SubMap& submap)
+{
+    const size_t threadIdx = submap.id % state_.perThreadState_.size();
+
+    auto fut = threads_.enqueue(
+        [this, threadIdx](const SubMap* m, const submap_id_t submapId)
+        {
+            // ensure only 1 thread is running for each per-thread data:
+            auto lck =
+                mrpt::lockHelper(state_.perThreadState_.at(threadIdx).mtx);
+
+            auto mm = this->impl_get_submap_local_map(*m);
+
+            MRPT_LOG_DEBUG_STREAM("Built metric map for submap #" << submapId);
+            return mm;
+        },
+        &submap, submap.id);
+    return fut;
+}
+
+mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(
     const SubMap& submap)
 {
     if (submap.local_map) return submap.local_map;
@@ -1161,6 +1316,10 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::get_submap_local_map(
 
         // Some frames may be empty:
         if (sf->empty()) continue;
+        if (sf->size() == 1 &&
+            IS_CLASS(
+                *sf->getObservationByIndex(0), mrpt::obs::CObservationComment))
+            continue;
 
         mrpt::system::CTimeLoggerEntry tle0(
             profiler_, "add_submap_from_kfs.apply_generators");
