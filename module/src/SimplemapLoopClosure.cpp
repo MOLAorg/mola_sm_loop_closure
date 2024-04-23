@@ -25,6 +25,7 @@
 #include <mrpt/poses/CPoseRandomSampler.h>
 #include <mrpt/poses/Lie/SO.h>
 #include <mrpt/poses/gtsam_wrappers.h>
+#include <mrpt/system/filesystem.h>
 
 // MOLA:
 #include <mola_relocalization/relocalization.h>
@@ -923,6 +924,24 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
     MRPT_LOG_DEBUG_STREAM(
         "LC candidate: relPose=" << lc.relative_pose_largest_wrt_smallest);
 
+#if 0
+    {
+        static int nLoop = 0;
+        mrpt::system::createDirectory("lc");
+        const auto sDir = mrpt::format(
+            "lc/loop_%04i_g%03u_l%03u", nLoop++, (unsigned int)*pcs_global.id,
+            (unsigned int)*pcs_local.id);
+        mrpt::system::createDirectory(sDir);
+
+        pcs_global.save_to_file(mrpt::system::pathJoin({sDir, "global.mm"}));
+        pcs_local.save_to_file(mrpt::system::pathJoin({sDir, "local.mm"}));
+
+        std::ofstream f(
+            mrpt::system::pathJoin({sDir, "init_pose_local_wrt_global.txt"}));
+        f << lc.relative_pose_largest_wrt_smallest;
+    }
+#endif
+
     const mrpt::math::TPose3D initGuess =
         lc.relative_pose_largest_wrt_smallest.mean.asTPose();
 
@@ -1189,7 +1208,7 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
                 << " voxels, most populated one |V|="
                 << bestVoxels.rbegin()->first << " bestPose: " << bestPose);
 
-            return;  // done
+            return true;  // done
         }
     }
 
