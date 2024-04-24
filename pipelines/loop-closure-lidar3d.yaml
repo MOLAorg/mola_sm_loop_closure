@@ -15,10 +15,12 @@ params:
   gnns_sensor_label: 'gps'
 
   # Max. length of submap:
-  submap_max_length: 75   # [m]
+  submap_max_length: 100   # [m]
 
   # Minimum ICP quality to accept a loop closure:
-  min_icp_goodness: 0.40
+  min_icp_goodness: 0.90
+  
+  icp_edge_robust_param: 1.0
 
   min_volume_intersection_ratio_for_lc_candidate: 0.55
   

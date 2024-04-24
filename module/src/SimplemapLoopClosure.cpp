@@ -73,7 +73,8 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
 
     if (cfg["lidar_sensor_labels"].isSequence())
     {
-        for (const auto& sl : cfg["lidar_sensor_labels"].asSequence())
+        const auto seq = cfg["lidar_sensor_labels"].asSequence();
+        for (const auto& sl : seq)
         {
             const auto s = sl.as<std::string>();
             MRPT_LOG_DEBUG_STREAM("Adding as input lidar sensor label: " << s);
@@ -101,6 +102,8 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_REQ(params_, threshold_sigma_initial, double);
     YAML_LOAD_REQ(params_, threshold_sigma_final, double);
     YAML_LOAD_REQ(params_, max_sensor_range, double);
+
+    YAML_LOAD_REQ(params_, icp_edge_robust_param, double);
 
     YAML_LOAD_OPT(
         params_, min_volume_intersection_ratio_for_lc_candidate, double);
@@ -130,9 +133,8 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
         pts.icp->attachToParameterSource(pts.parameter_source);
 
         // Obs2map merge pipeline:
-        // Create, and copy my own verbosity level:
         pts.obs2map_merge = mp2p_icp_filters::filter_pipeline_from_yaml(
-            c["insert_observation_into_local_map"], this->getMinLoggingLevel());
+            c["insert_observation_into_local_map"]);
 
         // Attach to the parameter source for dynamic parameters:
         mp2p_icp::AttachToParameterSource(
@@ -145,9 +147,8 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
         if (c.has("observations_generator") &&
             !c["observations_generator"].isNullNode())
         {
-            // Create, and copy my own verbosity level:
             pts.obs_generators = mp2p_icp_filters::generators_from_yaml(
-                c["observations_generator"], this->getMinLoggingLevel());
+                c["observations_generator"]);
         }
         else
         {
@@ -167,9 +168,8 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
 
         if (c.has("observations_filter"))
         {
-            // Create, and copy my own verbosity level:
             pts.pc_filter = mp2p_icp_filters::filter_pipeline_from_yaml(
-                c["observations_filter"], this->getMinLoggingLevel());
+                c["observations_filter"]);
 
             // Attach to the parameter source for dynamic parameters:
             mp2p_icp::AttachToParameterSource(
@@ -180,9 +180,8 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
         if (c.has("localmap_generator") &&
             !c["localmap_generator"].isNullNode())
         {
-            // Create, and copy my own verbosity level:
-            pts.local_map_generators = mp2p_icp_filters::generators_from_yaml(
-                c["localmap_generator"], this->getMinLoggingLevel());
+            pts.local_map_generators =
+                mp2p_icp_filters::generators_from_yaml(c["localmap_generator"]);
         }
         else
         {
@@ -196,7 +195,7 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
 
         // submaps final stage filter:
         pts.submap_final_filter = mp2p_icp_filters::filter_pipeline_from_yaml(
-            c["submap_final_filter"], this->getMinLoggingLevel());
+            c["submap_final_filter"]);
 
         // Attach to the parameter source for dynamic parameters:
         mp2p_icp::AttachToParameterSource(
@@ -262,7 +261,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
         build_submap_from_kfs_into(detectedSubMaps.at(submapId), submap);
 
-        MRPT_LOG_DEBUG_STREAM(
+        MRPT_LOG_INFO_STREAM(
             "Done with submap #" << submapId << " / " << nSubMaps);
     }
 
@@ -336,6 +335,8 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             {
                 state_.kfGraphFG
                     .emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(X(id), p);
+                state_.kfGraphFGRobust
+                    .emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(X(id), p);
             }
         }
     }
@@ -377,8 +378,11 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
         auto edgeNoise = gtsam::noiseModel::Diagonal::Sigmas(sigmas);
 
-        state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+        auto f = boost::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             X(i - 1), X(i), deltaPose, edgeNoise);
+
+        state_.kfGraphFG += f;
+        state_.kfGraphFGRobust += f;
     }
 
 #if 1
@@ -409,6 +413,9 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         bool   anyGraphChange = false;
 
         PotentialLoopOutput LCs = find_next_loop_closures();
+
+        MRPT_TODO("Remove!");
+        if (LCs.size() > 40) LCs.resize(40);
 
         // Build a list of affected submaps, including how many times they
         // appear:
@@ -462,16 +469,28 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             // low-level KF graph:
             auto lmParams = gtsam::LevenbergMarquardtParams::LegacyDefaults();
 
-            const double errorInit =
+            // Pass 1
+            const double errorInit1 =
                 state_.kfGraphFG.error(state_.kfGraphValues);
 
-            gtsam::LevenbergMarquardtOptimizer lm(
+            gtsam::LevenbergMarquardtOptimizer lm1(
                 state_.kfGraphFG, state_.kfGraphValues);
-            const auto& optimalValues = lm.optimize();
+            const auto& optimalValues1 = lm1.optimize();
 
-            state_.kfGraphValues = optimalValues;
+            const double errorEnd1 = state_.kfGraphFG.error(optimalValues1);
 
-            const double errorEnd = state_.kfGraphFG.error(optimalValues);
+            // Pass 2
+            const double errorInit2 =
+                state_.kfGraphFGRobust.error(optimalValues1);
+
+            gtsam::LevenbergMarquardtOptimizer lm2(
+                state_.kfGraphFGRobust, optimalValues1);
+            const auto& optimalValues2 = lm2.optimize();
+
+            state_.kfGraphValues = optimalValues2;
+
+            const double errorEnd2 =
+                state_.kfGraphFGRobust.error(optimalValues2);
 
             // Update submaps global pose:
             double largestDelta = 0;
@@ -490,8 +509,10 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
             MRPT_LOG_INFO_STREAM(
                 "***** Graph re-optimized in "
-                << lm.iterations() << " iters, ERROR=" << errorInit << " ==> "
-                << errorEnd << " largestDelta=" << largestDelta);
+                << lm1.iterations() << "/" << lm2.iterations()
+                << " iters, ERROR: 1st PASS:" << errorInit1 << " ==> "
+                << errorEnd1 << " / 2nd PASS: " << errorInit2 << " ==> "
+                << errorEnd2 << " largestDelta=" << largestDelta);
 
             // re-visit all areas again
             if (largestDelta > 3.0) alreadyChecked.clear();
@@ -967,7 +988,7 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         const double edge_std_xyz = 1.0;
         const double edge_std_ang = mrpt::DEG2RAD(5.0);
 
-        const double icp_edge_robust_param = 1.0;
+        const double icp_edge_robust_param = params_.icp_edge_robust_param;
 
         gtsam::Vector6 sigmas;
         sigmas << edge_std_ang, edge_std_ang, edge_std_ang,  //
@@ -975,19 +996,22 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
 
         auto icpNoise = gtsam::noiseModel::Diagonal::Sigmas(sigmas);
 
-        gtsam::noiseModel::Base::shared_ptr icpRobNoise;
-
-        if (icp_edge_robust_param > 0)
-            icpRobNoise = gtsam::noiseModel::Robust::Create(
+        gtsam::noiseModel::Base::shared_ptr icpRobNoise =
+            gtsam::noiseModel::Robust::Create(
                 gtsam::noiseModel::mEstimator::GemanMcClure::Create(
                     icp_edge_robust_param),
                 icpNoise);
-        else
-            icpRobNoise = icpNoise;
 
+        // Non-robust graph:
         state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             X(*submapGlobal.kf_ids.begin()), X(*submapLocal.kf_ids.begin()),
-            deltaPose, icpRobNoise);
+            deltaPose, icpNoise);
+
+        // Robust graph:
+        state_.kfGraphFGRobust
+            .emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+                X(*submapGlobal.kf_ids.begin()), X(*submapLocal.kf_ids.begin()),
+                deltaPose, icpRobNoise);
 
         atLeastOneGoodIcp = true;
     };
@@ -1335,8 +1359,10 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(
 
         const auto& [pose, sf, twist] = state_.sm->get(id);
 
+#if 0
         MRPT_LOG_DEBUG_STREAM(
             "Processing KF#" << id << " with |SF|=" << sf->size());
+#endif
 
         // Some frames may be empty:
         if (sf->empty()) continue;

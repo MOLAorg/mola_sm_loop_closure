@@ -79,6 +79,8 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
 
         double max_sensor_range = 100.0;
 
+        double icp_edge_robust_param = 1.0;
+
         double submap_max_length = 75.0;
 
         double min_volume_intersection_ratio_for_lc_candidate = 0.6;
@@ -164,7 +166,7 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         mrpt::graphs::CNetworkOfPoses3DCov submapsGraph;
 
         gtsam::Values               kfGraphValues;
-        gtsam::NonlinearFactorGraph kfGraphFG;
+        gtsam::NonlinearFactorGraph kfGraphFG, kfGraphFGRobust;
 
         mrpt::poses::CPose3D kfGraph_get_pose(const keyframe_id_t id) const;
     };
