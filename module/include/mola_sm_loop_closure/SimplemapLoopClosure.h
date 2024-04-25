@@ -79,7 +79,8 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
 
         double max_sensor_range = 100.0;
 
-        double icp_edge_robust_param = 1.0;
+        double icp_edge_robust_param     = 1.0;
+        double icp_edge_worst_multiplier = 10.0;
 
         double submap_max_length = 75.0;
 

@@ -107,6 +107,7 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_REQ(params_, max_sensor_range, double);
 
     YAML_LOAD_REQ(params_, icp_edge_robust_param, double);
+    YAML_LOAD_REQ(params_, icp_edge_worst_multiplier, double);
     YAML_LOAD_OPT(params_, max_number_lc_candidates, uint32_t);
 
     YAML_LOAD_OPT(
@@ -261,6 +262,8 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
     {
         std::set<keyframe_id_t> pendingKFs;
+        bool                    anyValidObsInPendingSet = false;
+
         for (size_t i = 0; i < sm.size(); i++)
         {
             pendingKFs.insert(i);
@@ -274,15 +277,30 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             // don't know for how long it will take and we might end up with a
             // totally empty final submap
             if (!sf_has_real_mapping_observations(*sf_i)) continue;
+            anyValidObsInPendingSet = true;
 
             if (pose_i_local.translation().norm() >= params_.submap_max_length)
             {
                 detectedSubMaps.emplace_back(pendingKFs);
                 pendingKFs.clear();
+                anyValidObsInPendingSet = false;
             }
         }
         // remaining ones?
-        if (!pendingKFs.empty()) detectedSubMaps.emplace_back(pendingKFs);
+        if (!pendingKFs.empty())
+        {
+            if (anyValidObsInPendingSet)
+            {
+                detectedSubMaps.emplace_back(pendingKFs);
+            }
+            else
+            {
+                // just append to the last submap, since none of the SFs has
+                // data to build a new local map
+                for (const auto id : pendingKFs)
+                    detectedSubMaps.back().insert(id);
+            }
+        }
     }
 
     // process pending submap creation, in parallel threads:
@@ -420,7 +438,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         state_.kfGraphFGRobust += f;
     }
 
-#if 1
+#if 0
     // Save viz of initial state:
     {
         VizOptions opts;
@@ -837,8 +855,8 @@ SimplemapLoopClosure::PotentialLoopOutput
 
             // TODO(jlbc): finer approach without enlarging bboxes to their
             // global XYZ axis alined boxes:
-            // Idea: run a small MonteCarlo run to estimate the likelihood of an
-            // overlap for large uncertainties:
+            // Idea: run a small MonteCarlo run to estimate the likelihood
+            // of an overlap for large uncertainties:
             const size_t MC_RUNS =
                 mrpt::saturate_val<size_t>(10 * ips.depth, 10, 400);
 
@@ -904,8 +922,9 @@ SimplemapLoopClosure::PotentialLoopOutput
                 ips.pose.inverse(lc.relative_pose_largest_wrt_smallest);
             }
 
-            // for very long loops, replace the (probably too bad) relative pose
-            // with the best one from the MonteCarlo sample above:
+            // for very long loops, replace the (probably too bad) relative
+            // pose with the best one from the MonteCarlo sample above:
+#if 0
             if (ips.depth > 10)
             {
                 if (root_id == min_id)
@@ -913,6 +932,7 @@ SimplemapLoopClosure::PotentialLoopOutput
                 else
                     lc.relative_pose_largest_wrt_smallest.mean = -bestRelPose;
             }
+#endif
 
             potentialLCs.emplace(bestScore, lc);
         }
@@ -1010,7 +1030,8 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
 
     bool atLeastOneGoodIcp = false;
 
-    auto lambdaAddIcpEdge = [&](const mrpt::poses::CPose3D& icpRelPose)
+    auto lambdaAddIcpEdge =
+        [&](const mrpt::poses::CPose3D& icpRelPose, const double icpQuality)
     {
         if (!state_.submapsGraph.edgeExists(idGlobal, idLocal))
         {
@@ -1027,8 +1048,19 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
 
         using gtsam::symbol_shorthand::X;
 
-        const double edge_std_xyz = 1.0;
-        const double edge_std_ang = mrpt::DEG2RAD(5.0);
+        double edge_std_xyz = 0.2;
+        double edge_std_ang = mrpt::DEG2RAD(2.0);
+
+        // Use a variable variance depending on the ICP quality:
+        ASSERT_(params_.icp_edge_worst_multiplier > 1.0);
+
+        double std_multiplier = params_.icp_edge_worst_multiplier -
+                                (params_.icp_edge_worst_multiplier - 1.0) *
+                                    (icpQuality - params_.min_icp_goodness) /
+                                    params_.min_icp_goodness;
+
+        edge_std_xyz *= std_multiplier;
+        edge_std_ang *= std_multiplier;
 
         const double icp_edge_robust_param = params_.icp_edge_robust_param;
 
@@ -1266,7 +1298,7 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         if (!bestVoxels.empty())
         {
             const auto& bestPose = bestVoxels.rbegin()->second;
-            lambdaAddIcpEdge(mrpt::poses::CPose3D(bestPose));
+            lambdaAddIcpEdge(mrpt::poses::CPose3D(bestPose), 1.0);
 
             MRPT_LOG_INFO_STREAM(
                 "[Relocalize SE(2)] Result has "
@@ -1321,7 +1353,7 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         if (icp_result.quality < params_.min_icp_goodness) continue;
 
         // add a new graph edge:
-        lambdaAddIcpEdge(icp_result.optimal_tf.mean);
+        lambdaAddIcpEdge(icp_result.optimal_tf.mean, icp_result.quality);
     }
 
     return atLeastOneGoodIcp;
@@ -1448,7 +1480,8 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(
                 submap.local_map->layers.count(lyName) == 0,
                 mrpt::format(
                     "Error: local map layer name '%s' collides with one of "
-                    "the observation layers, please use different layer names.",
+                    "the observation layers, please use different layer "
+                    "names.",
                     lyName.c_str()));
 
             submap.local_map->layers[lyName] = lyMap;  // shallow copy

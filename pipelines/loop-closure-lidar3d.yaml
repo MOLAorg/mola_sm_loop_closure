@@ -15,16 +15,22 @@ params:
   gnns_sensor_label: 'gps'
 
   # Max. length of submap:
-  submap_max_length: 100   # [m]
+  # MULRAN: 
+  #submap_max_length: 150   # [m]
+  #max_number_lc_candidates: 80 # 0: no limit
+
+  # KITTI: 
+  submap_max_length: 20   # [m]
+  max_number_lc_candidates: 200 # 0: no limit
 
   # Minimum ICP quality to accept a loop closure:
-  min_icp_goodness: 0.80
-  
+  min_icp_goodness: 0.60
+
+  icp_edge_worst_multiplier: 10.0  # how much uncertainty for the "min_icp_goodness" in comparison to a 100% icp result
   icp_edge_robust_param: 1.0
 
   min_volume_intersection_ratio_for_lc_candidate: 0.55
   
-  max_number_lc_candidates: 80 # 0: no limit
   
   do_first_gross_relocalize: false
   do_montecarlo_icp: false
@@ -257,6 +263,6 @@ submap_final_filter:
     params:
       input_pointcloud_layer: 'localmap_down'
       output_pointcloud_layer: 'points_to_register_down'
-      voxel_filter_resolution: 2.0
+      voxel_filter_resolution: 5.0
       decimate_method: DecimateMethod::FirstPoint
 
