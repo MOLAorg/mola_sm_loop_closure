@@ -24,7 +24,7 @@ params:
 
   min_volume_intersection_ratio_for_lc_candidate: 0.55
   
-  max_number_lc_candidates: 40 # 0: no limit
+  max_number_lc_candidates: 80 # 0: no limit
   
   do_first_gross_relocalize: false
   do_montecarlo_icp: false

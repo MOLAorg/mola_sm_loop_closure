@@ -20,8 +20,11 @@
 
 // MRPT:
 #include <mrpt/core/get_env.h>
+#include <mrpt/obs/CObservation2DRangeScan.h>
+#include <mrpt/obs/CObservation3DRangeScan.h>
 #include <mrpt/obs/CObservationComment.h>
 #include <mrpt/obs/CObservationPointCloud.h>
+#include <mrpt/obs/CObservationVelodyneScan.h>
 #include <mrpt/poses/CPoseRandomSampler.h>
 #include <mrpt/poses/Lie/SO.h>
 #include <mrpt/poses/gtsam_wrappers.h>
@@ -104,6 +107,7 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_REQ(params_, max_sensor_range, double);
 
     YAML_LOAD_REQ(params_, icp_edge_robust_param, double);
+    YAML_LOAD_OPT(params_, max_number_lc_candidates, uint32_t);
 
     YAML_LOAD_OPT(
         params_, min_volume_intersection_ratio_for_lc_candidate, double);
@@ -209,6 +213,37 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     MRPT_TRY_END
 }
 
+namespace
+{
+bool sf_has_real_mapping_observations(const mrpt::obs::CSensoryFrame& sf)
+{
+    if (sf.empty()) return false;
+    if (auto oPC =
+            sf.getObservationByClass<mrpt::obs::CObservationPointCloud>();
+        oPC)
+        return true;
+
+    if (auto o2D =
+            sf.getObservationByClass<mrpt::obs::CObservation2DRangeScan>();
+        o2D)
+        return true;
+
+    if (auto o3D =
+            sf.getObservationByClass<mrpt::obs::CObservation3DRangeScan>();
+        o3D)
+        return true;
+
+    if (auto oVl =
+            sf.getObservationByClass<mrpt::obs::CObservationVelodyneScan>();
+        oVl)
+        return true;
+
+    // We don't recognize any valid mapping-suitable observation in the SF.
+    return false;
+}
+
+}  // namespace
+
 // Find and apply loop closures in the input/output simplemap
 void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 {
@@ -238,7 +273,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             // don't cut a submap while we are processing empty SFs since we
             // don't know for how long it will take and we might end up with a
             // totally empty final submap
-            if (sf_i->empty()) continue;
+            if (!sf_has_real_mapping_observations(*sf_i)) continue;
 
             if (pose_i_local.translation().norm() >= params_.submap_max_length)
             {
@@ -416,7 +451,13 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
         if (params_.max_number_lc_candidates > 0 &&
             LCs.size() > params_.max_number_lc_candidates)
+        {
+            std::random_device rd;
+            std::mt19937       g(rd());
+            std::shuffle(LCs.begin(), LCs.end(), g);
+
             LCs.resize(params_.max_number_lc_candidates);
+        }
 
         // Build a list of affected submaps, including how many times they
         // appear:
@@ -1300,7 +1341,7 @@ std::future<mp2p_icp::metric_map_t::Ptr>
     const size_t threadIdx = submap.id % state_.perThreadState_.size();
 
     auto fut = threads_.enqueue(
-        [this, threadIdx](const SubMap* m, const submap_id_t submapId)
+        [this, threadIdx](const SubMap* m)
         {
             // ensure only 1 thread is running for each per-thread data:
             auto lck =
@@ -1308,10 +1349,9 @@ std::future<mp2p_icp::metric_map_t::Ptr>
 
             auto mm = this->impl_get_submap_local_map(*m);
 
-            MRPT_LOG_DEBUG_STREAM("Built metric map for submap #" << submapId);
             return mm;
         },
-        &submap, submap.id);
+        &submap);
     return fut;
 }
 
@@ -1408,8 +1448,7 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(
                 submap.local_map->layers.count(lyName) == 0,
                 mrpt::format(
                     "Error: local map layer name '%s' collides with one of "
-                    "the "
-                    "observation layers, please use different layer names.",
+                    "the observation layers, please use different layer names.",
                     lyName.c_str()));
 
             submap.local_map->layers[lyName] = lyMap;  // shallow copy
@@ -1452,19 +1491,19 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(
             theBBox = theBBox->unionWith(bbox);
     }
 
+    std::stringstream debugInfo;
+    debugInfo << "submap #" << submap.id << " with " << submap.kf_ids.size()
+              << " KFs, local_map: " << submap.local_map->contents_summary();
+
     if (!theBBox.has_value())
     {
-        std::stringstream ss;
-        ss << " submap #" << submap.id
-           << ", local_map: " << submap.local_map->contents_summary();
-        THROW_EXCEPTION_FMT("no map bbox (!): %s", ss.str().c_str());
+        THROW_EXCEPTION_FMT("no map bbox (!): %s", debugInfo.str().c_str());
     }
 
     submap.bbox.min = theBBox->min.cast<double>();
     submap.bbox.max = theBBox->max.cast<double>();
 
-    MRPT_LOG_DEBUG_STREAM(
-        "Done. Submap metric map: " << submap.local_map->contents_summary());
+    MRPT_LOG_DEBUG_STREAM("Done. Submap metric map: " << debugInfo.str());
 
     return submap.local_map;
 }
