@@ -18,11 +18,13 @@ params:
   submap_max_length: 100   # [m]
 
   # Minimum ICP quality to accept a loop closure:
-  min_icp_goodness: 0.90
+  min_icp_goodness: 0.80
   
   icp_edge_robust_param: 1.0
 
   min_volume_intersection_ratio_for_lc_candidate: 0.55
+  
+  max_number_lc_candidates: 40 # 0: no limit
   
   do_first_gross_relocalize: false
   do_montecarlo_icp: false

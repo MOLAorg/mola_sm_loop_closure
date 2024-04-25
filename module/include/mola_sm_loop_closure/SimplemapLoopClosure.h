@@ -85,6 +85,8 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
 
         double min_volume_intersection_ratio_for_lc_candidate = 0.6;
 
+        uint32_t max_number_lc_candidates = 40;  // 0: no limit
+
         double      min_icp_goodness          = 0.60;
         bool        profiler_enabled          = true;
         bool        do_first_gross_relocalize = false;

@@ -414,8 +414,9 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
         PotentialLoopOutput LCs = find_next_loop_closures();
 
-        MRPT_TODO("Remove!");
-        if (LCs.size() > 40) LCs.resize(40);
+        if (params_.max_number_lc_candidates > 0 &&
+            LCs.size() > params_.max_number_lc_candidates)
+            LCs.resize(params_.max_number_lc_candidates);
 
         // Build a list of affected submaps, including how many times they
         // appear:
@@ -1433,7 +1434,8 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(
         pts.submap_final_filter, *submap.local_map, profiler_);
 
     // add metadata to local map (for generated debug .icplog files):
-    submap.local_map->id = submap.id;
+    submap.local_map->label = params_.debug_files_prefix;
+    submap.local_map->id    = submap.id;
 
     // Actual bbox: from point cloud layer:
     std::optional<mrpt::math::TBoundingBoxf> theBBox;
@@ -1450,7 +1452,13 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(
             theBBox = theBBox->unionWith(bbox);
     }
 
-    ASSERT_(theBBox.has_value());
+    if (!theBBox.has_value())
+    {
+        std::stringstream ss;
+        ss << " submap #" << submap.id
+           << ", local_map: " << submap.local_map->contents_summary();
+        THROW_EXCEPTION_FMT("no map bbox (!): %s", ss.str().c_str());
+    }
 
     submap.bbox.min = theBBox->min.cast<double>();
     submap.bbox.max = theBBox->max.cast<double>();

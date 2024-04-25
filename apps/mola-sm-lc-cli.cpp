@@ -62,7 +62,9 @@ struct Cli
         "",
         "externals-dir",
         "Lazy-load base directory for datasets with externally-stored "
-        "observations",
+        "observations. If not defined, the program will try anyway to "
+        "autodetect any directory side-by-side to the input .simplemap with "
+        "the postfix '_Images' and try to use it as lazy-load base directory.",
         false,
         "dataset_Images",
         "<ExternalsDirectory>",
@@ -101,8 +103,28 @@ void run_sm_to_mm(Cli& cli)
 
     lc.initialize(yamlData);
 
+    // try to detect lazy load:
+    std::string lazyLoadBaseDir;
     if (cli.arg_lazy_load_base_dir.isSet())
-        mrpt::io::setLazyLoadPathBase(cli.arg_lazy_load_base_dir.getValue());
+    {  // use provided dir:
+        lazyLoadBaseDir = cli.arg_lazy_load_base_dir.getValue();
+    }
+    else
+    {  // try to autodetect:
+        auto candidateDir = mrpt::system::pathJoin(
+            {mrpt::system::extractFileDirectory(filSM),
+             mrpt::system::extractFileName(filSM) + "_Images"});
+        if (mrpt::system::directoryExists(candidateDir))
+        {
+            lazyLoadBaseDir = candidateDir;
+
+            std::cout << "[mola-sm-lc-cli] Found lazy-load base directory: '"
+                      << candidateDir << "'\n";
+        }
+    }
+
+    if (!lazyLoadBaseDir.empty())
+        mrpt::io::setLazyLoadPathBase(lazyLoadBaseDir);
 
     // generate meaningful output debug files, if enabled:
     lc.params_.debug_files_prefix = mrpt::system::extractFileName(filSM);
