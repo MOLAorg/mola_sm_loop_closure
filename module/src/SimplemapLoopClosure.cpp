@@ -19,15 +19,18 @@
  * ------------------------------------------------------------------------- */
 
 // MRPT:
+#include <mola_sm_loop_closure/simplemap_georeference.h>
 #include <mrpt/core/get_env.h>
 #include <mrpt/obs/CObservation2DRangeScan.h>
 #include <mrpt/obs/CObservation3DRangeScan.h>
 #include <mrpt/obs/CObservationComment.h>
+#include <mrpt/obs/CObservationGPS.h>
 #include <mrpt/obs/CObservationPointCloud.h>
 #include <mrpt/obs/CObservationVelodyneScan.h>
 #include <mrpt/poses/CPoseRandomSampler.h>
 #include <mrpt/poses/Lie/SO.h>
 #include <mrpt/poses/gtsam_wrappers.h>
+#include <mrpt/random/RandomGenerators.h>
 #include <mrpt/system/filesystem.h>
 
 // MOLA:
@@ -58,6 +61,25 @@
 using namespace mola;
 
 const bool PRINT_ALL_SCORES = mrpt::get_env<bool>("PRINT_ALL_SCORES", false);
+const bool SAVE_LCS         = mrpt::get_env<bool>("SAVE_LCS", false);
+
+namespace
+{
+mrpt::math::TBoundingBox SimpleMapBoundingBox(const mrpt::maps::CSimpleMap& sm)
+{
+    // estimate path bounding box:
+    auto bbox = mrpt::math::TBoundingBox::PlusMinusInfinity();
+
+    for (const auto& [pose, sf, twist] : sm)
+    {
+        const auto p = pose->getMeanVal().asTPose();
+        bbox.updateWithPoint(p.translation());
+    }
+
+    return bbox;
+}
+
+}  // namespace
 
 SimplemapLoopClosure::SimplemapLoopClosure()
 {
@@ -98,9 +120,10 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
 
     YAML_LOAD_REQ(params_, min_icp_goodness, double);
     YAML_LOAD_OPT(params_, profiler_enabled, bool);
-    YAML_LOAD_REQ(params_, submap_max_length, double);
+    YAML_LOAD_REQ(params_, submap_max_length_wrt_map, double);
     YAML_LOAD_OPT(params_, do_first_gross_relocalize, bool);
     YAML_LOAD_OPT(params_, do_montecarlo_icp, bool);
+    YAML_LOAD_OPT(params_, assume_planar_world, bool);
 
     YAML_LOAD_REQ(params_, threshold_sigma_initial, double);
     YAML_LOAD_REQ(params_, threshold_sigma_final, double);
@@ -264,6 +287,14 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         std::set<keyframe_id_t> pendingKFs;
         bool                    anyValidObsInPendingSet = false;
 
+        const auto   bbox     = SimpleMapBoundingBox(sm);
+        const double smLength = (bbox.max - bbox.min).norm();
+
+        const double max_submap_length =
+            params_.submap_max_length_wrt_map * smLength;
+
+        MRPT_LOG_INFO_FMT("Using submap length=%.02f m", max_submap_length);
+
         for (size_t i = 0; i < sm.size(); i++)
         {
             pendingKFs.insert(i);
@@ -279,7 +310,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             if (!sf_has_real_mapping_observations(*sf_i)) continue;
             anyValidObsInPendingSet = true;
 
-            if (pose_i_local.translation().norm() >= params_.submap_max_length)
+            if (pose_i_local.translation().norm() >= max_submap_length)
             {
                 detectedSubMaps.emplace_back(pendingKFs);
                 pendingKFs.clear();
@@ -317,16 +348,6 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         MRPT_LOG_INFO_STREAM(
             "Done with submap #" << submapId << " / " << nSubMaps);
     }
-
-#if 0
-    // Debug: save all local maps:
-    for (const auto& [id, submap] : state_.submaps)
-    {
-        ASSERT_(submap.local_map);
-        submap.local_map->save_to_file(
-            mrpt::format("submap_%03u.mm", static_cast<unsigned int>(id)));
-    }
-#endif
 
     // Build a graph with the submaps:
     // -----------------------------------------------
@@ -438,7 +459,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         state_.kfGraphFGRobust += f;
     }
 
-#if 0
+#if 1
     // Save viz of initial state:
     {
         VizOptions opts;
@@ -613,6 +634,29 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     sm = std::move(outSM);
 }
 
+namespace
+{
+void make_pose_planar(mrpt::poses::CPose3D& p)
+{
+    p.z(0);
+    p.setYawPitchRoll(p.yaw(), .0, .0);
+}
+void make_pose_planar_pdf(mrpt::poses::CPose3DPDFGaussian& pdf)
+{
+    make_pose_planar(pdf.mean);
+    // z[2]=0, pitch[4]=0, roll[5]
+    for (int i = 0; i < 6; i++)
+    {
+        pdf.cov(i, 2) = 0;
+        pdf.cov(2, i) = 0;
+        pdf.cov(i, 4) = 0;
+        pdf.cov(4, i) = 0;
+        pdf.cov(i, 5) = 0;
+        pdf.cov(5, i) = 0;
+    }
+}
+}  // namespace
+
 void SimplemapLoopClosure::build_submap_from_kfs_into(
     const std::set<keyframe_id_t>& ids, SubMap& submap)
 {
@@ -620,6 +664,8 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
 
     submap.kf_ids      = ids;
     submap.global_pose = keyframe_pose_in_simplemap(refFrameId);
+
+    if (params_.assume_planar_world) make_pose_planar(submap.global_pose);
 
     MRPT_LOG_DEBUG_STREAM(
         "Defining submap #" << submap.id << " with " << ids.size()
@@ -629,34 +675,60 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
     // Insert all observations in this submap:
 
     std::optional<mrpt::math::TBoundingBox> bbox;
+    size_t                                  gnnsCount = 0;
+    mrpt::maps::CSimpleMap                  subSM;  // aux SM for this submap
 
     for (const auto& id : submap.kf_ids)
     {
         const auto& [pose, sf, twist] = state_.sm->get(id);
 
-        auto oc = sf->getObservationByClass<mrpt::obs::CObservationComment>();
-        if (!oc) continue;
+        subSM.insert(pose, sf, twist);  // for latter use in GNNS geo-referenc.
 
-        auto yml = mrpt::containers::yaml::FromText(oc->text);
-
-        auto pMin = mrpt::math::TPoint3D::FromString(
-            yml["frame_bbox_min"].as<std::string>());
-        auto pMax = mrpt::math::TPoint3D::FromString(
-            yml["frame_bbox_max"].as<std::string>());
-
-        // transform bbox and extend bbox in local submap coordinates:
-        const auto p = keyframe_relative_pose_in_simplemap(id, refFrameId);
-
-        const auto pMinLoc = p.composePoint(pMin);
-        const auto pMaxLoc = p.composePoint(pMax);
-        if (!bbox)
-            bbox =
-                mrpt::math::TBoundingBox::FromUnsortedPoints(pMinLoc, pMaxLoc);
-        else
+        // process metadata as embedded YAML "observation":
+        if (auto oc =
+                sf->getObservationByClass<mrpt::obs::CObservationComment>();
+            oc)
         {
-            bbox->updateWithPoint(pMinLoc);
-            bbox->updateWithPoint(pMaxLoc);
+            auto yml = mrpt::containers::yaml::FromText(oc->text);
+
+            auto pMin = mrpt::math::TPoint3D::FromString(
+                yml["frame_bbox_min"].as<std::string>());
+            auto pMax = mrpt::math::TPoint3D::FromString(
+                yml["frame_bbox_max"].as<std::string>());
+
+            // transform bbox and extend bbox in local submap coordinates:
+            const auto p = keyframe_relative_pose_in_simplemap(id, refFrameId);
+
+            const auto pMinLoc = p.composePoint(pMin);
+            const auto pMaxLoc = p.composePoint(pMax);
+            if (!bbox)
+                bbox = mrpt::math::TBoundingBox::FromUnsortedPoints(
+                    pMinLoc, pMaxLoc);
+            else
+            {
+                bbox->updateWithPoint(pMinLoc);
+                bbox->updateWithPoint(pMaxLoc);
+            }
         }
+
+        // Process GNNS?
+        if (auto oG = sf->getObservationByClass<mrpt::obs::CObservationGPS>();
+            oG)
+        {
+            gnnsCount++;
+        }
+
+    }  // for each keyframe
+
+    // Try to generate geo-referencing data:
+    if (gnnsCount > 2)
+    {
+        SMGeoReferencingParams geoParams;
+        geoParams.addHorizontalityConstraints = false;
+
+        const auto geoResult = simplemap_georeference(subSM, geoParams);
+        // save in submap:
+        submap.geo_ref = geoResult.geo_ref;
     }
 
     if (bbox.has_value())
@@ -826,7 +898,12 @@ SimplemapLoopClosure::PotentialLoopOutput
                                    size_t                      depthLevel)
         {
             auto& ips = submapPoses[edgeToChild.id];
-            ips.pose  = submapPoses[parent].pose + *edgeToChild.data;
+
+            mrpt::poses::CPose3DPDFGaussian edge = *edgeToChild.data;
+
+            if (params_.assume_planar_world) make_pose_planar_pdf(edge);
+
+            ips.pose  = submapPoses[parent].pose + edge;
             ips.depth = depthLevel;
 
             MRPT_LOG_DEBUG_STREAM(
@@ -873,14 +950,15 @@ SimplemapLoopClosure::PotentialLoopOutput
             double               bestScore = .0;
             mrpt::poses::CPose3D bestRelPose;
 
+            const auto& thisBBox = state_.submaps.at(submapId).bbox;
+
             for (size_t i = 0; i < MC_RUNS; i++)
             {
                 mrpt::poses::CPose3D relPoseSample;
                 sampler.drawSample(relPoseSample);
 
                 const auto relativeBBox =
-                    state_.submaps.at(submapId).bbox.compose(
-                        relPoseSample.asTPose());
+                    thisBBox.compose(relPoseSample.asTPose());
 
                 const auto bboxIntersect = rootBbox.intersection(relativeBBox);
 
@@ -922,17 +1000,43 @@ SimplemapLoopClosure::PotentialLoopOutput
                 ips.pose.inverse(lc.relative_pose_largest_wrt_smallest);
             }
 
-            // for very long loops, replace the (probably too bad) relative
-            // pose with the best one from the MonteCarlo sample above:
-#if 0
-            if (ips.depth > 10)
+            // for very long loops with too large uncertainty, replace the
+            // (probably too bad) relative pose mean with the best one from
+            // the MonteCarlo sample above:
             {
-                if (root_id == min_id)
-                    lc.relative_pose_largest_wrt_smallest.mean = bestRelPose;
-                else
-                    lc.relative_pose_largest_wrt_smallest.mean = -bestRelPose;
-            }
+                const double std_xy =
+                    std::sqrt(ips.pose.cov.block(0, 0, 2, 2).determinant());
+
+                const double submap_size = (thisBBox.max - thisBBox.min).norm();
+
+                const double ratio =
+                    submap_size > 0 ? (std_xy / submap_size) : 1.0;
+
+                if (PRINT_ALL_SCORES)
+                    MRPT_LOG_INFO_STREAM(
+                        "|C(1:2,1:2)|=" << std_xy << " |submap_size|="
+                                        << submap_size << " ratio=" << ratio);
+
+#if 0
+                if (ratio > 2)
+                {
+                    // save the original LC too:
+                    potentialLCs.emplace(bestScore, lc);
+
+                    // and a new one, keeping the best MC sample, plus some
+                    // additional ones:
+                    lc.draw_several_samples = true;
+
+                    // and change the mean:
+                    if (root_id == min_id)
+                        lc.relative_pose_largest_wrt_smallest.mean =
+                            bestRelPose;
+                    else
+                        lc.relative_pose_largest_wrt_smallest.mean =
+                            -bestRelPose;
+                }
 #endif
+            }
 
             potentialLCs.emplace(bestScore, lc);
         }
@@ -1007,14 +1111,16 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
     MRPT_LOG_DEBUG_STREAM(
         "LC candidate: relPose=" << lc.relative_pose_largest_wrt_smallest);
 
-#if 0
+    if (SAVE_LCS)
     {
-        static int nLoop = 0;
-        mrpt::system::createDirectory("lc");
+        static int        nLoop = 0;
+        const std::string d     = "lcs_"s + params_.debug_files_prefix;
+        mrpt::system::createDirectory(d);
         const auto sDir = mrpt::format(
-            "lc/loop_%04i_g%03u_l%03u", nLoop++, (unsigned int)*pcs_global.id,
-            (unsigned int)*pcs_local.id);
+            "%s/loop_%04i_g%03u_l%03u", d.c_str(), nLoop++,
+            (unsigned int)*pcs_global.id, (unsigned int)*pcs_local.id);
         mrpt::system::createDirectory(sDir);
+        std::cout << "[LC] Saving loop closure files to: " << sDir << "\n";
 
         pcs_global.save_to_file(mrpt::system::pathJoin({sDir, "global.mm"}));
         pcs_local.save_to_file(mrpt::system::pathJoin({sDir, "local.mm"}));
@@ -1023,7 +1129,6 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
             mrpt::system::pathJoin({sDir, "init_pose_local_wrt_global.txt"}));
         f << lc.relative_pose_largest_wrt_smallest;
     }
-#endif
 
     const mrpt::math::TPose3D initGuess =
         lc.relative_pose_largest_wrt_smallest.mean.asTPose();
@@ -1315,6 +1420,43 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
     {
         // do not re-localize, just start with the first initial guess:
         initGuesses.push_back(initGuess);
+
+        if (lc.draw_several_samples)
+        {
+            const double maxMapLenght =
+                (submapLocal.bbox.max - submapLocal.bbox.min).norm();
+            const double stdXY  = maxMapLenght / 2;
+            const double stdYaw = mrpt::DEG2RAD(10.0) / 2;
+
+            const double step_XY = maxMapLenght / 5;
+
+            auto rng = mrpt::random::CRandomGenerator();
+
+            for (double x = -stdXY; x < stdXY; x += step_XY)
+            {
+                for (double y = -stdXY; y < stdXY; y += step_XY)
+                {
+                    auto p = initGuess;
+                    p.x    = x;
+                    p.y    = y;
+                    p.yaw += rng.drawGaussian1D(.0, stdYaw);
+
+                    initGuesses.push_back(p);
+                }
+            }
+
+#if 0 
+           for (size_t i = 0; i < 20; i++)
+            {
+                auto p = initGuess;
+                p.x += rng.drawGaussian1D(.0, stdXY);
+                p.y += rng.drawGaussian1D(.0, stdXY);
+                p.yaw += rng.drawGaussian1D(.0, stdYaw);
+
+                initGuesses.push_back(p);
+            }
+#endif
+        }
     }
 
     // 2) refine with ICP:
@@ -1508,6 +1650,9 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(
     // add metadata to local map (for generated debug .icplog files):
     submap.local_map->label = params_.debug_files_prefix;
     submap.local_map->id    = submap.id;
+
+    // Add geo-referencing, if it exists:
+    if (submap.geo_ref) submap.local_map->georeferencing = submap.geo_ref;
 
     // Actual bbox: from point cloud layer:
     std::optional<mrpt::math::TBoundingBoxf> theBBox;

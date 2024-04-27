@@ -82,9 +82,11 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         double icp_edge_robust_param     = 1.0;
         double icp_edge_worst_multiplier = 10.0;
 
-        double submap_max_length = 75.0;
+        double submap_max_length_wrt_map = 0.25;
 
         double min_volume_intersection_ratio_for_lc_candidate = 0.6;
+
+        bool assume_planar_world = true;
 
         uint32_t max_number_lc_candidates = 40;  // 0: no limit
 
@@ -115,6 +117,8 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         submap_id_t id = 0;
 
         mutable mrpt::math::TBoundingBox bbox;  // in the submap local frame
+
+        std::optional<mp2p_icp::metric_map_t::Georeferencing> geo_ref;
 
         /// IDs are indices from the simplemap:
         std::set<keyframe_id_t> kf_ids;
@@ -207,6 +211,7 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         PotentialLoop() = default;
 
         mrpt::poses::CPose3DPDFGaussian relative_pose_largest_wrt_smallest;
+        bool                            draw_several_samples = false;
         size_t                          topological_distance = 0;
         double                          score                = 0;
         submap_id_t                     smallest_id = 0, largest_id = 0;

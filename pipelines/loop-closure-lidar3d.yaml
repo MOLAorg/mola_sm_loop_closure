@@ -14,19 +14,19 @@ params:
   # These sensor labels will be handled as GNNS (GPS) (For storage in simplemap only)
   gnns_sensor_label: 'gps'
 
+  submap_max_length_wrt_map: 0.10   # [m/m]
+
   # Max. length of submap:
   # MULRAN: 
-  #submap_max_length: 150   # [m]
   #max_number_lc_candidates: 80 # 0: no limit
 
+  
   # KITTI: 
-  submap_max_length: 20   # [m]
   max_number_lc_candidates: 200 # 0: no limit
 
   # Minimum ICP quality to accept a loop closure:
-  min_icp_goodness: 0.60
-
-  icp_edge_worst_multiplier: 10.0  # how much uncertainty for the "min_icp_goodness" in comparison to a 100% icp result
+  min_icp_goodness: 0.35
+  icp_edge_worst_multiplier: 15.0  # how much uncertainty for the "min_icp_goodness" in comparison to a 100% icp result
   icp_edge_robust_param: 1.0
 
   min_volume_intersection_ratio_for_lc_candidate: 0.55
@@ -87,6 +87,7 @@ icp_settings:
         pointLayerMatches:
           - {global: "localmap_up", local: "points_to_register_up", weight: 1.0}
           - {global: "localmap_down", local: "points_to_register_down", weight: 1.0}
+
 
   quality:
     - class: mp2p_icp::QualityEvaluator_PairedRatio
