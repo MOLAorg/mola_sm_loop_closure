@@ -682,7 +682,11 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
     {
         const auto& [pose, sf, twist] = state_.sm->get(id);
 
-        subSM.insert(pose, sf, twist);  // for latter use in GNNS geo-referenc.
+        // Create submap SM, for latter use in GNNS geo-reference:
+        auto relPdf = mrpt::poses::CPose3DPDFGaussian::Create();
+        relPdf->copyFrom(*pose);
+        relPdf->changeCoordinatesReference(submap.global_pose);
+        subSM.insert(relPdf, sf, twist);
 
         // process metadata as embedded YAML "observation":
         if (auto oc =
