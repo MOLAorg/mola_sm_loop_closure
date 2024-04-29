@@ -172,6 +172,8 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         // This graph is used for Dijsktra only:
         mrpt::graphs::CNetworkOfPoses3DCov submapsGraph;
 
+        std::optional<mrpt::topography::TGeodeticCoords> globalGeoRef;
+
         gtsam::Values               kfGraphValues;
         gtsam::NonlinearFactorGraph kfGraphFG, kfGraphFGRobust;
 

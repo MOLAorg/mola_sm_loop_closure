@@ -121,6 +121,20 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
     // first gps coord is used as reference:
     std::optional<mrpt::topography::TGeodeticCoords> refCoord;
 
+    // Copy user ENU frame reference, if provided:
+    if (params.geodeticReference)
+    {
+        refCoord = *params.geodeticReference;
+        if (params.logger)
+            params.logger->logFmt(
+                mrpt::system::LVL_DEBUG,
+                "[simplemap_georeference] Using user-provided reference: "
+                "lat=%s lot=%s h=%f m",
+                params.geodeticReference->lon.getAsString().c_str(),
+                params.geodeticReference->lat.getAsString().c_str(),
+                params.geodeticReference->height);
+    }
+
     struct Frame
     {
         mrpt::poses::CPose3D              pose;
@@ -183,11 +197,6 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
 
             // Convert GNNS obs to ENU:
             mrpt::topography::geodeticToENU_WGS84(f.coords, f.enu, *refCoord);
-
-#if 0
-            std::cout << "pose: " << p << "\nenu: " << f.enu << "\n";
-            // obs->getDescriptionAsText(std::cout);
-#endif
         }
     }
 
@@ -248,9 +257,14 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
     const double errInit = graph.error(initValues);
     const double errEnd  = graph.error(optimal);
 
-    std::cout << "LM iterations: " << lm.iterations() << std::endl;
-    std::cout << "Init error   : " << errInit << std::endl;
-    std::cout << "Final error  : " << errEnd << std::endl;
+    if (params.logger)
+    {
+        std::stringstream ss;
+        ss << "[simplemap_georeference] LM iterations: " << lm.iterations()
+           << ", init error: " << errInit << ", final error: " << errEnd
+           << " , for " << poses.size() << " frames.";
+        params.logger->logStr(mrpt::system::LVL_INFO, ss.str());
+    }
 
     const auto T0 = optimal.at<gtsam::Pose3>(T(0));
 

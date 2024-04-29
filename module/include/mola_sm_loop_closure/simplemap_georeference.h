@@ -22,6 +22,7 @@
 
 #include <mp2p_icp/metricmap.h>
 #include <mrpt/maps/CSimpleMap.h>
+#include <mrpt/system/COutputLogger.h>
 
 namespace mola
 {
@@ -36,8 +37,16 @@ struct SMGeoReferencingParams
 {
     SMGeoReferencingParams() = default;
 
+    /// If provided, this will be the coordinates of the ENU frame origin.
+    /// Otherwise (default), the first GNNS entry will become the reference.
+    std::optional<mrpt::topography::TGeodeticCoords> geodeticReference;
+
+    /// May be required for small maps, i.e. when the length of the trajectory
+    /// is not >10 times the GNNS uncertainty.
     bool   addHorizontalityConstraints = true;
     double horizontalitySigmaZ         = 1.0;  // [m]
+
+    mrpt::system::COutputLogger* logger = nullptr;
 };
 
 /** Function to georeferencing a given SimpleMap with GNNS observations.

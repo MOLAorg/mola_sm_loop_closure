@@ -665,6 +665,8 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
     submap.kf_ids      = ids;
     submap.global_pose = keyframe_pose_in_simplemap(refFrameId);
 
+    const auto invSubmapPose = -submap.global_pose;
+
     if (params_.assume_planar_world) make_pose_planar(submap.global_pose);
 
     MRPT_LOG_DEBUG_STREAM(
@@ -685,7 +687,8 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
         // Create submap SM, for latter use in GNNS geo-reference:
         auto relPdf = mrpt::poses::CPose3DPDFGaussian::Create();
         relPdf->copyFrom(*pose);
-        relPdf->changeCoordinatesReference(submap.global_pose);
+        relPdf->changeCoordinatesReference(invSubmapPose);
+
         subSM.insert(relPdf, sf, twist);
 
         // process metadata as embedded YAML "observation":
@@ -729,10 +732,16 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
     {
         SMGeoReferencingParams geoParams;
         geoParams.addHorizontalityConstraints = false;
+        geoParams.logger                      = this;
+        geoParams.geodeticReference           = state_.globalGeoRef;
 
         const auto geoResult = simplemap_georeference(subSM, geoParams);
         // save in submap:
         submap.geo_ref = geoResult.geo_ref;
+
+        // Use one single global reference frame for all submaps:
+        if (!state_.globalGeoRef && submap.geo_ref)
+            state_.globalGeoRef = submap.geo_ref->geo_coord;
     }
 
     if (bbox.has_value())
