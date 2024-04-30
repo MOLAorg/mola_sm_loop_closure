@@ -38,9 +38,8 @@
 #include <mola_sm_loop_closure/SimplemapLoopClosure.h>
 #include <mola_yaml/yaml_helpers.h>
 
-// MRPT graph-slam:
+// MRPT graphs:
 #include <mrpt/graphs/dijkstra.h>
-//#include <mrpt/graphslam/levmarq.h> // replaced by GTSAM
 
 // visualization:
 #include <mrpt/opengl/CBox.h>
@@ -57,6 +56,9 @@
 #include <gtsam/nonlinear/expressions.h>
 #include <gtsam/slam/BetweenFactor.h>
 #include <gtsam/slam/expressions.h>
+
+// gtsam factors:
+#include "FactorGNNS2ENU.h"
 
 using namespace mola;
 
@@ -764,9 +766,10 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
     if (params_.use_gnns && gnnsCount > 2)
     {
         SMGeoReferencingParams geoParams;
-        geoParams.addHorizontalityConstraints = false;
-        geoParams.logger                      = this;
-        geoParams.geodeticReference           = state_.globalGeoRef;
+        geoParams.fgParams.addHorizontalityConstraints = false;
+
+        geoParams.logger            = this;
+        geoParams.geodeticReference = state_.globalGeoRef;
 
         const auto geoResult = simplemap_georeference(subSM, geoParams);
 

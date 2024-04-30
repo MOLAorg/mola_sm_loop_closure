@@ -20,97 +20,11 @@
 
 // MOLA+MRPT
 #include <mola_sm_loop_closure/simplemap_georeference.h>
-#include <mrpt/obs/CObservationGPS.h>
 #include <mrpt/poses/gtsam_wrappers.h>
 #include <mrpt/topography/conversions.h>
 
-// GTSAM:
-#include <gtsam/geometry/Point3.h>
-#include <gtsam/geometry/Pose3.h>
-#include <gtsam/inference/Symbol.h>
-#include <gtsam/nonlinear/ExpressionFactor.h>
-#include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
-#include <gtsam/nonlinear/Marginals.h>
-#include <gtsam/nonlinear/Values.h>
-#include <gtsam/nonlinear/expressions.h>
-#include <gtsam/slam/BetweenFactor.h>
-#include <gtsam/slam/expressions.h>
-
-class FactorGNNS2ENU : public gtsam::ExpressionFactorN<
-                           gtsam::Point3 /*return*/, gtsam::Pose3 /*pose*/>
-{
-   private:
-    using This = FactorGNNS2ENU;
-    using Base = gtsam::ExpressionFactorN<
-        gtsam::Point3 /*return*/, gtsam::Pose3 /*pose*/>;
-
-    gtsam::Point3 sensorOnVehicle_ = {0, 0, 0};
-
-   public:
-    /// default constructor
-    FactorGNNS2ENU()           = default;
-    ~FactorGNNS2ENU() override = default;
-
-    FactorGNNS2ENU(
-        gtsam::Key kPi, const gtsam::Point3& sensorOnVehicle,
-        const gtsam::Point3& observedENU, const gtsam::SharedNoiseModel& model)
-        : Base({kPi}, model, observedENU), sensorOnVehicle_(sensorOnVehicle)
-    {
-        this->initialize(expression({kPi}));
-    }
-
-    /// @return a deep copy of this factor
-    gtsam::NonlinearFactor::shared_ptr clone() const override
-    {
-        return boost::static_pointer_cast<gtsam::NonlinearFactor>(
-            gtsam::NonlinearFactor::shared_ptr(new This(*this)));
-    }
-
-    // Return measurement expression
-    gtsam::Expression<gtsam::Point3> expression(
-        const std::array<gtsam::Key, NARY_EXPRESSION_SIZE>& keys) const override
-    {
-        gtsam::Pose3_ Pi(keys[0]);
-
-        return {gtsam::transformFrom(Pi, gtsam::Point3_(sensorOnVehicle_))};
-    }
-
-    /** implement functions needed for Testable */
-
-    /** print */
-    void print(
-        const std::string& s, const gtsam::KeyFormatter& keyFormatter =
-                                  gtsam::DefaultKeyFormatter) const override
-    {
-        std::cout << s << "FactorGNNS2ENU(" << keyFormatter(Factor::keys_[0])
-                  << ")\n";
-        gtsam::traits<gtsam::Point3>::Print(
-            sensorOnVehicle_, "  sensorOnVehicle: ");
-        gtsam::traits<gtsam::Point3>::Print(measured_, "  measured: ");
-        this->noiseModel_->print("  noise model: ");
-    }
-
-    /** equals */
-    bool equals(const gtsam::NonlinearFactor& expected, double tol = 1e-9)
-        const override
-    {
-        const This* e = dynamic_cast<const This*>(&expected);
-        return e != nullptr && Base::equals(*e, tol) &&
-               gtsam::traits<gtsam::Point3>::Equals(
-                   e->sensorOnVehicle_, sensorOnVehicle_, tol);
-    }
-
-   private:
-    friend class boost::serialization::access;
-    template <class ARCHIVE>
-    void serialize(ARCHIVE& ar, const unsigned int /*version*/)
-    {
-        ar& BOOST_SERIALIZATION_NVP(measured_);  // params before base class
-        ar& BOOST_SERIALIZATION_NVP(sensorOnVehicle_);
-        ar& boost::serialization::make_nvp(
-            "FactorGNNS2ENU", boost::serialization::base_object<Base>(*this));
-    }
-};
+// gtsam factors:
+#include "FactorGNNS2ENU.h"
 
 mola::SMGeoReferencingOutput mola::simplemap_georeference(
     const mrpt::maps::CSimpleMap& sm, const SMGeoReferencingParams& params)
@@ -119,37 +33,68 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
 
     ASSERT_(!sm.empty());
 
-    // first gps coord is used as reference:
-    std::optional<mrpt::topography::TGeodeticCoords> refCoord;
+    const GNNSFrames smFrames =
+        extract_gnns_frames_from_sm(sm, params.geodeticReference);
 
-    // Copy user ENU frame reference, if provided:
-    if (params.geodeticReference)
+    // Build and optimize GTSAM graph:
+    using gtsam::symbol_shorthand::P;  // P(i): each vehicle pose
+    using gtsam::symbol_shorthand::T;  // T(0): the single sought transformation
+
+    gtsam::NonlinearFactorGraph graph;
+    gtsam::Values               v;
+
+    add_gnns_factors(graph, v, smFrames, params.fgParams);
+
+    gtsam::LevenbergMarquardtParams lmParams =
+        gtsam::LevenbergMarquardtParams::CeresDefaults();
+
+    gtsam::LevenbergMarquardtOptimizer lm(graph, v, lmParams);
+
+    auto optimal = lm.optimize();
+
+    const double errInit = graph.error(v);
+    const double errEnd  = graph.error(optimal);
+
+    const double rmseInit = std::sqrt(errInit / graph.size());
+    const double rmseEnd  = std::sqrt(errEnd / graph.size());
+
+    gtsam::Marginals marginals(graph, optimal);
+
+    const auto T0     = optimal.at<gtsam::Pose3>(T(0));
+    const auto T0_cov = marginals.marginalCovariance(T(0));
+    const auto stds   = T0_cov.diagonal().array().sqrt().eval();
+
+    if (params.logger)
     {
-        refCoord = *params.geodeticReference;
-        if (params.logger)
-            params.logger->logFmt(
-                mrpt::system::LVL_DEBUG,
-                "[simplemap_georeference] Using user-provided reference: "
-                "lat=%s lot=%s h=%f m",
-                params.geodeticReference->lon.getAsString().c_str(),
-                params.geodeticReference->lat.getAsString().c_str(),
-                params.geodeticReference->height);
+        std::stringstream ss;
+        ss << "[simplemap_georeference] LM iterations: " << lm.iterations()
+           << ", init error: " << errInit << " (rmse=" << rmseInit
+           << "), final error: " << errEnd << "(rmse=" << rmseEnd << ") , for "
+           << smFrames.frames.size() << " frames, sigmas: " << stds.transpose();
+        params.logger->logStr(mrpt::system::LVL_INFO, ss.str());
     }
 
-    struct Frame
-    {
-        mrpt::poses::CPose3D              pose;
-        mrpt::obs::CObservationGPS::Ptr   obs;
-        mrpt::obs::gnss::Message_NMEA_GGA gga;
-        mrpt::topography::TGeodeticCoords coords;
-        mrpt::math::TPoint3D              enu;
-        double                            sigma_E = 5.0;
-        double                            sigma_N = 5.0;
-        double                            sigma_U = 5.0;
-    };
+    // store results:
+    ret.geo_ref.T_enu_to_map = {
+        mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T0)),
+        mrpt::gtsam_wrappers::to_mrpt_se3_cov6(T0_cov)};
 
-    std::vector<Frame> poses;
-    poses.reserve(sm.size());
+    ret.geo_ref.geo_coord = *smFrames.refCoord;
+
+    ret.final_rmse = rmseEnd;
+
+    return ret;
+}
+
+mola::GNNSFrames mola::extract_gnns_frames_from_sm(
+    const mrpt::maps::CSimpleMap&                           sm,
+    const std::optional<mrpt::topography::TGeodeticCoords>& refCoordIn)
+{
+    GNNSFrames ret;
+
+    ret.refCoord = refCoordIn;
+
+    ret.frames.reserve(sm.size());
 
     // Build list of KF poses with GNNS observations:
     for (const auto& [pose, sf, twist] : sm)
@@ -166,7 +111,7 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
         {
             if (!obs->hasMsgType(mrpt::obs::gnss::NMEA_GGA)) continue;
 
-            auto& f = poses.emplace_back();
+            auto& f = ret.frames.emplace_back();
 
             f.pose = p;
             f.obs  = obs;
@@ -194,21 +139,25 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
             f.coords.height = f.gga.fields.altitude_meters;
 
             // keep first one:
-            if (!refCoord.has_value()) refCoord = f.coords;
+            if (!ret.refCoord.has_value()) ret.refCoord = f.coords;
 
             // Convert GNNS obs to ENU:
-            mrpt::topography::geodeticToENU_WGS84(f.coords, f.enu, *refCoord);
+            mrpt::topography::geodeticToENU_WGS84(
+                f.coords, f.enu, *ret.refCoord);
         }
     }
 
-    // Build and optimize GTSAM graph:
-    gtsam::NonlinearFactorGraph graph;
-    gtsam::Values               initValues;
+    return ret;
+}
 
+void mola::add_gnns_factors(
+    gtsam::NonlinearFactorGraph& fg, gtsam::Values& v, const GNNSFrames& frames,
+    const AddGNNSFactorParams& params)
+{
     using gtsam::symbol_shorthand::P;  // P(i): each vehicle pose
     using gtsam::symbol_shorthand::T;  // T(0): the single sought transformation
 
-    initValues.insert(T(0), gtsam::Pose3::Identity());
+    v.insert(T(0), gtsam::Pose3::Identity());
 
     // Expression to optimize (i=0...N):
     // P (+) kf_pose{i} = gps_enu{i}
@@ -217,9 +166,9 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
     auto noiseHorizontality = gtsam::noiseModel::Diagonal::Sigmas(
         gtsam::Vector6(1e3, 1e3, 1e3, 1e6, 1e6, params.horizontalitySigmaZ));
 
-    for (size_t i = 0; i < poses.size(); i++)
+    for (size_t i = 0; i < frames.frames.size(); i++)
     {
-        const auto& frame = poses.at(i);
+        const auto& frame = frames.frames.at(i);
 
         auto noiseOrg = gtsam::noiseModel::Diagonal::Sigmas(
             gtsam::Vector3(frame.sigma_E, frame.sigma_N, frame.sigma_U));
@@ -231,60 +180,20 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
         const auto sensorPointOnVeh =
             mrpt::gtsam_wrappers::toPoint3(frame.obs->sensorPose.translation());
 
-        graph.emplace_shared<FactorGNNS2ENU>(
+        fg.emplace_shared<FactorGNNS2ENU>(
             P(i), sensorPointOnVeh, observedENU, robustNoise);
 
         const auto vehiclePose = mrpt::gtsam_wrappers::toPose3(frame.pose);
 
-        initValues.insert(P(i), vehiclePose);
+        v.insert(P(i), vehiclePose);
 
-        graph.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+        fg.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             T(0), P(i), vehiclePose, noisePoses);
 
         if (params.addHorizontalityConstraints)
         {
-            graph.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
+            fg.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
                 P(i), gtsam::Pose3::Identity(), noiseHorizontality);
         }
     }
-
-    gtsam::LevenbergMarquardtParams lmParams =
-        gtsam::LevenbergMarquardtParams::CeresDefaults();
-
-    gtsam::LevenbergMarquardtOptimizer lm(graph, initValues, lmParams);
-
-    auto optimal = lm.optimize();
-
-    const double errInit = graph.error(initValues);
-    const double errEnd  = graph.error(optimal);
-
-    const double rmseInit = std::sqrt(errInit / graph.size());
-    const double rmseEnd  = std::sqrt(errEnd / graph.size());
-
-    gtsam::Marginals marginals(graph, optimal);
-
-    const auto T0     = optimal.at<gtsam::Pose3>(T(0));
-    const auto T0_cov = marginals.marginalCovariance(T(0));
-    const auto stds   = T0_cov.diagonal().array().sqrt().eval();
-
-    if (params.logger)
-    {
-        std::stringstream ss;
-        ss << "[simplemap_georeference] LM iterations: " << lm.iterations()
-           << ", init error: " << errInit << " (rmse=" << rmseInit
-           << "), final error: " << errEnd << "(rmse=" << rmseEnd << ") , for "
-           << poses.size() << " frames, sigmas: " << stds.transpose();
-        params.logger->logStr(mrpt::system::LVL_INFO, ss.str());
-    }
-
-    // store results:
-    ret.geo_ref.T_enu_to_map = {
-        mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T0)),
-        mrpt::gtsam_wrappers::to_mrpt_se3_cov6(T0_cov)};
-
-    ret.geo_ref.geo_coord = refCoord.value();
-
-    ret.final_rmse = rmseEnd;
-
-    return ret;
 }
