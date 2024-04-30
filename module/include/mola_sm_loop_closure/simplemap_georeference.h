@@ -45,6 +45,12 @@ struct AddGNNSFactorParams
     /// is not >10 times the GNNS uncertainty.
     bool   addHorizontalityConstraints = false;
     double horizontalitySigmaZ         = 1.0;  // [m]
+
+    bool   addGlobalPosesFactors = true;
+    double globalPosesSigma      = 0.01;
+
+    bool addPseudoGlobalPosesFactors = false;
+    bool robustKernel                = true;
 };
 
 struct SMGeoReferencingParams

@@ -22,6 +22,7 @@
 
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/Values.h>
+#include <mola_sm_loop_closure/simplemap_georeference.h>
 #include <mp2p_icp/icp_pipeline_from_yaml.h>
 #include <mp2p_icp/metricmap.h>
 #include <mp2p_icp_filters/FilterBase.h>
@@ -113,8 +114,6 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
 
         mutable mrpt::math::TBoundingBox bbox;  // in the submap local frame
 
-        std::optional<mp2p_icp::metric_map_t::Georeferencing> geo_ref;
-
         /// IDs are indices from the simplemap:
         std::set<keyframe_id_t> kf_ids;
     };
@@ -167,11 +166,9 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         // This graph is used for Dijsktra only:
         mrpt::graphs::CNetworkOfPoses3DCov submapsGraph;
 
-        std::optional<mrpt::topography::TGeodeticCoords> globalGeoRef;
-        submap_id_t                                      globalGeoRefSubmapId;
-
         gtsam::Values               kfGraphValues;
         gtsam::NonlinearFactorGraph kfGraphFG, kfGraphFGRobust;
+        mola::GNNSFrames            gnnsFrames;
 
         mrpt::poses::CPose3D kfGraph_get_pose(const keyframe_id_t id) const;
     };
@@ -220,7 +217,11 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
     using PotentialLoopOutput = std::vector<PotentialLoop>;
 
     PotentialLoopOutput find_next_loop_closures() const;
-    [[nodiscard]] bool  process_loop_candidate(const PotentialLoop& lc);
+
+    PotentialLoopOutput impl_find_lc_tree() const;
+    PotentialLoopOutput impl_find_lc_gnns() const;
+
+    [[nodiscard]] bool process_loop_candidate(const PotentialLoop& lc);
 
     mrpt::WorkerThreadsPool threads_{state_.perThreadState_.size()};
 

@@ -154,17 +154,35 @@ void mola::add_gnns_factors(
     gtsam::NonlinearFactorGraph& fg, gtsam::Values& v, const GNNSFrames& frames,
     const AddGNNSFactorParams& params)
 {
-    using gtsam::symbol_shorthand::P;  // P(i): each vehicle pose
     using gtsam::symbol_shorthand::T;  // T(0): the single sought transformation
+    using gtsam::symbol_shorthand::X;  // X(i): each vehicle pose frame (SE(3))
 
-    v.insert(T(0), gtsam::Pose3::Identity());
+    if (params.addGlobalPosesFactors && !v.exists(T(0)))
+    {
+        v.insert(T(0), gtsam::Pose3::Identity());
+
+        // Weak prior to make T(0) translational part to be near (0,0,0):
+        const auto observedENU      = gtsam::Z_3x1;
+        const auto sensorPointOnVeh = gtsam::Z_3x1;
+        const auto vehiclePose      = gtsam::Pose3::Identity();
+        auto       noiseOrg = gtsam::noiseModel::Isotropic::Sigma(3, 0.1);
+
+        fg.emplace_shared<FactorGNNS2ENU>(
+            T(0), sensorPointOnVeh, observedENU, noiseOrg);
+    }
 
     // Expression to optimize (i=0...N):
     // P (+) kf_pose{i} = gps_enu{i}
 
-    auto noisePoses         = gtsam::noiseModel::Isotropic::Sigma(6, 1e-2);
+    auto noisePoses =
+        gtsam::noiseModel::Isotropic::Sigma(6, params.globalPosesSigma);
+    auto noiseRelPoses =
+        gtsam::noiseModel::Isotropic::Sigma(6, params.globalPosesSigma);
     auto noiseHorizontality = gtsam::noiseModel::Diagonal::Sigmas(
         gtsam::Vector6(1e3, 1e3, 1e3, 1e6, 1e6, params.horizontalitySigmaZ));
+
+    ASSERT_(!frames.frames.empty());
+    const auto pose0 = frames.frames.at(0).pose;
 
     for (size_t i = 0; i < frames.frames.size(); i++)
     {
@@ -173,27 +191,44 @@ void mola::add_gnns_factors(
         auto noiseOrg = gtsam::noiseModel::Diagonal::Sigmas(
             gtsam::Vector3(frame.sigma_E, frame.sigma_N, frame.sigma_U));
 
-        auto robustNoise = gtsam::noiseModel::Robust::Create(
-            gtsam::noiseModel::mEstimator::Huber::Create(1.5), noiseOrg);
-
         const auto observedENU = mrpt::gtsam_wrappers::toPoint3(frame.enu);
         const auto sensorPointOnVeh =
             mrpt::gtsam_wrappers::toPoint3(frame.obs->sensorPose.translation());
 
-        fg.emplace_shared<FactorGNNS2ENU>(
-            P(i), sensorPointOnVeh, observedENU, robustNoise);
-
         const auto vehiclePose = mrpt::gtsam_wrappers::toPose3(frame.pose);
 
-        v.insert(P(i), vehiclePose);
+        if (params.robustKernel)
+        {
+            auto robustNoise = gtsam::noiseModel::Robust::Create(
+                gtsam::noiseModel::mEstimator::Huber::Create(1.5), noiseOrg);
+            fg.emplace_shared<FactorGNNS2ENU>(
+                X(i), sensorPointOnVeh, observedENU, robustNoise);
+        }
+        else
+        {
+            fg.emplace_shared<FactorGNNS2ENU>(
+                X(i), sensorPointOnVeh, observedENU, noiseOrg);
+        }
+        if (params.addGlobalPosesFactors)
+        {
+            if (!v.exists(X(i))) v.insert(X(i), vehiclePose);
+            fg.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+                T(0), X(i), vehiclePose, noisePoses);
+        }
 
-        fg.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-            T(0), P(i), vehiclePose, noisePoses);
+        if (params.addPseudoGlobalPosesFactors)
+        {
+            if (!v.exists(X(i))) v.insert(X(i), vehiclePose);
+
+            fg.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+                X(0), X(i), mrpt::gtsam_wrappers::toPose3(frame.pose - pose0),
+                noiseRelPoses);
+        }
 
         if (params.addHorizontalityConstraints)
         {
             fg.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
-                P(i), gtsam::Pose3::Identity(), noiseHorizontality);
+                X(i), gtsam::Pose3::Identity(), noiseHorizontality);
         }
     }
 }
