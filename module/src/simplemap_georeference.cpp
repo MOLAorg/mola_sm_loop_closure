@@ -30,6 +30,7 @@
 #include <gtsam/inference/Symbol.h>
 #include <gtsam/nonlinear/ExpressionFactor.h>
 #include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
+#include <gtsam/nonlinear/Marginals.h>
 #include <gtsam/nonlinear/Values.h>
 #include <gtsam/nonlinear/expressions.h>
 #include <gtsam/slam/BetweenFactor.h>
@@ -257,22 +258,33 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
     const double errInit = graph.error(initValues);
     const double errEnd  = graph.error(optimal);
 
+    const double rmseInit = std::sqrt(errInit / graph.size());
+    const double rmseEnd  = std::sqrt(errEnd / graph.size());
+
+    gtsam::Marginals marginals(graph, optimal);
+
+    const auto T0     = optimal.at<gtsam::Pose3>(T(0));
+    const auto T0_cov = marginals.marginalCovariance(T(0));
+    const auto stds   = T0_cov.diagonal().array().sqrt().eval();
+
     if (params.logger)
     {
         std::stringstream ss;
         ss << "[simplemap_georeference] LM iterations: " << lm.iterations()
-           << ", init error: " << errInit << ", final error: " << errEnd
-           << " , for " << poses.size() << " frames.";
+           << ", init error: " << errInit << " (rmse=" << rmseInit
+           << "), final error: " << errEnd << "(rmse=" << rmseEnd << ") , for "
+           << poses.size() << " frames, sigmas: " << stds.transpose();
         params.logger->logStr(mrpt::system::LVL_INFO, ss.str());
     }
 
-    const auto T0 = optimal.at<gtsam::Pose3>(T(0));
-
     // store results:
-    ret.geo_ref.T_enu_to_map =
-        mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T0));
+    ret.geo_ref.T_enu_to_map = {
+        mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T0)),
+        mrpt::gtsam_wrappers::to_mrpt_se3_cov6(T0_cov)};
 
     ret.geo_ref.geo_coord = refCoord.value();
+
+    ret.final_rmse = rmseEnd;
 
     return ret;
 }

@@ -31,6 +31,7 @@ struct SMGeoReferencingOutput
     SMGeoReferencingOutput() = default;
 
     mp2p_icp::metric_map_t::Georeferencing geo_ref;
+    double                                 final_rmse = .0;
 };
 
 struct SMGeoReferencingParams

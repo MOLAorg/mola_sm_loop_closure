@@ -124,6 +124,7 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, do_first_gross_relocalize, bool);
     YAML_LOAD_OPT(params_, do_montecarlo_icp, bool);
     YAML_LOAD_OPT(params_, assume_planar_world, bool);
+    YAML_LOAD_OPT(params_, use_gnns, bool);
 
     YAML_LOAD_REQ(params_, threshold_sigma_initial, double);
     YAML_LOAD_REQ(params_, threshold_sigma_final, double);
@@ -135,6 +136,8 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
 
     YAML_LOAD_OPT(
         params_, min_volume_intersection_ratio_for_lc_candidate, double);
+
+    YAML_LOAD_OPT(params_, save_submaps_viz_files, bool);
 
     // system-wide profiler:
     profiler_.enable(params_.profiler_enabled);
@@ -399,8 +402,8 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     {
         for (const auto id : submap.kf_ids)
         {
-            const gtsam::Pose3 p =
-                mrpt::gtsam_wrappers::toPose3(keyframe_pose_in_simplemap(id));
+            const auto         pose_i = keyframe_pose_in_simplemap(id);
+            const gtsam::Pose3 p      = mrpt::gtsam_wrappers::toPose3(pose_i);
 
             state_.kfGraphValues.insert(X(id), p);
 
@@ -459,9 +462,86 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         state_.kfGraphFGRobust += f;
     }
 
-#if 1
-    // Save viz of initial state:
+    // GNNS Edges: additional edges in both graphs:
+    if (state_.globalGeoRef.has_value())
     {
+        const auto  ref_id    = state_.globalGeoRefSubmapId;
+        const auto& refSubmap = state_.submaps.at(ref_id);
+
+        for (const auto& [id, submap] : state_.submaps)
+        {
+            // has this submap GNNS?
+            if (!submap.geo_ref) continue;
+
+            // add edge: gpsRefId => id
+            const auto this_id = id;
+
+            // T_0_i = (T_enu_0)⁻¹ · T_enu_i (notes picture! pass to paper)
+            const auto T_enu_0 = refSubmap.geo_ref->T_enu_to_map;
+            const auto T_0_enu = -T_enu_0;
+
+            const auto T_enu_i = submap.geo_ref->T_enu_to_map;
+
+            const mrpt::poses::CPose3DPDFGaussian relPose /*T_0_i*/ =
+                T_0_enu + T_enu_i;
+
+            state_.submapsGraph.insertEdge(ref_id, this_id, relPose);
+
+            // 2) Add edge to low-level keyframe graph:
+
+            const gtsam::Pose3 deltaPose =
+                mrpt::gtsam_wrappers::toPose3(relPose.getPoseMean());
+
+            auto edgeNoise = gtsam::noiseModel::Gaussian::Covariance(
+                mrpt::gtsam_wrappers::to_gtsam_se3_cov6_reordering(
+                    relPose.cov));
+
+            const auto refKfId = *refSubmap.kf_ids.begin();
+            const auto curKfId = *submap.kf_ids.begin();
+
+            {
+                const auto p0 =
+                    state_.kfGraphValues.at<gtsam::Pose3>(X(refKfId));
+                const auto pi =
+                    state_.kfGraphValues.at<gtsam::Pose3>(X(curKfId));
+                const auto p01pre = mrpt::gtsam_wrappers::toTPose3D(pi) -
+                                    mrpt::gtsam_wrappers::toTPose3D(p0);
+
+                MRPT_LOG_DEBUG_STREAM(
+                    "FG GNNS edge:\n"
+                    "p01: "
+                    << p01pre
+                    << "\n"
+                       "new: "
+                    << relPose.getPoseMean().asTPose());
+            }
+
+            state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+                X(refKfId), X(curKfId), deltaPose, edgeNoise);
+
+            state_.kfGraphFGRobust
+                .emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+                    X(refKfId), X(curKfId), deltaPose, edgeNoise);
+        }
+
+        if (params_.save_submaps_viz_files)
+        {  // Save viz of initial state:
+            VizOptions opts;
+            auto       glMap = build_submaps_visualization(opts);
+
+            mrpt::opengl::Scene scene;
+            scene.insert(glMap);
+
+            scene.saveToFile(
+                params_.debug_files_prefix + "_submaps_initial_pre.3Dscene"s);
+        }
+
+        // Run an initial LM pass to fit the GNNS measurements:
+        optimize_graph();
+    }
+
+    if (params_.save_submaps_viz_files)
+    {  // Save viz of initial state:
         VizOptions opts;
         auto       glMap = build_submaps_visualization(opts);
 
@@ -471,7 +551,6 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         scene.saveToFile(
             params_.debug_files_prefix + "_submaps_initial.3Dscene"s);
     }
-#endif
 
     // Look for potential loop closures:
     // -----------------------------------------------
@@ -491,10 +570,12 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         if (params_.max_number_lc_candidates > 0 &&
             LCs.size() > params_.max_number_lc_candidates)
         {
+            // dont shuffle: they are already sorted by expected score
+#if 0
             std::random_device rd;
             std::mt19937       g(rd());
             std::shuffle(LCs.begin(), LCs.end(), g);
-
+#endif
             LCs.resize(params_.max_number_lc_candidates);
         }
 
@@ -547,62 +628,15 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         // any change to the graph? re-optimize it:
         if (anyGraphChange)
         {
-            // low-level KF graph:
-            auto lmParams = gtsam::LevenbergMarquardtParams::LegacyDefaults();
-
-            // Pass 1
-            const double errorInit1 =
-                state_.kfGraphFG.error(state_.kfGraphValues);
-
-            gtsam::LevenbergMarquardtOptimizer lm1(
-                state_.kfGraphFG, state_.kfGraphValues);
-            const auto& optimalValues1 = lm1.optimize();
-
-            const double errorEnd1 = state_.kfGraphFG.error(optimalValues1);
-
-            // Pass 2
-            const double errorInit2 =
-                state_.kfGraphFGRobust.error(optimalValues1);
-
-            gtsam::LevenbergMarquardtOptimizer lm2(
-                state_.kfGraphFGRobust, optimalValues1);
-            const auto& optimalValues2 = lm2.optimize();
-
-            state_.kfGraphValues = optimalValues2;
-
-            const double errorEnd2 =
-                state_.kfGraphFGRobust.error(optimalValues2);
-
-            // Update submaps global pose:
-            double largestDelta = 0;
-
-            for (auto& [submapId, submap] : state_.submaps)
-            {
-                const auto  refId      = *submap.kf_ids.begin();
-                const auto& newPose    = state_.kfGraph_get_pose(refId);
-                auto&       targetPose = submap.global_pose;
-                const auto  deltaPose =
-                    (targetPose - newPose).translation().norm();
-                mrpt::keep_max(largestDelta, deltaPose);
-
-                targetPose = newPose;
-            }
-
-            MRPT_LOG_INFO_STREAM(
-                "***** Graph re-optimized in "
-                << lm1.iterations() << "/" << lm2.iterations()
-                << " iters, ERROR: 1st PASS:" << errorInit1 << " ==> "
-                << errorEnd1 << " / 2nd PASS: " << errorInit2 << " ==> "
-                << errorEnd2 << " largestDelta=" << largestDelta);
+            const auto largestDelta = optimize_graph();
 
             // re-visit all areas again
             if (largestDelta > 3.0) alreadyChecked.clear();
         }
     }
 
-#if 1
-    // Save viz of final state:
-    {
+    if (params_.save_submaps_viz_files)
+    {  // Save viz of final state:
         VizOptions opts;
         auto       glMap = build_submaps_visualization(opts);
 
@@ -611,7 +645,6 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
         scene.saveToFile(params_.debug_files_prefix + "_submaps_final.3Dscene");
     }
-#endif
 
     // At this point, we have optimized the KFs in state_.keyframesGraph.
     // Now, update all low-level keyframes in the simplemap:
@@ -728,7 +761,7 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
     }  // for each keyframe
 
     // Try to generate geo-referencing data:
-    if (gnnsCount > 2)
+    if (params_.use_gnns && gnnsCount > 2)
     {
         SMGeoReferencingParams geoParams;
         geoParams.addHorizontalityConstraints = false;
@@ -736,12 +769,54 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
         geoParams.geodeticReference           = state_.globalGeoRef;
 
         const auto geoResult = simplemap_georeference(subSM, geoParams);
-        // save in submap:
-        submap.geo_ref = geoResult.geo_ref;
 
-        // Use one single global reference frame for all submaps:
-        if (!state_.globalGeoRef && submap.geo_ref)
-            state_.globalGeoRef = submap.geo_ref->geo_coord;
+        // decent solution?
+        const auto se3Stds = geoResult.geo_ref.T_enu_to_map.cov.asEigen()
+                                 .diagonal()
+                                 .array()
+                                 .sqrt()
+                                 .eval();
+        const auto angleStds = se3Stds.tail<3>();
+
+        if (geoResult.final_rmse < 1.0 && angleStds.maxCoeff() < 0.1)
+        {
+            // save in submap:
+            submap.geo_ref = geoResult.geo_ref;
+
+            // Use one single global reference frame for all submaps:
+            if (!state_.globalGeoRef && submap.geo_ref)
+            {
+                state_.globalGeoRef         = submap.geo_ref->geo_coord;
+                state_.globalGeoRefSubmapId = submap.id;
+            }
+
+            // Update the global pose too:
+            // T_0_i = (T_enu_0)⁻¹ · T_enu_i (notes picture! pass to paper)
+            const auto T_enu_0 = state_.submaps.at(state_.globalGeoRefSubmapId)
+                                     .geo_ref->T_enu_to_map;
+            const auto T_0_enu = -T_enu_0;
+
+            const auto T_enu_i = submap.geo_ref->T_enu_to_map;
+            const auto T_0_i   = T_0_enu + T_enu_i;
+
+            MRPT_LOG_INFO_STREAM(
+                "[build_submap_from_kfs_into] Submap #"
+                << submap.id
+                << " GNNS T_enu_to_map=" << geoResult.geo_ref.T_enu_to_map
+                << " globalPose=" << T_0_i << " was=" << submap.global_pose
+                << " se3Stds=" << se3Stds.transpose());
+
+            submap.global_pose = T_0_i.getPoseMean();
+        }
+        else
+        {
+            MRPT_LOG_INFO_STREAM(
+                "[build_submap_from_kfs_into] DISCARDING GNNS solution for "
+                "submap #"
+                << submap.id
+                << " GNNS T_enu_to_map=" << geoResult.geo_ref.T_enu_to_map
+                << " se3Stds=" << se3Stds.transpose());
+        }
     }
 
     if (bbox.has_value())
@@ -928,7 +1003,6 @@ SimplemapLoopClosure::PotentialLoopOutput
 
         // Look for all potential overlapping areas between root_id and all
         // other areas:
-        // TODO(jlbc): Use GNNS info!!
 
         const auto& rootBbox = state_.submaps.at(root_id).bbox;
 
@@ -938,7 +1012,8 @@ SimplemapLoopClosure::PotentialLoopOutput
             if (submapId == root_id) continue;
 
             // we need at least topological distance>=2 for this to be L.C.
-            if (ips.depth <= 1) continue;
+            // (except if we are using GNNS edges!)
+            if (ips.depth <= 1 && !state_.globalGeoRef.has_value()) continue;
 
             const auto min_id = std::min<submap_id_t>(root_id, submapId);
             const auto max_id = std::max<submap_id_t>(root_id, submapId);
@@ -1697,4 +1772,58 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(
     MRPT_LOG_DEBUG_STREAM("Done. Submap metric map: " << debugInfo.str());
 
     return submap.local_map;
+}
+
+double SimplemapLoopClosure::optimize_graph()
+{
+    // low-level KF graph:
+    auto lmParams = gtsam::LevenbergMarquardtParams::LegacyDefaults();
+
+    // Pass 1
+    const double errorInit1 = state_.kfGraphFG.error(state_.kfGraphValues);
+
+    gtsam::LevenbergMarquardtOptimizer lm1(
+        state_.kfGraphFG, state_.kfGraphValues);
+    const auto& optimalValues1 = lm1.optimize();
+
+    const double errorEnd1 = state_.kfGraphFG.error(optimalValues1);
+
+    // Pass 2
+    const double errorInit2 = state_.kfGraphFGRobust.error(optimalValues1);
+
+    gtsam::LevenbergMarquardtOptimizer lm2(
+        state_.kfGraphFGRobust, optimalValues1);
+    const auto& optimalValues2 = lm2.optimize();
+
+    state_.kfGraphValues = optimalValues2;
+
+    const double errorEnd2 = state_.kfGraphFGRobust.error(optimalValues2);
+
+    // Update submaps global pose:
+    double largestDelta = 0;
+
+    for (auto& [submapId, submap] : state_.submaps)
+    {
+        const auto  refId      = *submap.kf_ids.begin();
+        const auto& newPose    = state_.kfGraph_get_pose(refId);
+        auto&       targetPose = submap.global_pose;
+        const auto  deltaPose  = (targetPose - newPose).translation().norm();
+        mrpt::keep_max(largestDelta, deltaPose);
+
+        MRPT_LOG_DEBUG_STREAM(
+            "Optimized refPose of submap #"
+            << submapId << ":\n old=" << targetPose.asTPose()
+            << "\n new=" << newPose.asTPose());
+
+        targetPose = newPose;
+    }
+
+    MRPT_LOG_INFO_STREAM(
+        "***** Graph re-optimized in "
+        << lm1.iterations() << "/" << lm2.iterations()
+        << " iters, ERROR: 1st PASS:" << errorInit1 << " ==> " << errorEnd1
+        << " / 2nd PASS: " << errorInit2 << " ==> " << errorEnd2
+        << " largestDelta=" << largestDelta);
+
+    return largestDelta;
 }

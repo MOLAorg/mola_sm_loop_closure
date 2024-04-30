@@ -16,21 +16,14 @@ params:
 
   submap_max_length_wrt_map: 0.10   # [m/m]
 
-  # Max. length of submap:
-  # MULRAN: 
-  #max_number_lc_candidates: 80 # 0: no limit
-
-  
-  # KITTI: 
-  max_number_lc_candidates: 200 # 0: no limit
+  max_number_lc_candidates: 100     # 0: no limit
 
   # Minimum ICP quality to accept a loop closure:
   min_icp_goodness: 0.35
   icp_edge_worst_multiplier: 15.0  # how much uncertainty for the "min_icp_goodness" in comparison to a 100% icp result
   icp_edge_robust_param: 1.0
 
-  min_volume_intersection_ratio_for_lc_candidate: 0.55
-  
+  min_volume_intersection_ratio_for_lc_candidate: 0.30
   
   do_first_gross_relocalize: false
   do_montecarlo_icp: false

@@ -74,27 +74,22 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
 
         mp2p_icp::Parameters icp_parameters;
 
-        double threshold_sigma_initial = 5.0;
-        double threshold_sigma_final   = 0.5;
-
-        double max_sensor_range = 100.0;
-
-        double icp_edge_robust_param     = 1.0;
-        double icp_edge_worst_multiplier = 10.0;
-
-        double submap_max_length_wrt_map = 0.25;
-
-        double min_volume_intersection_ratio_for_lc_candidate = 0.6;
-
-        bool assume_planar_world = true;
-
-        uint32_t max_number_lc_candidates = 40;  // 0: no limit
-
+        double      threshold_sigma_initial                        = 5.0;
+        double      threshold_sigma_final                          = 0.5;
+        double      max_sensor_range                               = 100.0;
+        double      icp_edge_robust_param                          = 1.0;
+        double      icp_edge_worst_multiplier                      = 10.0;
+        double      submap_max_length_wrt_map                      = 0.25;
+        double      min_volume_intersection_ratio_for_lc_candidate = 0.6;
+        bool        assume_planar_world                            = true;
+        bool        use_gnns                                       = true;
+        uint32_t    max_number_lc_candidates  = 40;  // 0: no limit
         double      min_icp_goodness          = 0.60;
         bool        profiler_enabled          = true;
         bool        do_first_gross_relocalize = false;
         bool        do_montecarlo_icp         = true;
         std::string debug_files_prefix        = "sm_lc_";
+        bool        save_submaps_viz_files    = true;
     };
 
     /** Algorithm parameters */
@@ -173,6 +168,7 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         mrpt::graphs::CNetworkOfPoses3DCov submapsGraph;
 
         std::optional<mrpt::topography::TGeodeticCoords> globalGeoRef;
+        submap_id_t                                      globalGeoRefSubmapId;
 
         gtsam::Values               kfGraphValues;
         gtsam::NonlinearFactorGraph kfGraphFG, kfGraphFGRobust;
@@ -227,6 +223,9 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
     [[nodiscard]] bool  process_loop_candidate(const PotentialLoop& lc);
 
     mrpt::WorkerThreadsPool threads_{state_.perThreadState_.size()};
+
+    /// Optimizes the graph and returns the largestDelta
+    double optimize_graph();
 };
 
 }  // namespace mola
