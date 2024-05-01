@@ -620,7 +620,8 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             if (accepted) anyGraphChange = true;
 
             // free the RAM space of submaps not used any more:
-            auto lambdaDereferenceLocalMapOnce = [&](submap_id_t id) {
+            auto lambdaDereferenceLocalMapOnce = [&](submap_id_t id)
+            {
                 if (0 == --LC_submap_IDs_count[id])
                 {
                     MRPT_LOG_INFO_STREAM(
@@ -810,9 +811,9 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
             const auto T_0_i   = T_0_enu + T_enu_i;
 
             MRPT_LOG_INFO_STREAM(
-                "[build_submap_from_kfs_into] Submap #"
+                "[build_submap_from_kfs_into] ACCEPTING submap #"
                 << submap.id
-                << " GNNS T_enu_to_map=" << geoResult.geo_ref.T_enu_to_map
+                << " GNNS T_enu_to_map=" << geoResult.geo_ref.T_enu_to_map.mean
                 << " globalPose=" << T_0_i << " was=" << submap.global_pose
                 << " se3Stds=" << se3Stds.transpose());
 
@@ -824,7 +825,7 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
                 "[build_submap_from_kfs_into] DISCARDING GNNS solution for "
                 "submap #"
                 << submap.id
-                << " GNNS T_enu_to_map=" << geoResult.geo_ref.T_enu_to_map
+                << " GNNS T_enu_to_map=" << geoResult.geo_ref.T_enu_to_map.mean
                 << " se3Stds=" << se3Stds.transpose());
         }
     }
@@ -993,7 +994,8 @@ SimplemapLoopClosure::PotentialLoopOutput
 
         auto lambdaVisitTree = [&](mrpt::graphs::TNodeID const parent,
                                    const tree_t::TEdgeInfo&    edgeToChild,
-                                   size_t                      depthLevel) {
+                                   size_t                      depthLevel)
+        {
             auto& ips = submapPoses[edgeToChild.id];
 
             mrpt::poses::CPose3DPDFGaussian edge = *edgeToChild.data;
@@ -1021,8 +1023,12 @@ SimplemapLoopClosure::PotentialLoopOutput
             if (submapId == root_id) continue;
 
             // we need at least topological distance>=2 for this to be L.C.
-            // (except if we are using GNNS edges!)
-            if (ips.depth <= 1 && !state_.globalGeoRef.has_value()) continue;
+            // (except if we are using GNNS edges and one ID is the GNNS
+            // reference submap!)
+            if (ips.depth <= 1 && (!state_.globalGeoRef.has_value() ||
+                                   (submapId != state_.globalGeoRefSubmapId &&
+                                    root_id != state_.globalGeoRefSubmapId)))
+                continue;  // skip it
 
             const auto min_id = std::min<submap_id_t>(root_id, submapId);
             const auto max_id = std::max<submap_id_t>(root_id, submapId);
@@ -1232,8 +1238,9 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
 
     bool atLeastOneGoodIcp = false;
 
-    auto lambdaAddIcpEdge = [&](const mrpt::poses::CPose3D& icpRelPose,
-                                const double                icpQuality) {
+    auto lambdaAddIcpEdge =
+        [&](const mrpt::poses::CPose3D& icpRelPose, const double icpQuality)
+    {
         if (!state_.submapsGraph.edgeExists(idGlobal, idLocal))
         {
             mrpt::poses::CPose3DPDFGaussian newEdge;
@@ -1249,8 +1256,8 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
 
         using gtsam::symbol_shorthand::X;
 
-        double edge_std_xyz = 0.2;
-        double edge_std_ang = mrpt::DEG2RAD(2.0);
+        double edge_std_xyz = icpRelPose.norm() * 0.5 * 1e-2;  // 0.5% RTE
+        double edge_std_ang = mrpt::DEG2RAD(0.5);
 
         // Use a variable variance depending on the ICP quality:
         ASSERT_(params_.icp_edge_worst_multiplier > 1.0);
@@ -1469,11 +1476,12 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         in.local_map     = pcs_local;
 
         in.on_progress_callback =
-            [&](const mola::RelocalizationICP_SE2::ProgressFeedback& fb) {
-                MRPT_LOG_INFO_STREAM(
-                    "[Relocalize SE(2)] Progress " << fb.current_cell << "/"
-                                                   << fb.total_cells);
-            };
+            [&](const mola::RelocalizationICP_SE2::ProgressFeedback& fb)
+        {
+            MRPT_LOG_INFO_STREAM(
+                "[Relocalize SE(2)] Progress " << fb.current_cell << "/"
+                                               << fb.total_cells);
+        };
 
         MRPT_LOG_INFO_STREAM(
             "[Relocalize SE(2)] About to run with "
@@ -1489,7 +1497,8 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
 
         out.found_poses.visitAllVoxels(
             [&](const mola::HashedSetSE3::global_index3d_t&,
-                const mola::HashedSetSE3::VoxelData& v) {
+                const mola::HashedSetSE3::VoxelData& v)
+            {
                 if (v.poses().empty()) return;
                 bestVoxels[v.poses().size()] = v.poses().front();
             });
@@ -1515,25 +1524,30 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         // do not re-localize, just start with the first initial guess:
         initGuesses.push_back(initGuess);
 
-        if (lc.draw_several_samples)
+        if (0)  // lc.draw_several_samples)
         {
-            const double maxMapLenght =
-                (submapLocal.bbox.max - submapLocal.bbox.min).norm();
-            const double stdXY  = maxMapLenght / 2;
-            const double stdYaw = mrpt::DEG2RAD(10.0) / 2;
+            const auto sigmas =
+                lc.relative_pose_largest_wrt_smallest.cov.asEigen()
+                    .diagonal()
+                    .array()
+                    .sqrt()
+                    .eval();
 
-            const double step_XY = maxMapLenght / 5;
+            const double std_x = sigmas[0];
+            const double std_y = sigmas[1];
+            // const double std_yaw = sigmas[3];
 
-            auto rng = mrpt::random::CRandomGenerator();
-
-            for (double x = -stdXY; x < stdXY; x += step_XY)
+            for (int ix = -2; ix < 3; ix += 2)
             {
-                for (double y = -stdXY; y < stdXY; y += step_XY)
+                for (int iy = -2; iy < 3; iy += 2)
                 {
+                    if (ix == 0 && iy == 0)
+                        continue;  // center already added above
+
                     auto p = initGuess;
-                    p.x    = x;
-                    p.y    = y;
-                    p.yaw += rng.drawGaussian1D(.0, stdYaw);
+                    p.x += ix * std_x;
+                    p.y += iy * std_y;
+                    // p.yaw += rng.drawGaussian1D(.0, stdYaw);
 
                     initGuesses.push_back(p);
                 }
@@ -1554,9 +1568,9 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
     }
 
     // 2) refine with ICP:
-    // Goal: add as many graph edges as good ICP results, even if it seems
-    // redundant. the robust kernels may help later on to tell which is the
-    // correct one.
+    // Goal: keep the best one.
+
+    std::map<double /*quality*/, mp2p_icp::Results> icp_results;
 
     for (const auto& initPose : initGuesses)
     {
@@ -1588,8 +1602,22 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         // keep the best:
         if (icp_result.quality < params_.min_icp_goodness) continue;
 
-        // add a new graph edge:
-        lambdaAddIcpEdge(icp_result.optimal_tf.mean, icp_result.quality);
+        icp_results[icp_result.quality] = icp_result;
+
+        // good enough to skip the rest of init guesses?
+        if (icp_result.quality > 0.95)
+        {
+            MRPT_LOG_INFO(
+                "ICP was GOOD enough to skip the rest of initial seeds");
+            break;
+        }
+    }
+
+    // add a new graph edge:
+    if (!icp_results.empty())
+    {
+        const auto& best = icp_results.rbegin()->second;
+        lambdaAddIcpEdge(best.optimal_tf.mean, best.quality);
     }
 
     return atLeastOneGoodIcp;
@@ -1609,7 +1637,8 @@ std::future<mp2p_icp::metric_map_t::Ptr>
     const size_t threadIdx = submap.id % state_.perThreadState_.size();
 
     auto fut = threads_.enqueue(
-        [this, threadIdx](const SubMap* m) {
+        [this, threadIdx](const SubMap* m)
+        {
             // ensure only 1 thread is running for each per-thread data:
             auto lck =
                 mrpt::lockHelper(state_.perThreadState_.at(threadIdx).mtx);
