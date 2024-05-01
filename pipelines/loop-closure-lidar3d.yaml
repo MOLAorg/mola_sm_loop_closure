@@ -14,19 +14,22 @@ params:
   # These sensor labels will be handled as GNNS (GPS) (For storage in simplemap only)
   gnns_sensor_label: 'gps'
 
-  submap_max_length_wrt_map: 0.10   # [m/m]
+  submap_max_length_wrt_map: 0.06   # [m/m]
 
-  max_number_lc_candidates: 100     # 0: no limit
+  max_number_lc_candidates: '${MAX_NUMBER_LC|250}'   # 0: no limit
+
+  use_gnns: '${USE_GNNS|true}'
 
   # Minimum ICP quality to accept a loop closure:
-  min_icp_goodness: 0.35
-  icp_edge_worst_multiplier: 15.0  # how much uncertainty for the "min_icp_goodness" in comparison to a 100% icp result
+  min_icp_goodness: 0.40
+  icp_edge_worst_multiplier: 12.0  # how much uncertainty for the "min_icp_goodness" in comparison to a 100% icp result
   icp_edge_robust_param: 1.0
 
   min_volume_intersection_ratio_for_lc_candidate: 0.30
   
   do_first_gross_relocalize: false
-  do_montecarlo_icp: false
+  do_montecarlo_icp: '${DO_MONTECARLO_ICP|false}'
+
 
   # Profiler:
   profiler_enabled: true

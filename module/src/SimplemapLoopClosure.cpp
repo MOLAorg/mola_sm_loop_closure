@@ -604,16 +604,23 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             checkedCount++;
 
             MRPT_LOG_INFO_STREAM(
-                "Considering potential LC "
-                << lcIdx << "/" << LCs.size() << ": " << lc.smallest_id << "<=>"
-                << lc.largest_id << " score: " << lc.score);
+                "LC " << lcIdx << "/" << LCs.size() << ": " << lc.smallest_id
+                      << "<=>" << lc.largest_id << " score: " << lc.score
+                      << " relPose="
+                      << lc.relative_pose_largest_wrt_smallest.mean.asString()
+                      << " stds: "
+                      << lc.relative_pose_largest_wrt_smallest.cov.asEigen()
+                             .diagonal()
+                             .array()
+                             .sqrt()
+                             .eval()
+                             .transpose());
 
             const bool accepted = process_loop_candidate(lc);
             if (accepted) anyGraphChange = true;
 
             // free the RAM space of submaps not used any more:
-            auto lambdaDereferenceLocalMapOnce = [&](submap_id_t id)
-            {
+            auto lambdaDereferenceLocalMapOnce = [&](submap_id_t id) {
                 if (0 == --LC_submap_IDs_count[id])
                 {
                     MRPT_LOG_INFO_STREAM(
@@ -986,8 +993,7 @@ SimplemapLoopClosure::PotentialLoopOutput
 
         auto lambdaVisitTree = [&](mrpt::graphs::TNodeID const parent,
                                    const tree_t::TEdgeInfo&    edgeToChild,
-                                   size_t                      depthLevel)
-        {
+                                   size_t                      depthLevel) {
             auto& ips = submapPoses[edgeToChild.id];
 
             mrpt::poses::CPose3DPDFGaussian edge = *edgeToChild.data;
@@ -1226,9 +1232,8 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
 
     bool atLeastOneGoodIcp = false;
 
-    auto lambdaAddIcpEdge =
-        [&](const mrpt::poses::CPose3D& icpRelPose, const double icpQuality)
-    {
+    auto lambdaAddIcpEdge = [&](const mrpt::poses::CPose3D& icpRelPose,
+                                const double                icpQuality) {
         if (!state_.submapsGraph.edgeExists(idGlobal, idLocal))
         {
             mrpt::poses::CPose3DPDFGaussian newEdge;
@@ -1437,8 +1442,8 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         const double maxMapLenght =
             (submapLocal.bbox.max - submapLocal.bbox.min).norm();
 
-        mrpt::saturate(std_x, 1.0, 0.5 * maxMapLenght);
-        mrpt::saturate(std_y, 1.0, 0.5 * maxMapLenght);
+        mrpt::saturate(std_x, 1.0, 0.25 * maxMapLenght);
+        mrpt::saturate(std_y, 1.0, 0.25 * maxMapLenght);
 
         in.initial_guess_lattice.corner_min = {
             pdf_SE2.mean.x() - 3 * std_x,
@@ -1464,12 +1469,11 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         in.local_map     = pcs_local;
 
         in.on_progress_callback =
-            [&](const mola::RelocalizationICP_SE2::ProgressFeedback& fb)
-        {
-            MRPT_LOG_INFO_STREAM(
-                "[Relocalize SE(2)] Progress " << fb.current_cell << "/"
-                                               << fb.total_cells);
-        };
+            [&](const mola::RelocalizationICP_SE2::ProgressFeedback& fb) {
+                MRPT_LOG_INFO_STREAM(
+                    "[Relocalize SE(2)] Progress " << fb.current_cell << "/"
+                                                   << fb.total_cells);
+            };
 
         MRPT_LOG_INFO_STREAM(
             "[Relocalize SE(2)] About to run with "
@@ -1485,8 +1489,7 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
 
         out.found_poses.visitAllVoxels(
             [&](const mola::HashedSetSE3::global_index3d_t&,
-                const mola::HashedSetSE3::VoxelData& v)
-            {
+                const mola::HashedSetSE3::VoxelData& v) {
                 if (v.poses().empty()) return;
                 bestVoxels[v.poses().size()] = v.poses().front();
             });
@@ -1606,8 +1609,7 @@ std::future<mp2p_icp::metric_map_t::Ptr>
     const size_t threadIdx = submap.id % state_.perThreadState_.size();
 
     auto fut = threads_.enqueue(
-        [this, threadIdx](const SubMap* m)
-        {
+        [this, threadIdx](const SubMap* m) {
             // ensure only 1 thread is running for each per-thread data:
             auto lck =
                 mrpt::lockHelper(state_.perThreadState_.at(threadIdx).mtx);

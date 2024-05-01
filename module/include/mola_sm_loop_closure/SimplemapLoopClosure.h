@@ -87,7 +87,7 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         double      min_icp_goodness          = 0.60;
         bool        profiler_enabled          = true;
         bool        do_first_gross_relocalize = false;
-        bool        do_montecarlo_icp         = true;
+        bool        do_montecarlo_icp         = false;
         std::string debug_files_prefix        = "sm_lc_";
         bool        save_submaps_viz_files    = true;
     };
