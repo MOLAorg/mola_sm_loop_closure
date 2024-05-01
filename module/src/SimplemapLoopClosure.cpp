@@ -27,6 +27,7 @@
 #include <mrpt/obs/CObservationGPS.h>
 #include <mrpt/obs/CObservationPointCloud.h>
 #include <mrpt/obs/CObservationVelodyneScan.h>
+#include <mrpt/opengl/CEllipsoid2D.h>
 #include <mrpt/poses/CPoseRandomSampler.h>
 #include <mrpt/poses/Lie/SO.h>
 #include <mrpt/poses/gtsam_wrappers.h>
@@ -57,13 +58,11 @@
 #include <gtsam/slam/BetweenFactor.h>
 #include <gtsam/slam/expressions.h>
 
-// gtsam factors:
-#include "FactorGNNS2ENU.h"
-
 using namespace mola;
 
 const bool PRINT_ALL_SCORES = mrpt::get_env<bool>("PRINT_ALL_SCORES", false);
 const bool SAVE_LCS         = mrpt::get_env<bool>("SAVE_LCS", false);
+const bool SAVE_TREES       = mrpt::get_env<bool>("SAVE_TREES", false);
 
 namespace
 {
@@ -480,7 +479,8 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
             // T_0_i = (T_enu_0)⁻¹ · T_enu_i (notes picture! pass to paper)
             const auto T_enu_0 = refSubmap.geo_ref->T_enu_to_map;
-            const auto T_0_enu = -T_enu_0;
+            auto       T_0_enu = -T_enu_0;
+            T_0_enu.cov.setZero();  // Ignore uncertainty of this first T
 
             const auto T_enu_i = submap.geo_ref->T_enu_to_map;
 
@@ -558,6 +558,8 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     // -----------------------------------------------
     // find next smallest potential loop closure?
 
+    size_t accepted_lcs = 0;
+
     std::set<std::pair<submap_id_t, submap_id_t>> alreadyChecked;
     // TODO: Consider a finer grade alreadyChecked reset?
 
@@ -617,7 +619,11 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
                              .transpose());
 
             const bool accepted = process_loop_candidate(lc);
-            if (accepted) anyGraphChange = true;
+            if (accepted)
+            {
+                anyGraphChange = true;
+                accepted_lcs++;
+            }
 
             // free the RAM space of submaps not used any more:
             auto lambdaDereferenceLocalMapOnce = [&](submap_id_t id)
@@ -672,6 +678,9 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
         outSM.insert(newPose, sf, twist);
     }
+
+    MRPT_LOG_INFO_STREAM(
+        "Overall number of accepted loop-closures: " << accepted_lcs);
 
     // Overwrite with new SM:
     sm = std::move(outSM);
@@ -779,7 +788,7 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
         geoParams.logger            = this;
         geoParams.geodeticReference = state_.globalGeoRef;
 
-        const auto geoResult = simplemap_georeference(subSM, geoParams);
+        auto geoResult = simplemap_georeference(subSM, geoParams);
 
         // decent solution?
         const auto se3Stds = geoResult.geo_ref.T_enu_to_map.cov.asEigen()
@@ -789,9 +798,17 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
                                  .eval();
         const auto angleStds = se3Stds.tail<3>();
 
-        if (geoResult.final_rmse < 1.0 && angleStds.maxCoeff() < 0.1)
+        if (geoResult.final_rmse < 1.0)
         {
             // save in submap:
+
+            if (angleStds.maxCoeff() < 0.1)
+            {
+                // Null pitch & roll since they don't seem reliable:
+                auto& p = geoResult.geo_ref.T_enu_to_map.mean;
+                p.setYawPitchRoll(p.yaw(), .0, .0);
+            }
+
             submap.geo_ref = geoResult.geo_ref;
 
             // Use one single global reference frame for all submaps:
@@ -805,7 +822,8 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
             // T_0_i = (T_enu_0)⁻¹ · T_enu_i (notes picture! pass to paper)
             const auto T_enu_0 = state_.submaps.at(state_.globalGeoRefSubmapId)
                                      .geo_ref->T_enu_to_map;
-            const auto T_0_enu = -T_enu_0;
+            auto T_0_enu = -T_enu_0;
+            T_0_enu.cov.setZero();  // Ignore uncertainty of this first T
 
             const auto T_enu_i = submap.geo_ref->T_enu_to_map;
             const auto T_0_i   = T_0_enu + T_enu_i;
@@ -814,8 +832,9 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
                 "[build_submap_from_kfs_into] ACCEPTING submap #"
                 << submap.id
                 << " GNNS T_enu_to_map=" << geoResult.geo_ref.T_enu_to_map.mean
-                << " globalPose=" << T_0_i << " was=" << submap.global_pose
-                << " se3Stds=" << se3Stds.transpose());
+                << "\n globalPose=" << T_0_i.mean  //
+                << "\n was       =" << submap.global_pose
+                << "\n se3Stds   =" << se3Stds.transpose());
 
             submap.global_pose = T_0_i.getPoseMean();
         }
@@ -964,6 +983,8 @@ mrpt::opengl::CSetOfObjects::Ptr
 SimplemapLoopClosure::PotentialLoopOutput
     SimplemapLoopClosure::find_next_loop_closures() const
 {
+    using namespace std::string_literals;
+
     mrpt::system::CTimeLoggerEntry tle(profiler_, "find_next_loop_closure");
 
     struct InfoPerSubmap
@@ -1010,7 +1031,51 @@ SimplemapLoopClosure::PotentialLoopOutput
                                << " pose mean=" << ips.pose.mean);
         };
 
+        // run lambda:
         tree.visitDepthFirst(root_id, lambdaVisitTree);
+
+        // Debug:
+        if (SAVE_TREES)
+        {
+            const std::string d = "trees_"s + params_.debug_files_prefix;
+            mrpt::system::createDirectory(d);
+            const auto sFil = mrpt::format(
+                "%s/tree_root_%04u.3Dscene", d.c_str(), (unsigned int)root_id);
+            std::cout << "[SAVE_TREES] Saving tree : " << sFil << std::endl;
+
+            mrpt::opengl::Scene scene;
+
+            for (const auto& [id, m] : submapPoses)
+            {
+                {
+                    auto glCorner =
+                        mrpt::opengl::stock_objects::CornerXYZSimple(2.5f);
+                    glCorner->enableShowName();
+
+                    std::string label = "#"s + std::to_string(id);
+                    label += " d="s + std::to_string(m.depth);
+
+                    if (state_.submaps.at(id).geo_ref.has_value())
+                        label += " (WITH GPS)"s;
+
+                    glCorner->setName(label);
+                    glCorner->setPose(m.pose.mean);
+                    scene.insert(glCorner);
+                }
+
+                {
+                    auto glEllip = mrpt::opengl::CEllipsoid2D::Create();
+                    glEllip->setCovMatrix(
+                        m.pose.cov.asEigen().block<2, 2>(0, 0));
+                    glEllip->setLocation(m.pose.mean.translation());
+                    glEllip->setQuantiles(2.0);
+                    scene.insert(glEllip);
+                }
+            }
+
+            scene.saveToFile(sFil);
+
+        }  // end SAVE_TREES
 
         // Look for all potential overlapping areas between root_id and all
         // other areas:
