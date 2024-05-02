@@ -17,6 +17,7 @@ params:
   submap_max_length_wrt_map: 0.10   # [m/m]
 
   max_number_lc_candidates: '${MAX_NUMBER_LC|250}'   # 0: no limit
+  max_number_lc_candidates_per_submap: 2
 
   use_gnns: '${USE_GNNS|true}'
   
