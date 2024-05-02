@@ -52,6 +52,7 @@
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/inference/Symbol.h>
 #include <gtsam/nonlinear/ExpressionFactor.h>
+#include <gtsam/nonlinear/GaussNewtonOptimizer.h>
 #include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
 #include <gtsam/nonlinear/Values.h>
 #include <gtsam/nonlinear/expressions.h>
@@ -63,6 +64,7 @@ using namespace mola;
 const bool PRINT_ALL_SCORES = mrpt::get_env<bool>("PRINT_ALL_SCORES", false);
 const bool SAVE_LCS         = mrpt::get_env<bool>("SAVE_LCS", false);
 const bool SAVE_TREES       = mrpt::get_env<bool>("SAVE_TREES", false);
+const bool PRINT_FG_ERRORS  = mrpt::get_env<bool>("PRINT_FG_ERRORS", false);
 
 namespace
 {
@@ -565,6 +567,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
     // repeat until checkedCount==0:
     for (size_t lc_loop = 0; lc_loop < 1; lc_loop++)
+    // for (;;)
     {
         size_t checkedCount   = 0;
         bool   anyGraphChange = false;
@@ -995,8 +998,12 @@ SimplemapLoopClosure::PotentialLoopOutput
 
     std::multimap<double /*intersectRatio*/, PotentialLoop> potentialLCs;
 
+    // for debug files in SAVE_TREES only:
+    static int tree_iter = 0;
+    tree_iter++;
+
     // go on thru all nodes as root of Dijkstra:
-    for (const auto& [root_id, rootPose] : state_.submapsGraph.nodes)
+    for (const auto& [root_id, _] : state_.submapsGraph.nodes)
     {
         mrpt::system::CTimeLoggerEntry tle1(
             profiler_, "find_next_loop_closure.single");
@@ -1021,6 +1028,8 @@ SimplemapLoopClosure::PotentialLoopOutput
 
             mrpt::poses::CPose3DPDFGaussian edge = *edgeToChild.data;
 
+            if (edgeToChild.reverse) edge = -edge;
+
             if (params_.assume_planar_world) make_pose_planar_pdf(edge);
 
             ips.pose  = submapPoses[parent].pose + edge;
@@ -1040,7 +1049,8 @@ SimplemapLoopClosure::PotentialLoopOutput
             const std::string d = "trees_"s + params_.debug_files_prefix;
             mrpt::system::createDirectory(d);
             const auto sFil = mrpt::format(
-                "%s/tree_root_%04u.3Dscene", d.c_str(), (unsigned int)root_id);
+                "%s/tree_root_%04u_iter_%02i.3Dscene", d.c_str(),
+                (unsigned int)root_id, tree_iter);
             std::cout << "[SAVE_TREES] Saving tree : " << sFil << std::endl;
 
             mrpt::opengl::Scene scene;
@@ -1077,10 +1087,20 @@ SimplemapLoopClosure::PotentialLoopOutput
 
         }  // end SAVE_TREES
 
+        auto lambdaShrinkBbox = [](const mrpt::math::TBoundingBox& b) -> auto
+        {
+            const double f = 0.75;
+
+            auto r = b;
+            r.min *= f;
+            r.max *= f;
+            return r;
+        };
+
         // Look for all potential overlapping areas between root_id and all
         // other areas:
 
-        const auto& rootBbox = state_.submaps.at(root_id).bbox;
+        const auto rootBbox = lambdaShrinkBbox(state_.submaps.at(root_id).bbox);
 
         for (const auto& [submapId, ips] : submapPoses)
         {
@@ -1103,7 +1123,7 @@ SimplemapLoopClosure::PotentialLoopOutput
             // Idea: run a small MonteCarlo run to estimate the likelihood
             // of an overlap for large uncertainties:
             const size_t MC_RUNS =
-                mrpt::saturate_val<size_t>(10 * ips.depth, 10, 400);
+                mrpt::saturate_val<size_t>(10 * ips.depth, 50, 300);
 
             mrpt::poses::CPoseRandomSampler sampler;
             sampler.setPosePDF(ips.pose);
@@ -1112,13 +1132,14 @@ SimplemapLoopClosure::PotentialLoopOutput
             {
                 MRPT_LOG_INFO_STREAM(
                     "Relative pose: " << min_id << " <==> " << max_id
-                                      << " pose: " << ips.pose);
+                                      << " pose: " << ips.pose.mean);
             }
 
             double               bestScore = .0;
             mrpt::poses::CPose3D bestRelPose;
 
-            const auto& thisBBox = state_.submaps.at(submapId).bbox;
+            const auto thisBBox =
+                lambdaShrinkBbox(state_.submaps.at(submapId).bbox);
 
             for (size_t i = 0; i < MC_RUNS; i++)
             {
@@ -1185,16 +1206,17 @@ SimplemapLoopClosure::PotentialLoopOutput
                         "|C(1:2,1:2)|=" << std_xy << " |submap_size|="
                                         << submap_size << " ratio=" << ratio);
 
-#if 0
-                if (ratio > 2)
+#if 1
+                if (ratio > 2.0)
                 {
                     // save the original LC too:
-                    potentialLCs.emplace(bestScore, lc);
+                    // potentialLCs.emplace(bestScore, lc);
 
                     // and a new one, keeping the best MC sample, plus some
                     // additional ones:
                     lc.draw_several_samples = true;
 
+#if 0
                     // and change the mean:
                     if (root_id == min_id)
                         lc.relative_pose_largest_wrt_smallest.mean =
@@ -1202,6 +1224,7 @@ SimplemapLoopClosure::PotentialLoopOutput
                     else
                         lc.relative_pose_largest_wrt_smallest.mean =
                             -bestRelPose;
+#endif
                 }
 #endif
             }
@@ -1239,7 +1262,7 @@ SimplemapLoopClosure::PotentialLoopOutput
     // debug, print potential LCs:
     for (const auto& lc : result)
     {
-        MRPT_LOG_INFO_STREAM(
+        MRPT_LOG_DEBUG_STREAM(
             "[find_lc] Potential LC: "  //
             << lc.smallest_id << " <==> " << lc.largest_id
             << " topo_depth=" << lc.topological_distance << " relPose: "
@@ -1589,7 +1612,7 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         // do not re-localize, just start with the first initial guess:
         initGuesses.push_back(initGuess);
 
-        if (0)  // lc.draw_several_samples)
+        if (lc.draw_several_samples)
         {
             const auto sigmas =
                 lc.relative_pose_largest_wrt_smallest.cov.asEigen()
@@ -1598,13 +1621,13 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
                     .sqrt()
                     .eval();
 
-            const double std_x = sigmas[0];
-            const double std_y = sigmas[1];
+            const double std_x = sigmas[0] * 0.5;
+            const double std_y = sigmas[1] * 0.5;
             // const double std_yaw = sigmas[3];
 
-            for (int ix = -2; ix < 3; ix += 2)
+            for (int ix = -2; ix <= 2; ix += 1)
             {
-                for (int iy = -2; iy < 3; iy += 2)
+                for (int iy = -2; iy <= 2; iy += 1)
                 {
                     if (ix == 0 && iy == 0)
                         continue;  // center already added above
@@ -1633,9 +1656,7 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
     }
 
     // 2) refine with ICP:
-    // Goal: keep the best one.
-
-    std::map<double /*quality*/, mp2p_icp::Results> icp_results;
+    // Goal: keep all good results, let graph-slam to tell outliers.
 
     for (const auto& initPose : initGuesses)
     {
@@ -1667,22 +1688,7 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         // keep the best:
         if (icp_result.quality < params_.min_icp_goodness) continue;
 
-        icp_results[icp_result.quality] = icp_result;
-
-        // good enough to skip the rest of init guesses?
-        if (icp_result.quality > 0.95)
-        {
-            MRPT_LOG_INFO(
-                "ICP was GOOD enough to skip the rest of initial seeds");
-            break;
-        }
-    }
-
-    // add a new graph edge:
-    if (!icp_results.empty())
-    {
-        const auto& best = icp_results.rbegin()->second;
-        lambdaAddIcpEdge(best.optimal_tf.mean, best.quality);
+        lambdaAddIcpEdge(icp_result.optimal_tf.mean, icp_result.quality);
     }
 
     return atLeastOneGoodIcp;
@@ -1876,13 +1882,16 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(
 double SimplemapLoopClosure::optimize_graph()
 {
     // low-level KF graph:
-    auto lmParams = gtsam::LevenbergMarquardtParams::LegacyDefaults();
+    // auto lmParams = gtsam::LevenbergMarquardtParams::CeresDefaults();
+    auto lmParams = gtsam::GaussNewtonParams();
 
     // Pass 1
     const double errorInit1 = state_.kfGraphFG.error(state_.kfGraphValues);
 
-    gtsam::LevenbergMarquardtOptimizer lm1(
-        state_.kfGraphFG, state_.kfGraphValues);
+    // gtsam::LevenbergMarquardtOptimizer
+    gtsam::GaussNewtonOptimizer lm1(
+        state_.kfGraphFG, state_.kfGraphValues, lmParams);
+
     const auto& optimalValues1 = lm1.optimize();
 
     const double errorEnd1 = state_.kfGraphFG.error(optimalValues1);
@@ -1890,8 +1899,9 @@ double SimplemapLoopClosure::optimize_graph()
     // Pass 2
     const double errorInit2 = state_.kfGraphFGRobust.error(optimalValues1);
 
-    gtsam::LevenbergMarquardtOptimizer lm2(
-        state_.kfGraphFGRobust, optimalValues1);
+    // gtsam::LevenbergMarquardtOptimizer
+    gtsam::GaussNewtonOptimizer lm2(
+        state_.kfGraphFGRobust, optimalValues1, lmParams);
     const auto& optimalValues2 = lm2.optimize();
 
     state_.kfGraphValues = optimalValues2;
@@ -1923,6 +1933,20 @@ double SimplemapLoopClosure::optimize_graph()
         << " iters, ERROR: 1st PASS:" << errorInit1 << " ==> " << errorEnd1
         << " / 2nd PASS: " << errorInit2 << " ==> " << errorEnd2
         << " largestDelta=" << largestDelta);
+
+    if (PRINT_FG_ERRORS)
+    {
+        const double errorPrintThres = 10.0;
+
+        state_.kfGraphFGRobust.printErrors(
+            optimalValues2,
+            "================ 2ND PASS Factor errors ============\n",
+            gtsam::DefaultKeyFormatter,
+            std::function<bool(
+                const gtsam::Factor*, double whitenedError, size_t)>(
+                [&](const gtsam::Factor* /*f*/, double error, size_t /*index*/)
+                { return error > errorPrintThres; }));
+    }
 
     return largestDelta;
 }
