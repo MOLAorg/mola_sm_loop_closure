@@ -81,15 +81,16 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         double      icp_edge_worst_multiplier                      = 10.0;
         double      submap_max_length_wrt_map                      = 0.25;
         double      min_volume_intersection_ratio_for_lc_candidate = 0.6;
-        bool        assume_planar_world                            = true;
+        bool        assume_planar_world                            = false;
         bool        use_gnns                                       = true;
-        uint32_t    max_number_lc_candidates  = 40;  // 0: no limit
-        double      min_icp_goodness          = 0.60;
-        bool        profiler_enabled          = true;
-        bool        do_first_gross_relocalize = false;
-        bool        do_montecarlo_icp         = false;
-        std::string debug_files_prefix        = "sm_lc_";
-        bool        save_submaps_viz_files    = true;
+        uint32_t    max_number_lc_candidates            = 150;  // 0: no limit
+        uint32_t    max_number_lc_candidates_per_submap = 4;
+        double      min_icp_goodness                    = 0.60;
+        bool        profiler_enabled                    = true;
+        bool        do_first_gross_relocalize           = false;
+        bool        do_montecarlo_icp                   = false;
+        std::string debug_files_prefix                  = "sm_lc_";
+        bool        save_submaps_viz_files              = true;
     };
 
     /** Algorithm parameters */

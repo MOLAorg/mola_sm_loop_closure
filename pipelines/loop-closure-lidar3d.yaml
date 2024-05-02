@@ -19,13 +19,15 @@ params:
   max_number_lc_candidates: '${MAX_NUMBER_LC|250}'   # 0: no limit
 
   use_gnns: '${USE_GNNS|true}'
+  
+  assume_planar_world: false
 
   # Minimum ICP quality to accept a loop closure:
-  min_icp_goodness: 0.50
-  icp_edge_worst_multiplier: 5.0  # how much uncertainty for the "min_icp_goodness" in comparison to a 100% icp result
+  min_icp_goodness: 0.40
+  icp_edge_worst_multiplier: 10.0  # how much uncertainty for the "min_icp_goodness" in comparison to a 100% icp result
   icp_edge_robust_param: 1.0
 
-  min_volume_intersection_ratio_for_lc_candidate: 0.35
+  min_volume_intersection_ratio_for_lc_candidate: 0.25
   
   do_first_gross_relocalize: false
   do_montecarlo_icp: '${DO_MONTECARLO_ICP|false}'

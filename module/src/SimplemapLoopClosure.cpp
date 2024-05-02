@@ -52,7 +52,7 @@
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/inference/Symbol.h>
 #include <gtsam/nonlinear/ExpressionFactor.h>
-#include <gtsam/nonlinear/GaussNewtonOptimizer.h>
+//#include <gtsam/nonlinear/GaussNewtonOptimizer.h>
 #include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
 #include <gtsam/nonlinear/Values.h>
 #include <gtsam/nonlinear/expressions.h>
@@ -136,6 +136,7 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_REQ(params_, icp_edge_robust_param, double);
     YAML_LOAD_REQ(params_, icp_edge_worst_multiplier, double);
     YAML_LOAD_OPT(params_, max_number_lc_candidates, uint32_t);
+    YAML_LOAD_OPT(params_, max_number_lc_candidates_per_submap, uint32_t);
 
     YAML_LOAD_OPT(
         params_, min_volume_intersection_ratio_for_lc_candidate, double);
@@ -401,6 +402,8 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     // -----------------------------------------------
     using gtsam::symbol_shorthand::X;  // poses SE(3)
 
+    gtsam::NonlinearFactor::shared_ptr x0prior;
+
     for (const auto& [submapId, submap] : state_.submaps)
     {
         for (const auto id : submap.kf_ids)
@@ -410,16 +413,18 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
             state_.kfGraphValues.insert(X(id), p);
 
-            // anchor for first KF:
-            if (state_.kfGraphFG.empty())
+            // anchor for first KF: only if we don't have GNNS
+            if (!x0prior)
             {
-                state_.kfGraphFG
-                    .emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(X(id), p);
-                state_.kfGraphFGRobust
-                    .emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(X(id), p);
+                x0prior = boost::make_shared<gtsam::PriorFactor<gtsam::Pose3>>(
+                    X(id), p);
             }
         }
     }
+
+    // anchor for X(0):
+    state_.kfGraphFG.push_back(x0prior);
+    state_.kfGraphFGRobust.push_back(x0prior);
 
     // create edges: i -> i-1
     for (size_t i = 1; i < sm.size(); i++)
@@ -438,6 +443,13 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
         const gtsam::Vector6 sigmasXYZYPR =
             relPose.cov.asEigen().diagonal().array().sqrt().eval();
+
+#if 0
+        // Minimum translation uncertainty:
+        const double min_t_std = 0.001;  // [m]
+        for (int k = 0; k < 3; k++)  //
+            mrpt::keep_min(sigmasXYZYPR[k], min_t_std);
+#endif
 
 #if 0
         MRPT_LOG_INFO_STREAM(
@@ -489,10 +501,10 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             const mrpt::poses::CPose3DPDFGaussian relPose /*T_0_i*/ =
                 T_0_enu + T_enu_i;
 
+            // 1) Add edge to submaps-level graph:
             state_.submapsGraph.insertEdge(ref_id, this_id, relPose);
 
             // 2) Add edge to low-level keyframe graph:
-
             const gtsam::Pose3 deltaPose =
                 mrpt::gtsam_wrappers::toPose3(relPose.getPoseMean());
 
@@ -500,8 +512,27 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
                 mrpt::gtsam_wrappers::to_gtsam_se3_cov6_reordering(
                     relPose.cov));
 
+#if 0
+            const double gnns_edge_robust_param = 1.0;
+
+            gtsam::noiseModel::Base::shared_ptr edgeRobNoise =
+                gtsam::noiseModel::Robust::Create(
+                    gtsam::noiseModel::mEstimator::GemanMcClure::Create(
+                        gnns_edge_robust_param),
+                    edgeNoise);
+#else
+            auto edgeRobNoise = edgeNoise;
+#endif
+
             const auto refKfId = *refSubmap.kf_ids.begin();
             const auto curKfId = *submap.kf_ids.begin();
+
+            MRPT_LOG_DEBUG_STREAM(
+                "GNNS edge #"
+                << refKfId << " => #" << curKfId << " relPose: " << relPose
+                << "\n gtsam:" << deltaPose << "\n cov:\n"
+                << mrpt::gtsam_wrappers::to_gtsam_se3_cov6_reordering(
+                       relPose.cov));
 
             {
                 const auto p0 =
@@ -525,7 +556,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
             state_.kfGraphFGRobust
                 .emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-                    X(refKfId), X(curKfId), deltaPose, edgeNoise);
+                    X(refKfId), X(curKfId), deltaPose, edgeRobNoise);
         }
 
         if (params_.save_submaps_viz_files)
@@ -593,6 +624,13 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         {
             LC_submap_IDs_count[lc.smallest_id]++;
             LC_submap_IDs_count[lc.largest_id]++;
+        }
+
+        MRPT_LOG_INFO("List of submaps affected by LC candidates:");
+        for (const auto& [id, n] : LC_submap_IDs_count)
+        {
+            MRPT_LOG_INFO_STREAM(
+                "Submap #" << id << ": " << n << " candidate LCs.");
         }
 
         // check all LCs, and accept those that seem valid:
@@ -715,6 +753,8 @@ void make_pose_planar_pdf(mrpt::poses::CPose3DPDFGaussian& pdf)
 void SimplemapLoopClosure::build_submap_from_kfs_into(
     const std::set<keyframe_id_t>& ids, SubMap& submap)
 {
+    using namespace mrpt::literals;  // _deg
+
     const keyframe_id_t refFrameId = *ids.begin();
 
     submap.kf_ids      = ids;
@@ -805,13 +845,38 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
         {
             // save in submap:
 
-            if (angleStds.maxCoeff() < 0.1)
+#if 1
+            // reset yaw/pitch/roll if they don't seem reliable:
+            auto&                 p      = geoResult.geo_ref.T_enu_to_map;
+            std::array<double, 3> angles = {
+                p.mean.yaw(), p.mean.pitch(), p.mean.roll()};
+            for (int angleIdx = 0; angleIdx < 3; angleIdx++)
+            {
+                if (angleStds[angleIdx] > 0.5_deg)  // important threshold!
+                {
+                    angles[angleIdx] =
+                        angleIdx == 0 ?  //
+                            p.mean.asVectorVal()[3 + angleIdx]  // Yaw
+                                      :  //
+                            .0;  // pitch, roll
+
+                    for (int i = 0; i < 6; i++)
+                    {
+                        p.cov(3 + angleIdx, i) = 0;
+                        p.cov(i, 3 + angleIdx) = 0;
+                    }
+                    p.cov(3 + angleIdx, 3 + angleIdx) = mrpt::square(30.0_deg);
+                }
+            }
+            p.mean.setYawPitchRoll(angles[0], angles[1], angles[2]);
+#else
+            if (angleStds.maxCoeff() > 0.5_deg)  // important threshold!
             {
                 // Null pitch & roll since they don't seem reliable:
                 auto& p = geoResult.geo_ref.T_enu_to_map.mean;
                 p.setYawPitchRoll(p.yaw(), .0, .0);
             }
-
+#endif
             submap.geo_ref = geoResult.geo_ref;
 
             // Use one single global reference frame for all submaps:
@@ -837,7 +902,8 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
                 << " GNNS T_enu_to_map=" << geoResult.geo_ref.T_enu_to_map.mean
                 << "\n globalPose=" << T_0_i.mean  //
                 << "\n was       =" << submap.global_pose
-                << "\n se3Stds   =" << se3Stds.transpose());
+                << "\n se3Stds   =" << se3Stds.transpose()
+                << "\n final_rmse=" << geoResult.final_rmse);
 
             submap.global_pose = T_0_i.getPoseMean();
         }
@@ -846,9 +912,10 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
             MRPT_LOG_INFO_STREAM(
                 "[build_submap_from_kfs_into] DISCARDING GNNS solution for "
                 "submap #"
-                << submap.id
-                << " GNNS T_enu_to_map=" << geoResult.geo_ref.T_enu_to_map.mean
-                << " se3Stds=" << se3Stds.transpose());
+                << submap.id << "\n GNNS T_enu_to_map="
+                << geoResult.geo_ref.T_enu_to_map.mean
+                << "\n se3Stds=" << se3Stds.transpose()
+                << "\n final_rmse=" << geoResult.final_rmse);
         }
     }
 
@@ -996,7 +1063,10 @@ SimplemapLoopClosure::PotentialLoopOutput
         size_t                          depth = 0;
     };
 
-    std::multimap<double /*intersectRatio*/, PotentialLoop> potentialLCs;
+    std::map<
+        submap_id_t /*root id*/,
+        std::multimap<double /*intersectRatio*/, PotentialLoop>>
+        potentialLCs;
 
     // for debug files in SAVE_TREES only:
     static int tree_iter = 0;
@@ -1089,12 +1159,16 @@ SimplemapLoopClosure::PotentialLoopOutput
 
         auto lambdaShrinkBbox = [](const mrpt::math::TBoundingBox& b) -> auto
         {
+#if 0
             const double f = 0.75;
 
             auto r = b;
             r.min *= f;
             r.max *= f;
             return r;
+#else
+            return b;
+#endif
         };
 
         // Look for all potential overlapping areas between root_id and all
@@ -1104,8 +1178,9 @@ SimplemapLoopClosure::PotentialLoopOutput
 
         for (const auto& [submapId, ips] : submapPoses)
         {
-            // dont match against myself!
-            if (submapId == root_id) continue;
+            // dont match against myself &
+            // only analyze submaps IDs > root, to avoid duplicated checks:
+            if (submapId <= root_id) continue;
 
             // we need at least topological distance>=2 for this to be L.C.
             // (except if we are using GNNS edges and one ID is the GNNS
@@ -1206,34 +1281,19 @@ SimplemapLoopClosure::PotentialLoopOutput
                         "|C(1:2,1:2)|=" << std_xy << " |submap_size|="
                                         << submap_size << " ratio=" << ratio);
 
-#if 1
                 if (ratio > 2.0)
                 {
-                    // save the original LC too:
-                    // potentialLCs.emplace(bestScore, lc);
-
-                    // and a new one, keeping the best MC sample, plus some
-                    // additional ones:
+                    // Draw additional poses:
                     lc.draw_several_samples = true;
-
-#if 0
-                    // and change the mean:
-                    if (root_id == min_id)
-                        lc.relative_pose_largest_wrt_smallest.mean =
-                            bestRelPose;
-                    else
-                        lc.relative_pose_largest_wrt_smallest.mean =
-                            -bestRelPose;
-#endif
                 }
-#endif
             }
 
-            potentialLCs.emplace(bestScore, lc);
+            potentialLCs[root_id].emplace(bestScore, lc);
         }
     }  // end for each root_id
 
     // debug, print potential LCs:
+#if 0
     for (const auto& [score, lc] : potentialLCs)
     {
         MRPT_LOG_DEBUG_STREAM(
@@ -1241,22 +1301,20 @@ SimplemapLoopClosure::PotentialLoopOutput
             << lc.smallest_id << " <==> " << lc.largest_id << " score=" << score
             << " topo_depth=" << lc.topological_distance);
     }
+#endif
 
     // filter them, and keep the most promising ones, sorted by "score"
     PotentialLoopOutput result;
-    for (auto it = potentialLCs.rbegin(); it != potentialLCs.rend(); ++it)
+    for (const auto& [rootId, lcs] : potentialLCs)
     {
-        const auto& [score, lc] = *it;
-
-        result.push_back(lc);
-#if 0
-        // only store map entries for the "smallest_id" of each pair to
-        // avoid duplicated checks:
-        if (result.count(lc.largest_id) != 0) continue;
-
-        auto& rs = result[lc.smallest_id];
-        rs.emplace_back(lc);
-#endif
+        const auto maxN = params_.max_number_lc_candidates_per_submap;
+        size_t     thisSubmapCount = 0;
+        for (auto it = lcs.rbegin(); it != lcs.rend() && thisSubmapCount < maxN;
+             ++it, ++thisSubmapCount)
+        {
+            const auto& [score, lc] = *it;
+            result.push_back(lc);
+        }
     }
 
     // debug, print potential LCs:
@@ -1344,7 +1402,8 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
 
         using gtsam::symbol_shorthand::X;
 
-        double edge_std_xyz = icpRelPose.norm() * 0.5 * 1e-2;  // 0.5% RTE
+        double edge_std_xyz = 0.5;  // [m]
+        // icpRelPose.norm() * 0.5 * 1e-2);// 0.5% RTE
         double edge_std_ang = mrpt::DEG2RAD(0.5);
 
         // Use a variable variance depending on the ICP quality:
@@ -1882,31 +1941,35 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(
 double SimplemapLoopClosure::optimize_graph()
 {
     // low-level KF graph:
-    // auto lmParams = gtsam::LevenbergMarquardtParams::CeresDefaults();
-    auto lmParams = gtsam::GaussNewtonParams();
+    auto lmParams = gtsam::LevenbergMarquardtParams::CeresDefaults();
+    // auto lmParams = gtsam::GaussNewtonParams();
 
     // Pass 1
     const double errorInit1 = state_.kfGraphFG.error(state_.kfGraphValues);
+    const double rmseInit1  = std::sqrt(errorInit1 / state_.kfGraphFG.size());
 
-    // gtsam::LevenbergMarquardtOptimizer
-    gtsam::GaussNewtonOptimizer lm1(
+    gtsam::LevenbergMarquardtOptimizer lm1(
         state_.kfGraphFG, state_.kfGraphValues, lmParams);
 
     const auto& optimalValues1 = lm1.optimize();
 
     const double errorEnd1 = state_.kfGraphFG.error(optimalValues1);
+    const double rmseEnd1  = std::sqrt(errorEnd1 / state_.kfGraphFG.size());
 
     // Pass 2
     const double errorInit2 = state_.kfGraphFGRobust.error(optimalValues1);
+    const double rmseInit2 =
+        std::sqrt(errorInit2 / state_.kfGraphFGRobust.size());
 
-    // gtsam::LevenbergMarquardtOptimizer
-    gtsam::GaussNewtonOptimizer lm2(
+    gtsam::LevenbergMarquardtOptimizer lm2(
         state_.kfGraphFGRobust, optimalValues1, lmParams);
     const auto& optimalValues2 = lm2.optimize();
 
     state_.kfGraphValues = optimalValues2;
 
     const double errorEnd2 = state_.kfGraphFGRobust.error(optimalValues2);
+    const double rmseEnd2 =
+        std::sqrt(errorEnd2 / state_.kfGraphFGRobust.size());
 
     // Update submaps global pose:
     double largestDelta = 0;
@@ -1924,14 +1987,18 @@ double SimplemapLoopClosure::optimize_graph()
             << submapId << ":\n old=" << targetPose.asTPose()
             << "\n new=" << newPose.asTPose());
 
+        // 1) in map<> data structure:
         targetPose = newPose;
+
+        // 2) and in mrpt graph nodes:
+        state_.submapsGraph.nodes.at(submapId) = newPose;
     }
 
     MRPT_LOG_INFO_STREAM(
         "***** Graph re-optimized in "
         << lm1.iterations() << "/" << lm2.iterations()
-        << " iters, ERROR: 1st PASS:" << errorInit1 << " ==> " << errorEnd1
-        << " / 2nd PASS: " << errorInit2 << " ==> " << errorEnd2
+        << " iters, RMSE: 1st PASS:" << rmseInit1 << " ==> " << rmseEnd1
+        << " / 2nd PASS: " << rmseInit2 << " ==> " << rmseEnd2
         << " largestDelta=" << largestDelta);
 
     if (PRINT_FG_ERRORS)
