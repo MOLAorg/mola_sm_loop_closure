@@ -14,7 +14,7 @@ params:
   # These sensor labels will be handled as GNNS (GPS) (For storage in simplemap only)
   gnns_sensor_label: 'gps'
 
-  submap_max_length_wrt_map: 0.10   # [m/m]
+  submap_max_length_wrt_map: '${SUBMAP_MAX_RELATIVE_LENGTH|0.10}'   # [m/m]
 
   max_number_lc_candidates: '${MAX_NUMBER_LC|250}'   # 0: no limit
   max_number_lc_candidates_per_submap: 2
