@@ -66,6 +66,9 @@ const bool SAVE_LCS         = mrpt::get_env<bool>("SAVE_LCS", false);
 const bool SAVE_TREES       = mrpt::get_env<bool>("SAVE_TREES", false);
 const bool PRINT_FG_ERRORS  = mrpt::get_env<bool>("PRINT_FG_ERRORS", false);
 
+const bool ADD_GNNS_FACTORS_2ND_STAGE =
+    mrpt::get_env<bool>("ADD_GNNS_FACTORS_2ND_STAGE", true);
+
 namespace
 {
 mrpt::math::TBoundingBox SimpleMapBoundingBox(const mrpt::maps::CSimpleMap& sm)
@@ -498,7 +501,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
             const auto T_enu_i = submap.geo_ref->T_enu_to_map;
 
-            const mrpt::poses::CPose3DPDFGaussian relPose /*T_0_i*/ =
+            mrpt::poses::CPose3DPDFGaussian relPose /*T_0_i*/ =
                 T_0_enu + T_enu_i;
 
             // 1) Add edge to submaps-level graph:
@@ -512,8 +515,8 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
                 mrpt::gtsam_wrappers::to_gtsam_se3_cov6_reordering(
                     relPose.cov));
 
-#if 0
-            const double gnns_edge_robust_param = 1.0;
+#if 1
+            const double gnns_edge_robust_param = 3.0;
 
             gtsam::noiseModel::Base::shared_ptr edgeRobNoise =
                 gtsam::noiseModel::Robust::Create(
@@ -554,9 +557,12 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
                 X(refKfId), X(curKfId), deltaPose, edgeNoise);
 
-            state_.kfGraphFGRobust
-                .emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-                    X(refKfId), X(curKfId), deltaPose, edgeRobNoise);
+            if (ADD_GNNS_FACTORS_2ND_STAGE)
+            {
+                state_.kfGraphFGRobust
+                    .emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+                        X(refKfId), X(curKfId), deltaPose, edgeRobNoise);
+            }
         }
 
         if (params_.save_submaps_viz_files)
@@ -1385,24 +1391,22 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
     bool atLeastOneGoodIcp = false;
 
     auto lambdaAddIcpEdge =
-        [&](const mrpt::poses::CPose3D& icpRelPose, const double icpQuality)
+        [&](const mrpt::poses::CPose3DPDFGaussian& icpRelPose,
+            const double                           icpQuality)
     {
         if (!state_.submapsGraph.edgeExists(idGlobal, idLocal))
         {
-            mrpt::poses::CPose3DPDFGaussian newEdge;
-            newEdge.mean = icpRelPose;
-            newEdge.cov.setIdentity();  // Not used anyway
-
-            state_.submapsGraph.insertEdge(idGlobal, idLocal, newEdge);
+            state_.submapsGraph.insertEdge(idGlobal, idLocal, icpRelPose);
         }
 
         // and to the low-level graph too:
         const gtsam::Pose3 deltaPose =
-            mrpt::gtsam_wrappers::toPose3(icpRelPose);
+            mrpt::gtsam_wrappers::toPose3(icpRelPose.mean);
 
         using gtsam::symbol_shorthand::X;
 
-        double edge_std_xyz = 0.5;  // [m]
+        // (1/2) Non-Robust edge for 1st PASS optimization, with "fake" cov
+        double edge_std_xyz = 0.05;  // [m]
         // icpRelPose.norm() * 0.5 * 1e-2);// 0.5% RTE
         double edge_std_ang = mrpt::DEG2RAD(0.5);
 
@@ -1419,22 +1423,33 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
 
         const double icp_edge_robust_param = params_.icp_edge_robust_param;
 
-        gtsam::Vector6 sigmas;
-        sigmas << edge_std_ang, edge_std_ang, edge_std_ang,  //
+        gtsam::Vector6 sigmasNoRobust;
+        sigmasNoRobust << edge_std_ang, edge_std_ang, edge_std_ang,  //
             edge_std_xyz, edge_std_xyz, edge_std_xyz;
 
-        auto icpNoise = gtsam::noiseModel::Diagonal::Sigmas(sigmas);
+        auto icpNoiseNoRubust =
+            gtsam::noiseModel::Diagonal::Sigmas(sigmasNoRobust);
+
+        // Non-robust graph:
+        state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+            X(*submapGlobal.kf_ids.begin()), X(*submapLocal.kf_ids.begin()),
+            deltaPose, icpNoiseNoRubust);
+
+        // (2/2) Robust edge for 2nd PASS optimization, with real cov
+
+        const gtsam::Vector6 realSigmasXYZYPR =
+            icpRelPose.cov.asEigen().diagonal().array().sqrt().eval();
+
+        gtsam::Vector6 realSigmasGtsam;
+        realSigmasGtsam << realSigmasXYZYPR[5], realSigmasXYZYPR[4],
+            realSigmasXYZYPR[3], realSigmasXYZYPR[0], realSigmasXYZYPR[1],
+            realSigmasXYZYPR[2];
 
         gtsam::noiseModel::Base::shared_ptr icpRobNoise =
             gtsam::noiseModel::Robust::Create(
                 gtsam::noiseModel::mEstimator::GemanMcClure::Create(
                     icp_edge_robust_param),
-                icpNoise);
-
-        // Non-robust graph:
-        state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-            X(*submapGlobal.kf_ids.begin()), X(*submapLocal.kf_ids.begin()),
-            deltaPose, icpNoise);
+                gtsam::noiseModel::Diagonal::Sigmas(realSigmasGtsam));
 
         // Robust graph:
         state_.kfGraphFGRobust
@@ -1653,15 +1668,19 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         if (!bestVoxels.empty())
         {
             const auto& bestPose = bestVoxels.rbegin()->second;
+#if 0
             lambdaAddIcpEdge(mrpt::poses::CPose3D(bestPose), 1.0);
-
+            // ...
+            return true;  // done
+#endif
             MRPT_LOG_INFO_STREAM(
                 "[Relocalize SE(2)] Result has "
                 << out.found_poses.voxels().size()
                 << " voxels, most populated one |V|="
                 << bestVoxels.rbegin()->first << " bestPose: " << bestPose);
 
-            return true;  // done
+            // Let ICP to run again to recover the covariance.
+            initGuesses.push_back(bestPose);
         }
     }
 
@@ -1747,7 +1766,7 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         // keep the best:
         if (icp_result.quality < params_.min_icp_goodness) continue;
 
-        lambdaAddIcpEdge(icp_result.optimal_tf.mean, icp_result.quality);
+        lambdaAddIcpEdge(icp_result.optimal_tf, icp_result.quality);
     }
 
     return atLeastOneGoodIcp;
@@ -2004,6 +2023,15 @@ double SimplemapLoopClosure::optimize_graph()
     if (PRINT_FG_ERRORS)
     {
         const double errorPrintThres = 10.0;
+
+        state_.kfGraphFG.printErrors(
+            optimalValues1,
+            "================ 1ST PASS Factor errors ============\n",
+            gtsam::DefaultKeyFormatter,
+            std::function<bool(
+                const gtsam::Factor*, double whitenedError, size_t)>(
+                [&](const gtsam::Factor* /*f*/, double error, size_t /*index*/)
+                { return error > errorPrintThres; }));
 
         state_.kfGraphFGRobust.printErrors(
             optimalValues2,

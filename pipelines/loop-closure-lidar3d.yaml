@@ -17,7 +17,7 @@ params:
   submap_max_length_wrt_map: '${SUBMAP_MAX_RELATIVE_LENGTH|0.10}'   # [m/m]
 
   max_number_lc_candidates: '${MAX_NUMBER_LC|250}'   # 0: no limit
-  max_number_lc_candidates_per_submap: 2
+  max_number_lc_candidates_per_submap: '${MAX_LC_PER_SUBMAP|2}'
 
   use_gnns: '${USE_GNNS|true}'
   
@@ -26,7 +26,7 @@ params:
   # Minimum ICP quality to accept a loop closure:
   min_icp_goodness: 0.40
   icp_edge_worst_multiplier: 10.0  # how much uncertainty for the "min_icp_goodness" in comparison to a 100% icp result
-  icp_edge_robust_param: 1.0
+  icp_edge_robust_param: 100.0
 
   min_volume_intersection_ratio_for_lc_candidate: 0.25
   
