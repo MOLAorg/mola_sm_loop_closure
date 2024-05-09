@@ -132,8 +132,8 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, assume_planar_world, bool);
     YAML_LOAD_OPT(params_, use_gnns, bool);
 
-    YAML_LOAD_REQ(params_, threshold_sigma_initial, double);
-    YAML_LOAD_REQ(params_, threshold_sigma_final, double);
+    YAML_LOAD_REQ(params_, threshold_sigma_initial, std::string);
+    YAML_LOAD_REQ(params_, threshold_sigma_final, std::string);
     YAML_LOAD_REQ(params_, max_sensor_range, double);
 
     YAML_LOAD_REQ(params_, icp_edge_robust_param, double);
@@ -992,8 +992,26 @@ void SimplemapLoopClosure::updatePipelineDynamicVariablesForKeyframe(
     ps.updateVariable("ROBOT_PITCH", p.pitch());
     ps.updateVariable("ROBOT_ROLL", p.roll());
 
-    ps.updateVariable("SIGMA_INIT", params_.threshold_sigma_initial);
-    ps.updateVariable("SIGMA_FINAL", params_.threshold_sigma_final);
+    // pts.REL_POSE_SIGMA_XY;
+    if (!pts.expr_threshold_sigma_final.is_compiled())
+    {
+        const std::map<std::string, double*> exprSymbols = {
+            {"REL_POSE_SIGMA_XY", &pts.REL_POSE_SIGMA_XY}};
+
+        pts.expr_threshold_sigma_final.register_symbol_table(exprSymbols);
+        pts.expr_threshold_sigma_initial.register_symbol_table(exprSymbols);
+
+        pts.expr_threshold_sigma_final.compile(
+            params_.threshold_sigma_final, {}, "expr_threshold_sigma_final");
+
+        pts.expr_threshold_sigma_initial.compile(
+            params_.threshold_sigma_initial, {},
+            "expr_threshold_sigma_initial");
+    }
+    // Update:
+    ps.updateVariable("REL_POSE_SIGMA_XY", pts.REL_POSE_SIGMA_XY);
+    ps.updateVariable("SIGMA_INIT", pts.expr_threshold_sigma_initial.eval());
+    ps.updateVariable("SIGMA_FINAL", pts.expr_threshold_sigma_final.eval());
 
     ps.updateVariable("ESTIMATED_SENSOR_MAX_RANGE", params_.max_sensor_range);
 
@@ -1388,6 +1406,11 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
     const mrpt::math::TPose3D initGuess =
         lc.relative_pose_largest_wrt_smallest.mean.asTPose();
 
+    const auto relPoseSigmaXY =
+        std::sqrt(lc.relative_pose_largest_wrt_smallest.cov.asEigen()
+                      .block<2, 2>(0, 0)
+                      .determinant());
+
     bool atLeastOneGoodIcp = false;
 
     auto lambdaAddIcpEdge =
@@ -1745,6 +1768,8 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
 
         auto& pts = state_.perThreadState_.at(threadIdx);
 
+        pts.REL_POSE_SIGMA_XY = relPoseSigmaXY;  // before evaluating formulas
+
         // (this defines the local robot pose on the submap)
         updatePipelineDynamicVariablesForKeyframe(
             *submapLocal.kf_ids.begin(), *submapLocal.kf_ids.begin(),
@@ -1756,12 +1781,12 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
 
         MRPT_LOG_INFO_FMT(
             "ICP: goodness=%.02f%% iters=%u pose=%s "
-            "termReason=%s for initPose=%s",
+            "termReason=%s for initPose=%s relPoseSigmaXY=%.03f m",
             100.0 * icp_result.quality,
             static_cast<unsigned int>(icp_result.nIterations),
             icp_result.optimal_tf.getMeanVal().asString().c_str(),
             mrpt::typemeta::enum2str(icp_result.terminationReason).c_str(),
-            initPose.asString().c_str());
+            initPose.asString().c_str(), relPoseSigmaXY);
 
         // keep the best:
         if (icp_result.quality < params_.min_icp_goodness) continue;

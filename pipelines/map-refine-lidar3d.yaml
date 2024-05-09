@@ -14,32 +14,31 @@ params:
   # These sensor labels will be handled as GNNS (GPS) (For storage in simplemap only)
   gnns_sensor_label: 'gps'
 
-  submap_max_length_wrt_map: '${SUBMAP_MAX_RELATIVE_LENGTH|0.10}'   # [m/m]
+  submap_max_length_wrt_map: 0.001 #'${SUBMAP_MAX_RELATIVE_LENGTH|0.1}'   # [m/m]
 
-  max_number_lc_candidates: '${MAX_NUMBER_LC|250}'   # 0: no limit
+  max_number_lc_candidates: 0  # 0: no limit
   max_number_lc_candidates_per_submap: '${MAX_LC_PER_SUBMAP|2}'
 
-  use_gnns: '${USE_GNNS|true}'
+  use_gnns: false
   
   assume_planar_world: false
 
   # Minimum ICP quality to accept a loop closure:
-  min_icp_goodness: 0.50
-  icp_edge_worst_multiplier: 3.0  # how much uncertainty for the "min_icp_goodness" in comparison to a 100% icp result
-  icp_edge_robust_param: 100.0
+  min_icp_goodness: 0.80
+  icp_edge_worst_multiplier: 1.5  # how much uncertainty for the "min_icp_goodness" in comparison to a 100% icp result
+  icp_edge_robust_param: 2.0
 
-  min_volume_intersection_ratio_for_lc_candidate: 0.25
+  min_volume_intersection_ratio_for_lc_candidate: 0.80
   
   do_first_gross_relocalize: false
-  do_montecarlo_icp: '${DO_MONTECARLO_ICP|false}'
-
+  do_montecarlo_icp: false
 
   # Profiler:
   profiler_enabled: true
   
-  threshold_sigma_initial: 'min(10.0, max(0.50, REL_POSE_SIGMA_XY))'
-  threshold_sigma_final: 'max(0.50, min(0.50, REL_POSE_SIGMA_XY))'
-  
+  threshold_sigma_initial: 1.0
+  threshold_sigma_final: 1.0
+
   max_sensor_range: 100
 
 
@@ -84,22 +83,13 @@ icp_settings:
         pairingsPerPoint: 1
         allowMatchAlreadyMatchedGlobalPoints: true # faster
         pointLayerMatches:
-          - {global: "localmap_up", local: "points_to_register_up", weight: 1.0}
-          - {global: "localmap_down", local: "points_to_register_down", weight: 1.0}
+          - {global: "localmap", local: "points_to_register", weight: 1.0}
 
 
   quality:
     - class: mp2p_icp::QualityEvaluator_PairedRatio
       params:
-        reuse_icp_pairings: false
-        threshold: '2.0*SIGMA_FINAL'   # [m]
-        thresholdAngularDeg: 0  # deg
-        pairingsPerPoint: 1
-        allowMatchAlreadyMatchedGlobalPoints: true # faster
-        pointLayerMatches:
-          - {global: "localmap_up", local: "points_to_register_up", weight: 1.0}
-#          # do NOT count DOWN points
-#          #- {global: "localmap_down", local: "points_to_register_down", weight: 1.0}
+        ~  # none required
 
 # Local map updates:
 # Very first observation: Use the mp2p_icp pipeline generator to create the local map:
@@ -112,24 +102,7 @@ localmap_generator:
   #
   - class_name: mp2p_icp_filters::Generator
     params:
-      target_layer: 'localmap_up'
-      throw_on_unhandled_observation_class: true
-      process_class_names_regex: ''  # NONE: don't process observations in the generator.
-      #process_sensor_labels_regex: '.*'
-      # metric_map_definition_ini_file: '${CURRENT_YAML_FILE_PATH}/localmap_definition_voxelmap.ini'
-      
-      metric_map_definition:
-        # Any class derived from mrpt::maps::CMetricMap https://docs.mrpt.org/reference/latest/group_mrpt_maps_grp.html
-        class: mrpt::maps::CSimplePointsMap
-        #class: mola::HashedVoxelPointCloud
-        #plugin: 'libmola_metric_maps.so' # Import additional custom user-defined map classes (search in LD_LIBRARY_PATH)
-        creationOpts: ~
-        insertionOpts: ~
-        likelihoodOpts: ~
-
-  - class_name: mp2p_icp_filters::Generator
-    params:
-      target_layer: 'localmap_down'
+      target_layer: 'localmap'
       throw_on_unhandled_observation_class: true
       process_class_names_regex: ''  # NONE: don't process observations in the generator.
       #process_sensor_labels_regex: '.*'
@@ -186,7 +159,7 @@ observations_filter:
     params:
       input_pointcloud_layer: 'deskewed'
       output_pointcloud_layer: 'decimated_for_map_raw'
-      voxel_filter_resolution: 0.70*1e-2*ESTIMATED_SENSOR_MAX_RANGE  # [m]
+      voxel_filter_resolution: 0.50*1e-2*ESTIMATED_SENSOR_MAX_RANGE  # [m]
       decimate_method: DecimateMethod::FirstPoint
       #decimate_method: DecimateMethod::ClosestToAverage
 
@@ -196,47 +169,30 @@ observations_filter:
   - class_name: mp2p_icp_filters::FilterByRange
     params:
       input_pointcloud_layer: 'decimated_for_map_raw'
-      output_layer_between: 'decimated_for_map_by_range'
-      range_min: max(1.0, 0.03*ESTIMATED_SENSOR_MAX_RANGE)
+      output_layer_between: 'decimated_for_map'
+      range_min: max(1.0, 0.02*ESTIMATED_SENSOR_MAX_RANGE)
       range_max: 1.2*ESTIMATED_SENSOR_MAX_RANGE
 
-  # Remove close ceilings (problematic in most cases!)
-  - class_name: mp2p_icp_filters::FilterBoundingBox
-    params:
-      input_pointcloud_layer: 'decimated_for_map_by_range'
-      outside_pointcloud_layer: 'decimated_for_map'
-      bounding_box_min: [ -0.20*ESTIMATED_SENSOR_MAX_RANGE, -0.20*ESTIMATED_SENSOR_MAX_RANGE, 0.01*ESTIMATED_SENSOR_MAX_RANGE ]
-      bounding_box_max: [  0.20*ESTIMATED_SENSOR_MAX_RANGE,  0.20*ESTIMATED_SENSOR_MAX_RANGE, 0.10*ESTIMATED_SENSOR_MAX_RANGE ]
-
-  # Split up-down:
-  - class_name: mp2p_icp_filters::FilterBoundingBox
-    params:
-      input_pointcloud_layer: 'decimated_for_map'
-      inside_pointcloud_layer: 'decimated_for_map_down'
-      outside_pointcloud_layer: 'decimated_for_map_up'
-      bounding_box_min: [ -0.90*ESTIMATED_SENSOR_MAX_RANGE, -0.90*ESTIMATED_SENSOR_MAX_RANGE, -6.0 ]
-      bounding_box_max: [  0.90*ESTIMATED_SENSOR_MAX_RANGE,  0.90*ESTIMATED_SENSOR_MAX_RANGE, +0.2 ]
-
+#  # Remove close ceilings (problematic in most cases!)
+#  - class_name: mp2p_icp_filters::FilterBoundingBox
+#    params:
+#      input_pointcloud_layer: 'decimated_for_map_by_range'
+#      outside_pointcloud_layer: 'decimated_for_map'
+#      bounding_box_min: [ -0.20*ESTIMATED_SENSOR_MAX_RANGE, -0.20*ESTIMATED_SENSOR_MAX_RANGE, 0.01*ESTIMATED_SENSOR_MAX_RANGE ]
+#      bounding_box_max: [  0.20*ESTIMATED_SENSOR_MAX_RANGE,  0.20*ESTIMATED_SENSOR_MAX_RANGE, 0.10*ESTIMATED_SENSOR_MAX_RANGE ]
 
   # Remove layers to save memory and log file storage
   - class_name: mp2p_icp_filters::FilterDeleteLayer
     params:
-      pointcloud_layer_to_remove: ['raw','deskewed', 'decimated_for_map', 'decimated_for_map_by_range', 'decimated_for_map_raw']
+      pointcloud_layer_to_remove: ['raw','deskewed', 'decimated_for_map', 'decimated_for_map_raw']
 
 # To populate the local map, one or more observation layers are merged
 # into the local map via this pipeline:
 insert_observation_into_local_map:
   - class_name: mp2p_icp_filters::FilterMerge
     params:
-      input_pointcloud_layer: 'decimated_for_map_down'
-      target_layer: 'localmap_down'
-      input_layer_in_local_coordinates: true
-      robot_pose: [ROBOT_X, ROBOT_Y, ROBOT_Z, ROBOT_YAW, ROBOT_PITCH, ROBOT_ROLL]
-
-  - class_name: mp2p_icp_filters::FilterMerge
-    params:
-      input_pointcloud_layer: 'decimated_for_map_up'
-      target_layer: 'localmap_up'
+      input_pointcloud_layer: 'decimated_for_map'
+      target_layer: 'localmap'
       input_layer_in_local_coordinates: true
       robot_pose: [ROBOT_X, ROBOT_Y, ROBOT_Z, ROBOT_YAW, ROBOT_PITCH, ROBOT_ROLL]
 
@@ -250,27 +206,15 @@ submap_final_filter:
   #
   - class_name: mp2p_icp_filters::FilterDecimateVoxels
     params:
-      input_pointcloud_layer: 'localmap_up'
-      output_pointcloud_layer: 'minimap_viz'
-      voxel_filter_resolution: 3.5
-      decimate_method: DecimateMethod::FirstPoint
-  - class_name: mp2p_icp_filters::FilterDecimateVoxels
-    params:
-      input_pointcloud_layer: 'localmap_down'
+      input_pointcloud_layer: 'localmap'
       output_pointcloud_layer: 'minimap_viz'
       voxel_filter_resolution: 3.5
       decimate_method: DecimateMethod::FirstPoint
 
   - class_name: mp2p_icp_filters::FilterDecimateVoxels
     params:
-      input_pointcloud_layer: 'localmap_up'
-      output_pointcloud_layer: 'points_to_register_up'
-      voxel_filter_resolution: 1.5
-      decimate_method: DecimateMethod::FirstPoint
-  - class_name: mp2p_icp_filters::FilterDecimateVoxels
-    params:
-      input_pointcloud_layer: 'localmap_down'
-      output_pointcloud_layer: 'points_to_register_down'
-      voxel_filter_resolution: 3.0
+      input_pointcloud_layer: 'localmap'
+      output_pointcloud_layer: 'points_to_register'
+      voxel_filter_resolution: 1.0
       decimate_method: DecimateMethod::FirstPoint
 

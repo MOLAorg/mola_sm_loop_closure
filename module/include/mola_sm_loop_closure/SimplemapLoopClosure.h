@@ -74,8 +74,8 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
 
         mp2p_icp::Parameters icp_parameters;
 
-        double      threshold_sigma_initial                        = 5.0;
-        double      threshold_sigma_final                          = 0.5;
+        std::string threshold_sigma_initial                        = "5.0";
+        std::string threshold_sigma_final                          = "0.5";
         double      max_sensor_range                               = 100.0;
         double      icp_edge_robust_param                          = 1.0;
         double      icp_edge_worst_multiplier                      = 10.0;
@@ -156,6 +156,11 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
 
             // final stage filters for submaps:
             mp2p_icp_filters::FilterPipeline submap_final_filter;
+
+            double REL_POSE_SIGMA_XY = 1.0;
+
+            mrpt::expr::CRuntimeCompiledExpression expr_threshold_sigma_initial;
+            mrpt::expr::CRuntimeCompiledExpression expr_threshold_sigma_final;
         };
 
         // One copy of the state per working thread:
