@@ -1406,7 +1406,7 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         using gtsam::symbol_shorthand::X;
 
         // (1/2) Non-Robust edge for 1st PASS optimization, with "fake" cov
-        double edge_std_xyz = 0.05;  // [m]
+        double edge_std_xyz = 0.5;  // [m]
         // icpRelPose.norm() * 0.5 * 1e-2);// 0.5% RTE
         double edge_std_ang = mrpt::DEG2RAD(0.5);
 
