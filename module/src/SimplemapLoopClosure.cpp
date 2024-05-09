@@ -515,7 +515,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
                 mrpt::gtsam_wrappers::to_gtsam_se3_cov6_reordering(
                     relPose.cov));
 
-#if 1
+#if 0
             const double gnns_edge_robust_param = 3.0;
 
             gtsam::noiseModel::Base::shared_ptr edgeRobNoise =
