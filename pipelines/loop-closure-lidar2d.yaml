@@ -21,7 +21,7 @@ params:
 
   use_gnns: '${USE_GNNS|true}'
   
-  assume_planar_world: false
+  assume_planar_world: true
 
   # Minimum ICP quality to accept a loop closure:
   min_icp_goodness: 0.50
