@@ -114,7 +114,7 @@ localmap_generator:
         #class: mola::HashedVoxelPointCloud
         #plugin: 'libmola_metric_maps.so' # Import additional custom user-defined map classes (search in LD_LIBRARY_PATH)
         creationOpts: ~
-        insertionOpts: ~
+        insertOpts: ~
         likelihoodOpts: ~
 
 # ---------------------------------------------------------------------------------

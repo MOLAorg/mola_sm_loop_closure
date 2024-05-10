@@ -941,6 +941,13 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
         auto mm = get_submap_local_map(submap);
         mm.get();  // get future
     }
+
+    // Fix zero-volume calculations for 2D lidar maps:
+    if (bbox && std::abs(bbox->min.z - bbox->max.z) < 0.10)
+    {
+        bbox->max.z += 2.0;
+        bbox->min.z -= 2.0;
+    }
 }
 
 mrpt::poses::CPose3D SimplemapLoopClosure::keyframe_pose_in_simplemap(
