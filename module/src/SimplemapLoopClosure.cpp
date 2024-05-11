@@ -140,6 +140,8 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_REQ(params_, icp_edge_worst_multiplier, double);
     YAML_LOAD_OPT(params_, max_number_lc_candidates, uint32_t);
     YAML_LOAD_OPT(params_, max_number_lc_candidates_per_submap, uint32_t);
+    YAML_LOAD_OPT(
+        params_, min_lc_uncertainty_ratio_to_draw_several_samples, double);
 
     YAML_LOAD_OPT(
         params_, min_volume_intersection_ratio_for_lc_candidate, double);
@@ -1312,7 +1314,8 @@ SimplemapLoopClosure::PotentialLoopOutput
                         "|C(1:2,1:2)|=" << std_xy << " |submap_size|="
                                         << submap_size << " ratio=" << ratio);
 
-                if (ratio > 2.0)
+                if (ratio >
+                    params_.min_lc_uncertainty_ratio_to_draw_several_samples)
                 {
                     // Draw additional poses:
                     lc.draw_several_samples = true;
@@ -1785,6 +1788,25 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         pts.icp->align(
             pcs_local, pcs_global, initPose, params_.icp_parameters,
             icp_result);
+
+#if 0
+        // For loop-closures, quality is better as the best of match ratio
+        // Local->global *and* global->local:
+
+        const size_t nLocal =
+            pcs_local.point_layer("points_to_register_up")->size();
+        const size_t nGlobal =
+            pcs_global.point_layer("points_to_register_up")->size();
+
+        const double quality1 =
+            static_cast<double>(icp_result.finalPairings.size()) / nLocal;
+        const double quality2 =
+            static_cast<double>(icp_result.finalPairings.size()) / nGlobal;
+
+        MRPT_LOG_INFO_FMT(
+            "**** QUALITies: %.02f  %.02f", 100 * quality1, 100 * quality2);
+
+#endif
 
         MRPT_LOG_INFO_FMT(
             "ICP: goodness=%.02f%% iters=%u pose=%s "

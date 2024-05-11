@@ -14,7 +14,7 @@ params:
   # These sensor labels will be handled as GNNS (GPS) (For storage in simplemap only)
   gnns_sensor_label: 'gps'
 
-  submap_max_length_wrt_map: 0.001 #'${SUBMAP_MAX_RELATIVE_LENGTH|0.1}'   # [m/m]
+  submap_max_length_wrt_map: 0.01 #'${SUBMAP_MAX_RELATIVE_LENGTH|0.1}'   # [m/m]
 
   max_number_lc_candidates: 0  # 0: no limit
   max_number_lc_candidates_per_submap: '${MAX_LC_PER_SUBMAP|2}'
@@ -24,11 +24,13 @@ params:
   assume_planar_world: false
 
   # Minimum ICP quality to accept a loop closure:
-  min_icp_goodness: 0.80
+  min_icp_goodness: 0.50
   icp_edge_worst_multiplier: 1.5  # how much uncertainty for the "min_icp_goodness" in comparison to a 100% icp result
   icp_edge_robust_param: 2.0
 
-  min_volume_intersection_ratio_for_lc_candidate: 0.80
+  min_lc_uncertainty_ratio_to_draw_several_samples: 1e8
+
+  min_volume_intersection_ratio_for_lc_candidate: 0.70
   
   do_first_gross_relocalize: false
   do_montecarlo_icp: false
@@ -37,7 +39,7 @@ params:
   profiler_enabled: true
   
   threshold_sigma_initial: 1.0
-  threshold_sigma_final: 1.0
+  threshold_sigma_final: 0.5
 
   max_sensor_range: 100
 
@@ -62,7 +64,7 @@ icp_settings:
     #generateDebugFiles: true  # Can be override with env var "MP2P_ICP_GENERATE_DEBUG_FILES=1"
     saveIterationDetails: true # Store partial solutions and pairings for each ICP iteration
     decimationIterationDetails: 3
-    debugFileNameFormat: "${HOME}/ros2_ws/icp-logs/lc-$UNIQUE_ID-local_$LOCAL_ID$LOCAL_LABEL-to-global_$GLOBAL_ID$GLOBAL_LABEL.icplog"
+    debugFileNameFormat: "${HOME}/ros2_ws/icp-logs/refine-$UNIQUE_ID-local_$LOCAL_ID$LOCAL_LABEL-to-global_$GLOBAL_ID$GLOBAL_LABEL.icplog"
     decimationDebugFiles: ${MP2P_ICP_LOG_FILES_DECIMATION|1}
 
   solvers:
@@ -89,7 +91,7 @@ icp_settings:
   quality:
     - class: mp2p_icp::QualityEvaluator_PairedRatio
       params:
-        ~  # none required
+        ~  # none required: reuse
 
 # Local map updates:
 # Very first observation: Use the mp2p_icp pipeline generator to create the local map:
@@ -159,9 +161,9 @@ observations_filter:
     params:
       input_pointcloud_layer: 'deskewed'
       output_pointcloud_layer: 'decimated_for_map_raw'
-      voxel_filter_resolution: 0.50*1e-2*ESTIMATED_SENSOR_MAX_RANGE  # [m]
-      decimate_method: DecimateMethod::FirstPoint
-      #decimate_method: DecimateMethod::ClosestToAverage
+      voxel_filter_resolution: 0.25*1e-2*ESTIMATED_SENSOR_MAX_RANGE  # [m]
+      #decimate_method: DecimateMethod::FirstPoint
+      decimate_method: DecimateMethod::ClosestToAverage
 
   # Remove points too close, to prevent "noise" from the vehicle, 
   # the person next to the robot, etc. Remove too distant points since
@@ -173,18 +175,10 @@ observations_filter:
       range_min: max(1.0, 0.02*ESTIMATED_SENSOR_MAX_RANGE)
       range_max: 1.2*ESTIMATED_SENSOR_MAX_RANGE
 
-#  # Remove close ceilings (problematic in most cases!)
-#  - class_name: mp2p_icp_filters::FilterBoundingBox
-#    params:
-#      input_pointcloud_layer: 'decimated_for_map_by_range'
-#      outside_pointcloud_layer: 'decimated_for_map'
-#      bounding_box_min: [ -0.20*ESTIMATED_SENSOR_MAX_RANGE, -0.20*ESTIMATED_SENSOR_MAX_RANGE, 0.01*ESTIMATED_SENSOR_MAX_RANGE ]
-#      bounding_box_max: [  0.20*ESTIMATED_SENSOR_MAX_RANGE,  0.20*ESTIMATED_SENSOR_MAX_RANGE, 0.10*ESTIMATED_SENSOR_MAX_RANGE ]
-
   # Remove layers to save memory and log file storage
   - class_name: mp2p_icp_filters::FilterDeleteLayer
     params:
-      pointcloud_layer_to_remove: ['raw','deskewed', 'decimated_for_map', 'decimated_for_map_raw']
+      pointcloud_layer_to_remove: ['raw','deskewed', 'decimated_for_map_raw']
 
 # To populate the local map, one or more observation layers are merged
 # into the local map via this pipeline:
@@ -215,6 +209,6 @@ submap_final_filter:
     params:
       input_pointcloud_layer: 'localmap'
       output_pointcloud_layer: 'points_to_register'
-      voxel_filter_resolution: 1.0
-      decimate_method: DecimateMethod::FirstPoint
+      voxel_filter_resolution: 1.5
+      decimate_method: DecimateMethod::VoxelAverage
 

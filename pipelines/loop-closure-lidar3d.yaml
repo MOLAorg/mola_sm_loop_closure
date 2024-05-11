@@ -24,7 +24,7 @@ params:
   assume_planar_world: false
 
   # Minimum ICP quality to accept a loop closure:
-  min_icp_goodness: 0.50
+  min_icp_goodness: 0.40
   icp_edge_worst_multiplier: 3.0  # how much uncertainty for the "min_icp_goodness" in comparison to a 100% icp result
   icp_edge_robust_param: 100.0
 
@@ -92,7 +92,7 @@ icp_settings:
     - class: mp2p_icp::QualityEvaluator_PairedRatio
       params:
         reuse_icp_pairings: false
-        threshold: '2.0*SIGMA_FINAL'   # [m]
+        threshold: '2*2.0*SIGMA_FINAL'   # [m]
         thresholdAngularDeg: 0  # deg
         pairingsPerPoint: 1
         allowMatchAlreadyMatchedGlobalPoints: true # faster
