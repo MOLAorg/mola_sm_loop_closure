@@ -16,7 +16,7 @@ params:
 
   submap_max_length_wrt_map: '${SUBMAP_MAX_RELATIVE_LENGTH|0.10}'   # [m/m]
 
-  max_number_lc_candidates: '${MAX_NUMBER_LC|250}'   # 0: no limit
+  max_number_lc_candidates: '${MAX_NUMBER_LC|500}'   # 0: no limit
   max_number_lc_candidates_per_submap: '${MAX_LC_PER_SUBMAP|2}'
 
   use_gnns: '${USE_GNNS|true}'
@@ -24,9 +24,10 @@ params:
   assume_planar_world: false
 
   # Minimum ICP quality to accept a loop closure:
-  min_icp_goodness: 0.45
+  # Quality is measured with the methods defined in the pipeline below.
+  min_icp_goodness: 0.40
   icp_edge_worst_multiplier: 3.0  # how much uncertainty for the "min_icp_goodness" in comparison to a 100% icp result
-  icp_edge_robust_param: 100.0
+  icp_edge_robust_param: 100
 
   min_volume_intersection_ratio_for_lc_candidate: 0.25
   
@@ -89,8 +90,16 @@ icp_settings:
 
 
   quality:
-    - class: mp2p_icp::QualityEvaluator_PairedRatio
+    - class: mp2p_icp::QualityEvaluator_Voxels
+      weight: 2
       params:
+        voxel_layer_name: 'localmap_voxels'
+        dist2quality_scale: 1.0 # default
+
+    - class: mp2p_icp::QualityEvaluator_PairedRatio
+      weight: 1
+      params:
+        absolute_minimum_pairing_ratio: 0.10
         reuse_icp_pairings: false
         threshold: '2*2.0*SIGMA_FINAL'   # [m]
         thresholdAngularDeg: 0  # deg
@@ -98,8 +107,8 @@ icp_settings:
         allowMatchAlreadyMatchedGlobalPoints: true # faster
         pointLayerMatches:
           - {global: "localmap_up", local: "points_to_register_up", weight: 1.0}
-#          # do NOT count DOWN points
-#          #- {global: "localmap_down", local: "points_to_register_down", weight: 1.0}
+          # do NOT count DOWN points
+          #- {global: "localmap_down", local: "points_to_register_down", weight: 1.0}
 
 # Local map updates:
 # Very first observation: Use the mp2p_icp pipeline generator to create the local map:
@@ -143,6 +152,31 @@ localmap_generator:
         creationOpts: ~
         insertOpts: ~
         likelihoodOpts: ~
+
+  - class_name: mp2p_icp_filters::Generator
+    params:
+      target_layer: 'localmap_voxels'
+      throw_on_unhandled_observation_class: true
+      process_class_names_regex: ''  # NONE: don't process observations in the generator.
+      #process_sensor_labels_regex: '.*'
+      # metric_map_definition_ini_file: '${CURRENT_YAML_FILE_PATH}/localmap_definition_voxelmap.ini'
+      
+      metric_map_definition:
+        # Any class derived from mrpt::maps::CMetricMap https://docs.mrpt.org/reference/latest/group_mrpt_maps_grp.html
+        class: mrpt::maps::CVoxelMap
+        #plugin: 'libmola_metric_maps.so' # Import additional custom user-defined map classes (search in LD_LIBRARY_PATH)
+        creationOpts:
+          resolution: 2.5 # [m]
+          #resolution: $f{0.05*MAX_SENSOR_RANGE} # [m]  # You can also use formulas in any numeric field
+        #insertionOpts:
+        # none required for this class
+        likelihoodOpts:
+          decimation: 1
+          occupiedThreshold: 0.60
+        renderOpts:
+          occupiedThreshold: 0.60
+          freeThreshold: 0.40
+          generateFreeVoxels: false
 
 # ---------------------------------------------------------------------------------
 # LIDAR observations are, first, loaded using a generator
@@ -239,6 +273,13 @@ insert_observation_into_local_map:
       target_layer: 'localmap_up'
       input_layer_in_local_coordinates: true
       robot_pose: [ROBOT_X, ROBOT_Y, ROBOT_Z, ROBOT_YAW, ROBOT_PITCH, ROBOT_ROLL]
+
+  - class_name: mp2p_icp_filters::FilterMerge
+    params:
+      input_pointcloud_layer: 'decimated_for_map_by_range'
+      target_layer: 'localmap_voxels'
+      input_layer_in_local_coordinates: true
+      robot_pose: [robot_x, robot_y, robot_z, robot_yaw, robot_pitch, robot_roll]
 
 
 submap_final_filter:
