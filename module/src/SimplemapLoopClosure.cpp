@@ -1789,25 +1789,6 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
             pcs_local, pcs_global, initPose, params_.icp_parameters,
             icp_result);
 
-#if 0
-        // For loop-closures, quality is better as the best of match ratio
-        // Local->global *and* global->local:
-
-        const size_t nLocal =
-            pcs_local.point_layer("points_to_register_up")->size();
-        const size_t nGlobal =
-            pcs_global.point_layer("points_to_register_up")->size();
-
-        const double quality1 =
-            static_cast<double>(icp_result.finalPairings.size()) / nLocal;
-        const double quality2 =
-            static_cast<double>(icp_result.finalPairings.size()) / nGlobal;
-
-        MRPT_LOG_INFO_FMT(
-            "**** QUALITies: %.02f  %.02f", 100 * quality1, 100 * quality2);
-
-#endif
-
         MRPT_LOG_INFO_FMT(
             "ICP: goodness=%.02f%% iters=%u pose=%s "
             "termReason=%s for initPose=%s relPoseSigmaXY=%.03f m",
