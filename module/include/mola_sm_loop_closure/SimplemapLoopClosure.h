@@ -79,6 +79,7 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         double      max_sensor_range                               = 100.0;
         double      icp_edge_robust_param                          = 1.0;
         double      icp_edge_worst_multiplier                      = 10.0;
+        double      input_edges_uncertainty_multiplier             = 1.0;
         double      submap_max_length_wrt_map                      = 0.25;
         double      min_volume_intersection_ratio_for_lc_candidate = 0.6;
         bool        assume_planar_world                            = false;
@@ -226,8 +227,11 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
      * decreasing score */
     using PotentialLoopOutput = std::vector<PotentialLoop>;
 
-    PotentialLoopOutput find_next_loop_closures() const;
-    [[nodiscard]] bool  process_loop_candidate(const PotentialLoop& lc);
+    PotentialLoopOutput find_next_loop_closures(
+        const std::set<std::pair<submap_id_t, submap_id_t>>& alreadyChecked)
+        const;
+
+    [[nodiscard]] bool process_loop_candidate(const PotentialLoop& lc);
 
     mrpt::WorkerThreadsPool threads_{state_.perThreadState_.size()};
 

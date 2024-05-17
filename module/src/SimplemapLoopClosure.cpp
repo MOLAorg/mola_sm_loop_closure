@@ -138,6 +138,7 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
 
     YAML_LOAD_REQ(params_, icp_edge_robust_param, double);
     YAML_LOAD_REQ(params_, icp_edge_worst_multiplier, double);
+    YAML_LOAD_OPT(params_, input_edges_uncertainty_multiplier, double);
     YAML_LOAD_OPT(params_, max_number_lc_candidates, uint32_t);
     YAML_LOAD_OPT(params_, max_number_lc_candidates_per_submap, uint32_t);
     YAML_LOAD_OPT(
@@ -446,8 +447,11 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
         const mrpt::poses::CPose3DPDFGaussian relPose = ppi - ppim1;
 
-        const gtsam::Vector6 sigmasXYZYPR =
+        gtsam::Vector6 sigmasXYZYPR =
             relPose.cov.asEigen().diagonal().array().sqrt().eval();
+
+        // Enlarge uncertainty?
+        sigmasXYZYPR *= params_.input_edges_uncertainty_multiplier;
 
 #if 0
         // Minimum translation uncertainty:
@@ -601,17 +605,18 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
     size_t accepted_lcs = 0;
 
+    // index: <smallest_id, largest_id>
     std::set<std::pair<submap_id_t, submap_id_t>> alreadyChecked;
     // TODO: Consider a finer grade alreadyChecked reset?
 
     // repeat until checkedCount==0:
-    for (size_t lc_loop = 0; lc_loop < 1; lc_loop++)
-    // for (;;)
+    // for (size_t lc_loop = 0; lc_loop < 1; lc_loop++)
+    for (;;)
     {
         size_t checkedCount   = 0;
         bool   anyGraphChange = false;
 
-        PotentialLoopOutput LCs = find_next_loop_closures();
+        PotentialLoopOutput LCs = find_next_loop_closures(alreadyChecked);
 
         if (params_.max_number_lc_candidates > 0 &&
             LCs.size() > params_.max_number_lc_candidates)
@@ -625,6 +630,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             LCs.resize(params_.max_number_lc_candidates);
         }
 
+#if 0
         // Build a list of affected submaps, including how many times they
         // appear:
         std::map<submap_id_t, size_t> LC_submap_IDs_count;
@@ -640,6 +646,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             MRPT_LOG_INFO_STREAM(
                 "Submap #" << id << ": " << n << " candidate LCs.");
         }
+#endif
 
         // check all LCs, and accept those that seem valid:
         for (size_t lcIdx = 0; lcIdx < LCs.size(); lcIdx++)
@@ -673,21 +680,23 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
                 anyGraphChange = true;
                 accepted_lcs++;
             }
+        }
 
-            // free the RAM space of submaps not used any more:
-            auto lambdaDereferenceLocalMapOnce = [&](submap_id_t id)
+        // free the RAM space of submaps not used any more:
+        if (!LCs.empty())
+        {
+            for (submap_id_t id = 0; id < LCs.front().smallest_id; id++)
             {
-                if (0 == --LC_submap_IDs_count[id])
+                if (state_.submaps[id].local_map)
                 {
                     MRPT_LOG_INFO_STREAM(
                         "Freeing memory for submap local map #" << id);
                     state_.submaps[id].local_map.reset();
-                };
-            };
-            lambdaDereferenceLocalMapOnce(lc.smallest_id);
-            lambdaDereferenceLocalMapOnce(lc.largest_id);
+                }
+            }
         }
 
+        // end of loop closures?
         if (!checkedCount) break;  // no new LC was checked, we are done.
 
         // any change to the graph? re-optimize it:
@@ -1084,7 +1093,9 @@ mrpt::opengl::CSetOfObjects::Ptr
 }
 
 SimplemapLoopClosure::PotentialLoopOutput
-    SimplemapLoopClosure::find_next_loop_closures() const
+    SimplemapLoopClosure::find_next_loop_closures(
+        const std::set<std::pair<submap_id_t, submap_id_t>>& alreadyChecked)
+        const
 {
     using namespace std::string_literals;
 
@@ -1226,6 +1237,10 @@ SimplemapLoopClosure::PotentialLoopOutput
             const auto min_id = std::min<submap_id_t>(root_id, submapId);
             const auto max_id = std::max<submap_id_t>(root_id, submapId);
 
+            // already checked?
+            const auto IDs = std::make_pair(min_id, max_id);
+            if (alreadyChecked.count(IDs) != 0) continue;
+
             // TODO(jlbc): finer approach without enlarging bboxes to their
             // global XYZ axis alined boxes:
             // Idea: run a small MonteCarlo run to estimate the likelihood
@@ -1324,6 +1339,10 @@ SimplemapLoopClosure::PotentialLoopOutput
 
             potentialLCs[root_id].emplace(bestScore, lc);
         }
+
+        // Do we have enough with this root_id submap?
+        if (!potentialLCs[root_id].empty()) break;
+
     }  // end for each root_id
 
     // debug, print potential LCs:
@@ -1790,13 +1809,12 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
             icp_result);
 
         MRPT_LOG_INFO_FMT(
-            "ICP: goodness=%.02f%% iters=%u pose=%s "
-            "termReason=%s for initPose=%s relPoseSigmaXY=%.03f m",
+            "ICP: goodness=%6.01f%% iters=%u pose=%s "
+            "termReason=%s",
             100.0 * icp_result.quality,
             static_cast<unsigned int>(icp_result.nIterations),
             icp_result.optimal_tf.getMeanVal().asString().c_str(),
-            mrpt::typemeta::enum2str(icp_result.terminationReason).c_str(),
-            initPose.asString().c_str(), relPoseSigmaXY);
+            mrpt::typemeta::enum2str(icp_result.terminationReason).c_str());
 
         // keep the best:
         if (icp_result.quality < params_.min_icp_goodness) continue;
