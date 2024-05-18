@@ -80,12 +80,14 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         double      icp_edge_robust_param                          = 1.0;
         double      icp_edge_worst_multiplier                      = 10.0;
         double      input_edges_uncertainty_multiplier             = 1.0;
-        double      submap_max_length_wrt_map                      = 0.25;
+        double      submap_max_length_wrt_map                      = 0.10;
+        double      submap_max_absolute_length                     = 100.0;
         double      min_volume_intersection_ratio_for_lc_candidate = 0.6;
         bool        assume_planar_world                            = false;
         bool        use_gnns                                       = true;
         uint32_t    max_number_lc_candidates = 150;  // 0: no limit
         double      min_lc_uncertainty_ratio_to_draw_several_samples = 2.0;
+        double      largest_delta_for_reconsider_all                 = 10.0;
         uint32_t    max_number_lc_candidates_per_submap              = 4;
         double      min_icp_goodness                                 = 0.60;
         bool        profiler_enabled                                 = true;

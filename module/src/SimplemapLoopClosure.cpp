@@ -127,6 +127,7 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_REQ(params_, min_icp_goodness, double);
     YAML_LOAD_OPT(params_, profiler_enabled, bool);
     YAML_LOAD_REQ(params_, submap_max_length_wrt_map, double);
+    YAML_LOAD_REQ(params_, submap_max_absolute_length, double);
     YAML_LOAD_OPT(params_, do_first_gross_relocalize, bool);
     YAML_LOAD_OPT(params_, do_montecarlo_icp, bool);
     YAML_LOAD_OPT(params_, assume_planar_world, bool);
@@ -143,6 +144,8 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, max_number_lc_candidates_per_submap, uint32_t);
     YAML_LOAD_OPT(
         params_, min_lc_uncertainty_ratio_to_draw_several_samples, double);
+
+    YAML_LOAD_OPT(params_, largest_delta_for_reconsider_all, double);
 
     YAML_LOAD_OPT(
         params_, min_volume_intersection_ratio_for_lc_candidate, double);
@@ -303,8 +306,9 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         const auto   bbox     = SimpleMapBoundingBox(sm);
         const double smLength = (bbox.max - bbox.min).norm();
 
-        const double max_submap_length =
-            params_.submap_max_length_wrt_map * smLength;
+        const double max_submap_length = std::min<double>(
+            params_.submap_max_absolute_length,
+            params_.submap_max_length_wrt_map * smLength);
 
         MRPT_LOG_INFO_FMT("Using submap length=%.02f m", max_submap_length);
 
@@ -705,7 +709,8 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             const auto largestDelta = optimize_graph();
 
             // re-visit all areas again
-            if (largestDelta > 3.0) alreadyChecked.clear();
+            if (largestDelta > params_.largest_delta_for_reconsider_all)
+                alreadyChecked.clear();
         }
     }
 
