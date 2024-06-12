@@ -14,10 +14,13 @@ params:
   # These sensor labels will be handled as GNNS (GPS) (For storage in simplemap only)
   gnns_sensor_label: 'gps'
 
-  submap_max_length_wrt_map: '${SUBMAP_MAX_RELATIVE_LENGTH|0.10}'   # [m/m]
+  submap_max_length_wrt_map: '${SUBMAP_MAX_RELATIVE_LENGTH|0.125}'   # [m/m]
+  submap_max_absolute_length: 300  # [m]
 
   max_number_lc_candidates: '${MAX_NUMBER_LC|250}'   # 0: no limit
   max_number_lc_candidates_per_submap: '${MAX_LC_PER_SUBMAP|2}'
+
+  largest_delta_for_reconsider_all: 10.0 # [m]
 
   use_gnns: '${USE_GNNS|true}'
   
@@ -26,9 +29,11 @@ params:
   # Minimum ICP quality to accept a loop closure:
   min_icp_goodness: 0.50
   icp_edge_worst_multiplier: 3.0  # how much uncertainty for the "min_icp_goodness" in comparison to a 100% icp result
-  icp_edge_robust_param: 100.0
+  icp_edge_robust_param: 10.0
 
-  min_volume_intersection_ratio_for_lc_candidate: 0.25
+  input_edges_uncertainty_multiplier: 1.0
+
+  min_volume_intersection_ratio_for_lc_candidate: 0.20
   
   do_first_gross_relocalize: false
   do_montecarlo_icp: '${DO_MONTECARLO_ICP|false}'
@@ -58,6 +63,10 @@ icp_settings:
     maxIterations: 800
     minAbsStep_trans: 1e-4
     minAbsStep_rot: 5e-5
+
+    quality_checkpoints:
+      - iteration: 150
+        minimum_quality: 0.03
 
     #debugPrintIterationProgress: true  # Print iteration progress
     #generateDebugFiles: true  # Can be override with env var "MP2P_ICP_GENERATE_DEBUG_FILES=1"

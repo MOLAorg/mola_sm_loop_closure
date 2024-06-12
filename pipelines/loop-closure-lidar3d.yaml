@@ -205,7 +205,7 @@ observations_generator:
     params:
       target_layer: 'raw'
       throw_on_unhandled_observation_class: true
-      process_class_names_regex: '(mrpt::obs::CObservationPointCloud|mrpt::obs::CObservation2DRangeScan)'
+      process_class_names_regex: '(mrpt::obs::CObservationPointCloud|mrpt::obs::CObservation2DRangeScan|mrpt::obs::CObservationVelodyneScan)'
       process_sensor_labels_regex: '.*'
 
 observations_filter:

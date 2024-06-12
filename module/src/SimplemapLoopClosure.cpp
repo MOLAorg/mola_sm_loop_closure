@@ -959,10 +959,11 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
     }
 
     // Fix zero-volume calculations for 2D lidar maps:
-    if (bbox && std::abs(bbox->min.z - bbox->max.z) < 0.10)
+    if (bbox && std::abs(bbox->max.z - bbox->min.z) < 0.10)
     {
         bbox->max.z += 2.0;
         bbox->min.z -= 2.0;
+        MRPT_LOG_DEBUG("[build_submap_from_kfs_into] Enlarging 2D bbox");
     }
 }
 
@@ -1260,7 +1261,7 @@ SimplemapLoopClosure::PotentialLoopOutput
             {
                 MRPT_LOG_INFO_STREAM(
                     "Relative pose: " << min_id << " <==> " << max_id
-                                      << " pose: " << ips.pose.mean);
+                                      << " pose: " << ips.pose);
             }
 
             double               bestScore = .0;
