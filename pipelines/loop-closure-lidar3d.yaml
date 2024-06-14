@@ -16,6 +16,7 @@ params:
 
   submap_max_length_wrt_map: '${SUBMAP_MAX_RELATIVE_LENGTH|0.125}'   # [m/m]
   submap_max_absolute_length: 300  # [m]
+  submap_min_absolute_length: 60  # [m]
 
   max_number_lc_candidates: '${MAX_NUMBER_LC|250}'   # 0: no limit
   max_number_lc_candidates_per_submap: '${MAX_LC_PER_SUBMAP|2}'

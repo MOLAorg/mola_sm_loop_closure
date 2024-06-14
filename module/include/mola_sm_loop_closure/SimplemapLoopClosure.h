@@ -82,6 +82,7 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         double      input_edges_uncertainty_multiplier             = 1.0;
         double      submap_max_length_wrt_map                      = 0.10;
         double      submap_max_absolute_length                     = 100.0;
+        double      submap_min_absolute_length                     = 50.0;
         double      min_volume_intersection_ratio_for_lc_candidate = 0.6;
         bool        assume_planar_world                            = false;
         bool        use_gnns                                       = true;

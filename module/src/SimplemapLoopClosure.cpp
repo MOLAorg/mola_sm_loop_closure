@@ -128,6 +128,7 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, profiler_enabled, bool);
     YAML_LOAD_REQ(params_, submap_max_length_wrt_map, double);
     YAML_LOAD_REQ(params_, submap_max_absolute_length, double);
+    YAML_LOAD_REQ(params_, submap_min_absolute_length, double);
     YAML_LOAD_OPT(params_, do_first_gross_relocalize, bool);
     YAML_LOAD_OPT(params_, do_montecarlo_icp, bool);
     YAML_LOAD_OPT(params_, assume_planar_world, bool);
@@ -306,9 +307,10 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         const auto   bbox     = SimpleMapBoundingBox(sm);
         const double smLength = (bbox.max - bbox.min).norm();
 
-        const double max_submap_length = std::min<double>(
-            params_.submap_max_absolute_length,
-            params_.submap_max_length_wrt_map * smLength);
+        const double max_submap_length = mrpt::saturate_val(
+            params_.submap_max_length_wrt_map * smLength,
+            params_.submap_min_absolute_length,
+            params_.submap_max_absolute_length);
 
         MRPT_LOG_INFO_FMT("Using submap length=%.02f m", max_submap_length);
 
