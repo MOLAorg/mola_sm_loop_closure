@@ -11,8 +11,8 @@ params:
   # These sensor labels will be handled as wheel odometry observation (C++11 regex):
   wheel_odometry_sensor_label: 'odometry|ODOMETRY'
 
-  # These sensor labels will be handled as GNNS (GPS) (For storage in simplemap only)
-  gnns_sensor_label: 'gps'
+  # These sensor labels will be handled as GNSS (GPS) (For storage in simplemap only)
+  gnss_sensor_label: 'gps'
 
   submap_max_length_wrt_map: '${SUBMAP_MAX_RELATIVE_LENGTH|0.125}'   # [m/m]
   submap_max_absolute_length: 300  # [m]
@@ -23,7 +23,7 @@ params:
 
   largest_delta_for_reconsider_all: 10.0 # [m]
 
-  use_gnns: '${USE_GNNS|true}'
+  use_gnss: '${USE_GNSS|true}'
   
   assume_planar_world: true
 

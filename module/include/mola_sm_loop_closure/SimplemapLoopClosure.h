@@ -68,9 +68,9 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         std::vector<std::regex> lidar_sensor_labels;
 
         /** Sensor labels or regex to be matched to input observations
-         *  to be used as GNNS (GPS) observations.
+         *  to be used as GNSS (GPS) observations.
          */
-        std::optional<std::regex> gnns_sensor_label;
+        std::optional<std::regex> gnss_sensor_label;
 
         mp2p_icp::Parameters icp_parameters;
 
@@ -85,7 +85,7 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         double      submap_min_absolute_length                     = 50.0;
         double      min_volume_intersection_ratio_for_lc_candidate = 0.6;
         bool        assume_planar_world                            = false;
-        bool        use_gnns                                       = true;
+        bool        use_gnss                                       = true;
         uint32_t    max_number_lc_candidates = 150;  // 0: no limit
         double      min_lc_uncertainty_ratio_to_draw_several_samples = 2.0;
         double      largest_delta_for_reconsider_all                 = 10.0;

@@ -24,7 +24,7 @@
 #include <mrpt/topography/conversions.h>
 
 // gtsam factors:
-#include "FactorGNNS2ENU.h"
+#include "FactorGNSS2ENU.h"
 
 mola::SMGeoReferencingOutput mola::simplemap_georeference(
     const mrpt::maps::CSimpleMap& sm, const SMGeoReferencingParams& params)
@@ -33,8 +33,8 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
 
     ASSERT_(!sm.empty());
 
-    const GNNSFrames smFrames =
-        extract_gnns_frames_from_sm(sm, params.geodeticReference);
+    const GNSSFrames smFrames =
+        extract_gnss_frames_from_sm(sm, params.geodeticReference);
 
     // Build and optimize GTSAM graph:
     using gtsam::symbol_shorthand::P;  // P(i): each vehicle pose
@@ -43,7 +43,7 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
     gtsam::NonlinearFactorGraph graph;
     gtsam::Values               v;
 
-    add_gnns_factors(graph, v, smFrames, params.fgParams);
+    add_gnss_factors(graph, v, smFrames, params.fgParams);
 
     gtsam::LevenbergMarquardtParams lmParams =
         gtsam::LevenbergMarquardtParams::CeresDefaults();
@@ -86,17 +86,17 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
     return ret;
 }
 
-mola::GNNSFrames mola::extract_gnns_frames_from_sm(
+mola::GNSSFrames mola::extract_gnss_frames_from_sm(
     const mrpt::maps::CSimpleMap&                           sm,
     const std::optional<mrpt::topography::TGeodeticCoords>& refCoordIn)
 {
-    GNNSFrames ret;
+    GNSSFrames ret;
 
     ret.refCoord = refCoordIn;
 
     ret.frames.reserve(sm.size());
 
-    // Build list of KF poses with GNNS observations:
+    // Build list of KF poses with GNSS observations:
     for (const auto& [pose, sf, twist] : sm)
     {
         ASSERT_(pose);
@@ -141,7 +141,7 @@ mola::GNNSFrames mola::extract_gnns_frames_from_sm(
             // keep first one:
             if (!ret.refCoord.has_value()) ret.refCoord = f.coords;
 
-            // Convert GNNS obs to ENU:
+            // Convert GNSS obs to ENU:
             mrpt::topography::geodeticToENU_WGS84(
                 f.coords, f.enu, *ret.refCoord);
         }
@@ -150,9 +150,9 @@ mola::GNNSFrames mola::extract_gnns_frames_from_sm(
     return ret;
 }
 
-void mola::add_gnns_factors(
-    gtsam::NonlinearFactorGraph& fg, gtsam::Values& v, const GNNSFrames& frames,
-    const AddGNNSFactorParams& params)
+void mola::add_gnss_factors(
+    gtsam::NonlinearFactorGraph& fg, gtsam::Values& v, const GNSSFrames& frames,
+    const AddGNSSFactorParams& params)
 {
     using gtsam::symbol_shorthand::P;  // P(i): each vehicle pose
     using gtsam::symbol_shorthand::T;  // T(0): the single sought transformation
@@ -180,7 +180,7 @@ void mola::add_gnns_factors(
         const auto sensorPointOnVeh =
             mrpt::gtsam_wrappers::toPoint3(frame.obs->sensorPose.translation());
 
-        fg.emplace_shared<FactorGNNS2ENU>(
+        fg.emplace_shared<FactorGNSS2ENU>(
             P(i), sensorPointOnVeh, observedENU, robustNoise);
 
         const auto vehiclePose = mrpt::gtsam_wrappers::toPose3(frame.pose);

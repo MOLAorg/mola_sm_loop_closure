@@ -66,8 +66,8 @@ const bool SAVE_LCS         = mrpt::get_env<bool>("SAVE_LCS", false);
 const bool SAVE_TREES       = mrpt::get_env<bool>("SAVE_TREES", false);
 const bool PRINT_FG_ERRORS  = mrpt::get_env<bool>("PRINT_FG_ERRORS", false);
 
-const bool ADD_GNNS_FACTORS_2ND_STAGE =
-    mrpt::get_env<bool>("ADD_GNNS_FACTORS_2ND_STAGE", true);
+const bool ADD_GNSS_FACTORS_2ND_STAGE =
+    mrpt::get_env<bool>("ADD_GNSS_FACTORS_2ND_STAGE", true);
 
 namespace
 {
@@ -121,8 +121,8 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     }
     ASSERT_(!params_.lidar_sensor_labels.empty());
 
-    if (cfg.has("gnns_sensor_label"))
-        params_.gnns_sensor_label = cfg["gnns_sensor_label"].as<std::string>();
+    if (cfg.has("gnss_sensor_label"))
+        params_.gnss_sensor_label = cfg["gnss_sensor_label"].as<std::string>();
 
     YAML_LOAD_REQ(params_, min_icp_goodness, double);
     YAML_LOAD_OPT(params_, profiler_enabled, bool);
@@ -132,7 +132,7 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, do_first_gross_relocalize, bool);
     YAML_LOAD_OPT(params_, do_montecarlo_icp, bool);
     YAML_LOAD_OPT(params_, assume_planar_world, bool);
-    YAML_LOAD_OPT(params_, use_gnns, bool);
+    YAML_LOAD_OPT(params_, use_gnss, bool);
 
     YAML_LOAD_REQ(params_, threshold_sigma_initial, std::string);
     YAML_LOAD_REQ(params_, threshold_sigma_final, std::string);
@@ -425,7 +425,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
             state_.kfGraphValues.insert(X(id), p);
 
-            // anchor for first KF: only if we don't have GNNS
+            // anchor for first KF: only if we don't have GNSS
             if (!x0prior)
             {
                 x0prior = boost::make_shared<gtsam::PriorFactor<gtsam::Pose3>>(
@@ -492,7 +492,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         state_.kfGraphFGRobust += f;
     }
 
-    // GNNS Edges: additional edges in both graphs:
+    // GNSS Edges: additional edges in both graphs:
     if (state_.globalGeoRef.has_value())
     {
         const auto  ref_id    = state_.globalGeoRefSubmapId;
@@ -500,7 +500,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
         for (const auto& [id, submap] : state_.submaps)
         {
-            // has this submap GNNS?
+            // has this submap GNSS?
             if (!submap.geo_ref) continue;
 
             // add edge: gpsRefId => id
@@ -528,12 +528,12 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
                     relPose.cov));
 
 #if 0
-            const double gnns_edge_robust_param = 3.0;
+            const double gnss_edge_robust_param = 3.0;
 
             gtsam::noiseModel::Base::shared_ptr edgeRobNoise =
                 gtsam::noiseModel::Robust::Create(
                     gtsam::noiseModel::mEstimator::GemanMcClure::Create(
-                        gnns_edge_robust_param),
+                        gnss_edge_robust_param),
                     edgeNoise);
 #else
             auto edgeRobNoise = edgeNoise;
@@ -543,7 +543,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             const auto curKfId = *submap.kf_ids.begin();
 
             MRPT_LOG_DEBUG_STREAM(
-                "GNNS edge #"
+                "GNSS edge #"
                 << refKfId << " => #" << curKfId << " relPose: " << relPose
                 << "\n gtsam:" << deltaPose << "\n cov:\n"
                 << mrpt::gtsam_wrappers::to_gtsam_se3_cov6_reordering(
@@ -558,7 +558,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
                                     mrpt::gtsam_wrappers::toTPose3D(p0);
 
                 MRPT_LOG_DEBUG_STREAM(
-                    "FG GNNS edge:\n"
+                    "FG GNSS edge:\n"
                     "p01: "
                     << p01pre
                     << "\n"
@@ -569,7 +569,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
                 X(refKfId), X(curKfId), deltaPose, edgeNoise);
 
-            if (ADD_GNNS_FACTORS_2ND_STAGE)
+            if (ADD_GNSS_FACTORS_2ND_STAGE)
             {
                 state_.kfGraphFGRobust
                     .emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
@@ -589,7 +589,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
                 params_.debug_files_prefix + "_submaps_initial_pre.3Dscene"s);
         }
 
-        // Run an initial LM pass to fit the GNNS measurements:
+        // Run an initial LM pass to fit the GNSS measurements:
         optimize_graph();
     }
 
@@ -796,14 +796,14 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
     // Insert all observations in this submap:
 
     std::optional<mrpt::math::TBoundingBox> bbox;
-    size_t                                  gnnsCount = 0;
+    size_t                                  gnssCount = 0;
     mrpt::maps::CSimpleMap                  subSM;  // aux SM for this submap
 
     for (const auto& id : submap.kf_ids)
     {
         const auto& [pose, sf, twist] = state_.sm->get(id);
 
-        // Create submap SM, for latter use in GNNS geo-reference:
+        // Create submap SM, for latter use in GNSS geo-reference:
         auto relPdf = mrpt::poses::CPose3DPDFGaussian::Create();
         relPdf->copyFrom(*pose);
         relPdf->changeCoordinatesReference(invSubmapPose);
@@ -837,17 +837,17 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
             }
         }
 
-        // Process GNNS?
+        // Process GNSS?
         if (auto oG = sf->getObservationByClass<mrpt::obs::CObservationGPS>();
             oG)
         {
-            gnnsCount++;
+            gnssCount++;
         }
 
     }  // for each keyframe
 
     // Try to generate geo-referencing data:
-    if (params_.use_gnns && gnnsCount > 2)
+    if (params_.use_gnss && gnssCount > 2)
     {
         SMGeoReferencingParams geoParams;
         geoParams.fgParams.addHorizontalityConstraints = false;
@@ -923,7 +923,7 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
             MRPT_LOG_INFO_STREAM(
                 "[build_submap_from_kfs_into] ACCEPTING submap #"
                 << submap.id
-                << " GNNS T_enu_to_map=" << geoResult.geo_ref.T_enu_to_map.mean
+                << " GNSS T_enu_to_map=" << geoResult.geo_ref.T_enu_to_map.mean
                 << "\n globalPose=" << T_0_i.mean  //
                 << "\n was       =" << submap.global_pose
                 << "\n se3Stds   =" << se3Stds.transpose()
@@ -934,9 +934,9 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
         else
         {
             MRPT_LOG_INFO_STREAM(
-                "[build_submap_from_kfs_into] DISCARDING GNNS solution for "
+                "[build_submap_from_kfs_into] DISCARDING GNSS solution for "
                 "submap #"
-                << submap.id << "\n GNNS T_enu_to_map="
+                << submap.id << "\n GNSS T_enu_to_map="
                 << geoResult.geo_ref.T_enu_to_map.mean
                 << "\n se3Stds=" << se3Stds.transpose()
                 << "\n final_rmse=" << geoResult.final_rmse);
@@ -1235,7 +1235,7 @@ SimplemapLoopClosure::PotentialLoopOutput
             if (submapId <= root_id) continue;
 
             // we need at least topological distance>=2 for this to be L.C.
-            // (except if we are using GNNS edges and one ID is the GNNS
+            // (except if we are using GNSS edges and one ID is the GNSS
             // reference submap!)
             if (ips.depth <= 1 && (!state_.globalGeoRef.has_value() ||
                                    (submapId != state_.globalGeoRefSubmapId &&

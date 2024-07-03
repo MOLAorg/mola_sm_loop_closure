@@ -39,10 +39,10 @@ struct SMGeoReferencingOutput
     double                                 final_rmse = .0;
 };
 
-struct AddGNNSFactorParams
+struct AddGNSSFactorParams
 {
     /// May be required for small maps, i.e. when the length of the trajectory
-    /// is not >10 times the GNNS uncertainty.
+    /// is not >10 times the GNSS uncertainty.
     bool   addHorizontalityConstraints = false;
     double horizontalitySigmaZ         = 1.0;  // [m]
 };
@@ -52,23 +52,23 @@ struct SMGeoReferencingParams
     SMGeoReferencingParams() = default;
 
     /// If provided, this will be the coordinates of the ENU frame origin.
-    /// Otherwise (default), the first GNNS entry will become the reference.
+    /// Otherwise (default), the first GNSS entry will become the reference.
     std::optional<mrpt::topography::TGeodeticCoords> geodeticReference;
 
-    AddGNNSFactorParams fgParams;
+    AddGNSSFactorParams fgParams;
 
     mrpt::system::COutputLogger* logger = nullptr;
 };
 
-/** Function to georeferencing a given SimpleMap with GNNS observations.
- *  A minimum of 3 (non-colinear) KFs with GNNS data are required to solve
+/** Function to georeferencing a given SimpleMap with GNSS observations.
+ *  A minimum of 3 (non-colinear) KFs with GNSS data are required to solve
  *  for the optimal transformation.
  */
 SMGeoReferencingOutput simplemap_georeference(
     const mrpt::maps::CSimpleMap& sm,
     const SMGeoReferencingParams& params = {});
 
-struct FrameGNNS
+struct FrameGNSS
 {
     mrpt::poses::CPose3D              pose;
     mrpt::obs::CObservationGPS::Ptr   obs;
@@ -80,19 +80,19 @@ struct FrameGNNS
     double                            sigma_U = 5.0;
 };
 
-struct GNNSFrames
+struct GNSSFrames
 {
-    std::vector<FrameGNNS>                           frames;
+    std::vector<FrameGNSS>                           frames;
     std::optional<mrpt::topography::TGeodeticCoords> refCoord;
 };
 
-GNNSFrames extract_gnns_frames_from_sm(
+GNSSFrames extract_gnss_frames_from_sm(
     const mrpt::maps::CSimpleMap&                           sm,
     const std::optional<mrpt::topography::TGeodeticCoords>& refCoord =
         std::nullopt);
 
-void add_gnns_factors(
-    gtsam::NonlinearFactorGraph& fg, gtsam::Values& v, const GNNSFrames& frames,
-    const AddGNNSFactorParams& params);
+void add_gnss_factors(
+    gtsam::NonlinearFactorGraph& fg, gtsam::Values& v, const GNSSFrames& frames,
+    const AddGNSSFactorParams& params);
 
 }  // namespace mola
