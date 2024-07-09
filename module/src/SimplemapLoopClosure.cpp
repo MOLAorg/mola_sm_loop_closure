@@ -1109,6 +1109,8 @@ SimplemapLoopClosure::PotentialLoopOutput
 
     mrpt::system::CTimeLoggerEntry tle(profiler_, "find_next_loop_closure");
 
+    if (state_.submapsGraph.nodes.size() < 2) return {};
+
     struct InfoPerSubmap
     {
         mrpt::poses::CPose3DPDFGaussian pose;
