@@ -27,7 +27,6 @@ find_package(mola_relocalization REQUIRED)
 find_package(mrpt-maps REQUIRED)
 find_package(mrpt-gui REQUIRED)
 find_package(mrpt-tclap REQUIRED)
-find_package(mrpt-graphslam REQUIRED)
 
 find_package(GTSAM REQUIRED)
 
@@ -45,7 +44,6 @@ mola_add_library(
 	PUBLIC_LINK_LIBRARIES
 		mrpt::maps
 		mrpt::gui
-		mrpt::graphslam
 		mola::mp2p_icp
 		mola::mp2p_icp_filters
 		mola::mola_yaml
