@@ -129,6 +129,7 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_REQ(params_, submap_max_length_wrt_map, double);
     YAML_LOAD_REQ(params_, submap_max_absolute_length, double);
     YAML_LOAD_REQ(params_, submap_min_absolute_length, double);
+    YAML_LOAD_REQ(params_, max_time_between_kfs_to_break_submap, double);
     YAML_LOAD_OPT(params_, do_first_gross_relocalize, bool);
     YAML_LOAD_OPT(params_, do_montecarlo_icp, bool);
     YAML_LOAD_OPT(params_, assume_planar_world, bool);
@@ -283,6 +284,18 @@ bool sf_has_real_mapping_observations(const mrpt::obs::CSensoryFrame& sf)
     return false;
 }
 
+std::optional<mrpt::Clock::time_point> sf_timestamp(
+    const mrpt::obs::CSensoryFrame& sf)
+{
+    for (const auto& o : sf)
+    {
+        if (!o) continue;
+        if (o->timestamp == mrpt::Clock::time_point()) continue;
+        return o->timestamp;
+    }
+    return {};
+}
+
 }  // namespace
 
 // Find and apply loop closures in the input/output simplemap
@@ -301,10 +314,12 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     std::vector<std::set<keyframe_id_t>> detectedSubMaps;
 
     {
-        std::set<keyframe_id_t>             pendingKFs;
-        double                              pendingKFsAccumDistance = 0;
-        std::optional<mrpt::poses::CPose3D> lastPose;
-        bool                                anyValidObsInPendingSet = false;
+        std::set<keyframe_id_t>                pendingKFs;
+        double                                 pendingKFsAccumDistance = 0;
+        std::optional<mrpt::poses::CPose3D>    lastPose;
+        std::optional<mrpt::Clock::time_point> lastTime;
+
+        bool anyValidObsInPendingSet = false;
 
         const auto   bbox     = SimpleMapBoundingBox(sm);
         const double smLength = (bbox.max - bbox.min).norm();
@@ -337,10 +352,23 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
             pendingKFsAccumDistance += incrPose.translation().norm();
 
-            if (pendingKFsAccumDistance >= max_submap_length)
+            double                                       time_since_last_kf = 0;
+            const std::optional<mrpt::Clock::time_point> thisTime =
+                sf_timestamp(*sf_i);
+
+            if (lastTime && thisTime)
+                time_since_last_kf =
+                    mrpt::system::timeDifference(*lastTime, *thisTime);
+
+            if (!lastTime && thisTime) lastTime = *thisTime;
+
+            if (pendingKFsAccumDistance >= max_submap_length ||
+                time_since_last_kf >
+                    params_.max_time_between_kfs_to_break_submap)
             {
                 detectedSubMaps.emplace_back(pendingKFs);
                 pendingKFs.clear();
+                lastTime.reset();
                 pendingKFsAccumDistance = 0;
                 anyValidObsInPendingSet = false;
             }

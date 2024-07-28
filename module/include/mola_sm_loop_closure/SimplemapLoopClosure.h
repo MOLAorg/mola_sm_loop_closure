@@ -83,6 +83,7 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         double      submap_max_length_wrt_map                      = 0.10;
         double      submap_max_absolute_length                     = 100.0;
         double      submap_min_absolute_length                     = 50.0;
+        double      max_time_between_kfs_to_break_submap           = 10.0;
         double      min_volume_intersection_ratio_for_lc_candidate = 0.6;
         bool        assume_planar_world                            = false;
         bool        use_gnss                                       = true;
