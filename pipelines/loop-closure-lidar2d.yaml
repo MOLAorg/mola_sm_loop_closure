@@ -15,26 +15,26 @@ params:
   gnss_sensor_label: 'gps'
 
   submap_max_length_wrt_map: '${SUBMAP_MAX_RELATIVE_LENGTH|0.125}'   # [m/m]
-  submap_max_absolute_length: 100 # [m]
-  submap_min_absolute_length: 100  # [m]
+  submap_max_absolute_length: 120  # [m]
+  submap_min_absolute_length: 120  # [m]
 
-  max_number_lc_candidates: '${MAX_NUMBER_LC|250}'   # 0: no limit
-  max_number_lc_candidates_per_submap: '${MAX_LC_PER_SUBMAP|2}'
+  max_number_lc_candidates: '${MAX_NUMBER_LC|2500}'   # 0: no limit
+  max_number_lc_candidates_per_submap: 15
 
-  largest_delta_for_reconsider_all: 4.0 # [m]
+  largest_delta_for_reconsider_all: 2.0 # [m]
 
   use_gnss: '${USE_GNSS|true}'
   
   assume_planar_world: true
 
   # Minimum ICP quality to accept a loop closure:
-  min_icp_goodness: 0.60
-  icp_edge_worst_multiplier: 3.0  # how much uncertainty for the "min_icp_goodness" in comparison to a 100% icp result
-  icp_edge_robust_param: 5.0
+  min_icp_goodness: 0.40
+  icp_edge_worst_multiplier: 2.0  # how much uncertainty for the "min_icp_goodness" in comparison to a 100% icp result
+  icp_edge_robust_param: 1.0
 
   input_edges_uncertainty_multiplier: 1.0
 
-  min_volume_intersection_ratio_for_lc_candidate: 0.30
+  min_volume_intersection_ratio_for_lc_candidate: 0.20
   
   do_first_gross_relocalize: false
   do_montecarlo_icp: '${DO_MONTECARLO_ICP|false}'
@@ -108,7 +108,7 @@ icp_settings:
       params:
         absolute_minimum_pairing_ratio: 0.10
         reuse_icp_pairings: false
-        threshold: '2*2.0*SIGMA_FINAL'   # [m]
+        threshold: 0.4 # [m]
         thresholdAngularDeg: 0  # deg
         pairingsPerPoint: 1
         allowMatchAlreadyMatchedGlobalPoints: true # faster

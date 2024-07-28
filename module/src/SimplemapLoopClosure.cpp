@@ -2085,12 +2085,20 @@ double SimplemapLoopClosure::optimize_graph()
         state_.submapsGraph.nodes.at(submapId) = newPose;
     }
 
+    auto bckCol =
+        this->mrpt::system::COutputLogger::logging_levels_to_colors().at(
+            mrpt::system::LVL_INFO);
+    this->mrpt::system::COutputLogger::logging_levels_to_colors().at(
+        mrpt::system::LVL_INFO) =
+        mrpt::system::ConsoleForegroundColor::BRIGHT_GREEN;
     MRPT_LOG_INFO_STREAM(
         "***** Graph re-optimized in "
         << lm1.iterations() << "/" << lm2.iterations()
         << " iters, RMSE: 1st PASS:" << rmseInit1 << " ==> " << rmseEnd1
         << " / 2nd PASS: " << rmseInit2 << " ==> " << rmseEnd2
         << " largestDelta=" << largestDelta);
+    this->mrpt::system::COutputLogger::logging_levels_to_colors().at(
+        mrpt::system::LVL_INFO) = bckCol;
 
     if (PRINT_FG_ERRORS)
     {
