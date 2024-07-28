@@ -90,6 +90,15 @@ mola_add_executable(
 		mrpt::tclap
 )
 
+mola_add_executable(
+	TARGET  mola-trajectory-georef
+	SOURCES apps/mola-trajectory-georef-cli.cpp
+	LINK_LIBRARIES
+		${PROJECT_NAME}
+		mrpt::maps
+		mrpt::tclap
+)
+
 # -----------------------
 # define tests:
 #enable_testing()
