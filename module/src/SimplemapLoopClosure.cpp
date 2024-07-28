@@ -301,8 +301,10 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     std::vector<std::set<keyframe_id_t>> detectedSubMaps;
 
     {
-        std::set<keyframe_id_t> pendingKFs;
-        bool                    anyValidObsInPendingSet = false;
+        std::set<keyframe_id_t>             pendingKFs;
+        double                              pendingKFsAccumDistance = 0;
+        std::optional<mrpt::poses::CPose3D> lastPose;
+        bool                                anyValidObsInPendingSet = false;
 
         const auto   bbox     = SimpleMapBoundingBox(sm);
         const double smLength = (bbox.max - bbox.min).norm();
@@ -329,10 +331,17 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             if (!sf_has_real_mapping_observations(*sf_i)) continue;
             anyValidObsInPendingSet = true;
 
-            if (pose_i_local.translation().norm() >= max_submap_length)
+            mrpt::poses::CPose3D incrPose;
+            if (lastPose) incrPose = pose_i_local.getPoseMean() - *lastPose;
+            lastPose = pose_i_local.getPoseMean();
+
+            pendingKFsAccumDistance += incrPose.translation().norm();
+
+            if (pendingKFsAccumDistance >= max_submap_length)
             {
                 detectedSubMaps.emplace_back(pendingKFs);
                 pendingKFs.clear();
+                pendingKFsAccumDistance = 0;
                 anyValidObsInPendingSet = false;
             }
         }
