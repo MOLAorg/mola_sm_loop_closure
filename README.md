@@ -10,3 +10,13 @@ mola-sm-lc-cli \
  -i map_KAIST01_gps.simplemap \
  -o map_KAIST01_corrected.simplemap
 ```
+
+```bash
+# Create the mm:
+sm2mm -i INPUT_WITH_GPS.simplemap \
+ -o EXISTING-MAP.mm \
+ -o pipeline.yaml
+
+# georefer it:
+mola-sm-georeferencing -i INPUT_WITH_GPS.simplemap --write-into EXISTING-MAP.mm
+```
