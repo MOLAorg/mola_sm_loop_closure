@@ -8,12 +8,12 @@
   <version>0.1.0</version>
   <description>Simplemap loop-closure postprocessing library and CLI tool</description>
 
-  <author     email="joseluisblancoc@gmail.com">Jose-Luis Blanco-Claraco</author>
+  <author email="joseluisblancoc@gmail.com">Jose-Luis Blanco-Claraco</author>
   <maintainer email="joseluisblancoc@gmail.com">Jose-Luis Blanco-Claraco</maintainer>
 
   <url type="website">https://github.com/MOLAorg/</url>
 
-  <license>GPLv3</license>
+  <license>Proprietary</license>
 
   <depend>mola_common</depend>
   <depend>mola_yaml</depend>

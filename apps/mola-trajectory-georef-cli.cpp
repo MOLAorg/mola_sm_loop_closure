@@ -1,7 +1,30 @@
-/* -------------------------------------------------------------------------
- * Copyright (C) 2018-2024 Jose Luis Blanco, University of Almeria
- * See LICENSE for license information.
- * ------------------------------------------------------------------------- */
+/*
+ * Proprietary Software License
+ *
+ * Copyright (c) 2018-2024 Jose Luis Blanco-Claraco, University of Almeria.
+ * All rights reserved.
+ *
+ * This file is part of MOLA (Modular Optimization framework
+ * for Localization and mApping)
+ *
+ * Unauthorized copying, distribution, modification, or use of this file,
+ * via any medium, is strictly prohibited without the prior written permission
+ * of University of Almería (PI: Jose Luis Blanco-Claraco).
+ *
+ * License:
+ * You may use this file in accordance with the terms and conditions
+ * set forth in the Proprietary Software License, which is included
+ * with this software or can be obtained at University of Almeria.
+ *
+ * Disclaimer:
+ * This software is provided "as is," without warranty of any kind,
+ * express or implied, including but not limited to the warranties
+ * of merchantability, fitness for a particular purpose, and noninfringement.
+ * In no event shall the authors or copyright holders be liable
+ * for any claim, damages, or other liability, whether in an action
+ * of contract, tort, or otherwise, arising from, out of, or in connection
+ * with the software or the use or other dealings in the software.
+ */
 
 #include <mp2p_icp/metricmap.h>
 #include <mrpt/3rdparty/tclap/CmdLine.h>
