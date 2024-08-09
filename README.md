@@ -14,9 +14,9 @@ mola-sm-lc-cli \
 ```bash
 # Create the mm:
 sm2mm -i INPUT_WITH_GPS.simplemap \
- -o EXISTING-MAP.mm \
- -o pipeline.yaml
+ -o MAP.mm \
+ -p pipeline.yaml
 
-# georefer it:
-mola-sm-georeferencing -i INPUT_WITH_GPS.simplemap --write-into EXISTING-MAP.mm
+# georeference it:
+mola-sm-georeferencing -i INPUT_WITH_GPS.simplemap --write-into MAP.mm
 ```
