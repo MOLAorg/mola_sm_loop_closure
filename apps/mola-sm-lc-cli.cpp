@@ -32,6 +32,7 @@
 #include <mrpt/containers/yaml.h>
 #include <mrpt/io/lazy_load_path.h>
 #include <mrpt/system/filesystem.h>
+#include <mrpt/system/os.h>
 
 // CLI flags:
 
@@ -96,6 +97,19 @@ struct Cli
 
 void run_sm_to_mm(Cli& cli)
 {
+    if (cli.argPlugins.isSet())
+    {
+        std::string sErrs;
+        bool        ok =
+            mrpt::system::loadPluginModules(cli.argPlugins.getValue(), sErrs);
+        if (!ok)
+        {
+            std::cerr << "Errors loading plugins: " << cli.argPlugins.getValue()
+                      << std::endl;
+            throw std::runtime_error(sErrs.c_str());
+        }
+    }
+
     const auto filYaml = cli.argPipeline.getValue();
     ASSERT_FILE_EXISTS_(filYaml);
     auto yamlData = mola::load_yaml_file(filYaml);

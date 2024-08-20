@@ -29,6 +29,7 @@
 #include <mola_sm_loop_closure/simplemap_georeference.h>
 #include <mrpt/3rdparty/tclap/CmdLine.h>
 #include <mrpt/system/filesystem.h>
+#include <mrpt/system/os.h>
 
 // CLI flags:
 
@@ -72,6 +73,19 @@ struct Cli
 
 void run_sm_georef(Cli& cli)
 {
+    if (cli.argPlugins.isSet())
+    {
+        std::string sErrs;
+        bool        ok =
+            mrpt::system::loadPluginModules(cli.argPlugins.getValue(), sErrs);
+        if (!ok)
+        {
+            std::cerr << "Errors loading plugins: " << cli.argPlugins.getValue()
+                      << std::endl;
+            throw std::runtime_error(sErrs.c_str());
+        }
+    }
+
     const auto& filSM = cli.argInput.getValue();
 
     mrpt::maps::CSimpleMap sm;
