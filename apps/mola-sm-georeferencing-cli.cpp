@@ -51,6 +51,16 @@ struct Cli
         "map.mm",
         cmd};
 
+    TCLAP::ValueArg<double> argHorz{
+        "",
+        "horizontality-sigma",
+        "For short trajectories (not >10x the GPS uncertainty), this helps to "
+        "avoid degeneracy.",
+        false,
+        1.0,
+        "1.0",
+        cmd};
+
     TCLAP::ValueArg<std::string> argPlugins{
         "l",
         "load-plugins",
@@ -100,6 +110,12 @@ void run_sm_georef(Cli& cli)
     ASSERT_(!sm.empty());
 
     mola::SMGeoReferencingParams p;
+
+    if (cli.argHorz.isSet())
+    {
+        p.fgParams.addHorizontalityConstraints = true;
+        p.fgParams.horizontalitySigmaZ         = cli.argHorz.getValue();
+    }
 
     const mola::SMGeoReferencingOutput smGeo =
         mola::simplemap_georeference(sm, p);

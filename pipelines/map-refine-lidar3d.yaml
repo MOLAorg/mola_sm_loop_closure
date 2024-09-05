@@ -43,9 +43,15 @@ params:
   gnss_sensor_label: 'gps'
 
   submap_max_length_wrt_map: 0.01 #'${SUBMAP_MAX_RELATIVE_LENGTH|0.1}'   # [m/m]
+  submap_max_absolute_length: 0.01  # [m]
+  submap_min_absolute_length: 0.01  # [m]
+
+  max_time_between_kfs_to_break_submap: 10.0 # [s]
 
   max_number_lc_candidates: 0  # 0: no limit
   max_number_lc_candidates_per_submap: '${MAX_LC_PER_SUBMAP|2}'
+
+  largest_delta_for_reconsider_all: 10.0 # [m]
 
   use_gnss: false
   
