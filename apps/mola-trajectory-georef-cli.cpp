@@ -28,7 +28,9 @@
 
 #include <mp2p_icp/metricmap.h>
 #include <mrpt/3rdparty/tclap/CmdLine.h>
+#include <mrpt/io/CFileGZInputStream.h>
 #include <mrpt/poses/CPose3DInterpolator.h>
+#include <mrpt/serialization/CArchive.h>
 #include <mrpt/system/filesystem.h>
 #include <mrpt/topography/conversions.h>
 
@@ -40,8 +42,13 @@ struct Cli
     TCLAP::CmdLine cmd{"mola-trajectory-georef-cli"};
 
     TCLAP::ValueArg<std::string> argMM{
-        "m",      "map", "Input .mm map with georef info", true, "map.mm",
+        "m",      "map", "Input .mm map with georef info", false, "map.mm",
         "map.mm", cmd};
+
+    TCLAP::ValueArg<std::string> argGeoRef{
+        "g",   "geo-ref",    "Input .georef file with georef info",
+        false, "map.georef", "map.georef",
+        cmd};
 
     TCLAP::ValueArg<std::string> argTraj{
         "t",  "trajectory", "Input .tum trajectory, in map local coordinates",
@@ -56,20 +63,40 @@ struct Cli
 
 void run_traj_georef(Cli& cli)
 {
-    const auto filMM = cli.argMM.getValue();
+    std::optional<mp2p_icp::metric_map_t::Georeferencing> geo;
 
-    mp2p_icp::metric_map_t mm;
+    if (cli.argMM.isSet())
+    {
+        const auto filMM = cli.argMM.getValue();
 
-    std::cout << "[mola-trajectory-georef-cli] Reading input map from: '"
-              << filMM << "'..." << std::endl;
+        mp2p_icp::metric_map_t mm;
 
-    mm.load_from_file(filMM);
+        std::cout << "[mola-trajectory-georef-cli] Reading input map from: '"
+                  << filMM << "'..." << std::endl;
 
-    std::cout << "[mola-trajectory-georef-cli] Done read map: "
-              << mm.contents_summary() << std::endl;
+        mm.load_from_file(filMM);
 
-    ASSERT_(mm.georeferencing.has_value());
-    const auto& geo = *mm.georeferencing;
+        std::cout << "[mola-trajectory-georef-cli] Done read map: "
+                  << mm.contents_summary() << std::endl;
+
+        ASSERT_(mm.georeferencing.has_value());
+        geo = mm.georeferencing;
+    }
+    else if (cli.argGeoRef.isSet())
+    {
+        mrpt::io::CFileGZInputStream f(cli.argGeoRef.getValue());
+
+        auto arch = mrpt::serialization::archiveFrom(f);
+        arch >> geo;
+    }
+    else
+    {
+        THROW_EXCEPTION(
+            "Missing cli argument: at least one source of geo-referencing must "
+            "be given");
+    }
+
+    ASSERT_(geo.has_value());
 
     // trajectory:
     mrpt::poses::CPose3DInterpolator traj;
@@ -83,10 +110,10 @@ void run_traj_georef(Cli& cli)
     for (const auto& [t, p] : traj)
     {
         const auto enu =
-            (geo.T_enu_to_map.mean + mrpt::poses::CPose3D(p)).translation();
+            (geo->T_enu_to_map.mean + mrpt::poses::CPose3D(p)).translation();
 
         mrpt::topography::TGeocentricCoords gcPt;
-        mrpt::topography::ENUToGeocentric(enu, geo.geo_coord, gcPt, WGS84);
+        mrpt::topography::ENUToGeocentric(enu, geo->geo_coord, gcPt, WGS84);
 
         mrpt::topography::TGeodeticCoords ptCoords;
         mrpt::topography::geocentricToGeodetic(gcPt, ptCoords, WGS84);

@@ -28,6 +28,7 @@
 
 #include <mola_sm_loop_closure/simplemap_georeference.h>
 #include <mrpt/3rdparty/tclap/CmdLine.h>
+#include <mrpt/io/CFileGZOutputStream.h>
 #include <mrpt/system/filesystem.h>
 #include <mrpt/system/os.h>
 
@@ -49,6 +50,15 @@ struct Cli
         false,
         "map.mm",
         "map.mm",
+        cmd};
+
+    TCLAP::ValueArg<std::string> argOutput{
+        "o",
+        "output",
+        "Write the obtained georeferencing metadata to a .georef file",
+        false,
+        "map.georef",
+        "map.georef",
         cmd};
 
     TCLAP::ValueArg<double> argHorz{
@@ -148,6 +158,21 @@ void run_sm_georef(Cli& cli)
 
         std::cout << "[mola-sm-georeferencing-cli] Writing modified mm map: '"
                   << cli.argWriteMMInto.getValue() << "'..." << std::endl;
+    }
+
+    if (cli.argOutput.isSet())
+    {
+        const std::string outFil = cli.argOutput.getValue();
+
+        std::cout << "[mola-sm-georeferencing-cli] Writing georef data file: '"
+                  << outFil << "'..." << std::endl;
+
+        mrpt::io::CFileGZOutputStream                         f(outFil);
+        std::optional<mp2p_icp::metric_map_t::Georeferencing> g;
+        g = smGeo.geo_ref;
+
+        auto arch = mrpt::serialization::archiveFrom(f);
+        arch << g;
     }
 }
 
