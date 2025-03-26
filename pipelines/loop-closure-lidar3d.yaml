@@ -58,7 +58,7 @@ params:
   assume_planar_world: false
 
   # Minimum ICP quality to accept a loop closure:
-  min_icp_goodness: 0.55
+  min_icp_goodness: '${LC_MIN_ICP_QUALITY|0.55}'
   icp_edge_worst_multiplier: 3.0  # how much uncertainty for the "min_icp_goodness" in comparison to a 100% icp result
   icp_edge_robust_param: 10.0
 
