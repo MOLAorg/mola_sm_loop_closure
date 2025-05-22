@@ -117,7 +117,10 @@ mola::GNSSFrames mola::extract_gnss_frames_from_sm(
              !!(obs = sf->getObservationByClass<mrpt::obs::CObservationGPS>(i));
              i++)
         {
-            if (!obs->hasMsgType(mrpt::obs::gnss::NMEA_GGA)) continue;
+            if (!obs->hasMsgType(mrpt::obs::gnss::NMEA_GGA))
+            {
+                continue;
+            }
 
             auto& f = ret.frames.emplace_back();
 
@@ -147,7 +150,10 @@ mola::GNSSFrames mola::extract_gnss_frames_from_sm(
             f.coords.height = f.gga.fields.altitude_meters;
 
             // keep first one:
-            if (!ret.refCoord.has_value()) ret.refCoord = f.coords;
+            if (!ret.refCoord.has_value())
+            {
+                ret.refCoord = f.coords;
+            }
 
             // Convert GNSS obs to ENU:
             mrpt::topography::geodeticToENU_WGS84(
