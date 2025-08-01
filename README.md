@@ -24,3 +24,9 @@ mola-sm-lc-cli \
  -o map_KAIST01_corrected.simplemap
 ```
 
+# License
+Copyright (C) 2018-2025 Jose Luis Blanco <jlblanco@ual.es>, University of Almeria
+
+This package is released under the GNU GPL v3 license as open source, with the main 
+intention of being useful for research and evaluation purposes.
+Commercial licenses [available upon request](https://docs.mola-slam.org/latest/solutions.html).

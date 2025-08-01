@@ -1,30 +1,25 @@
-/*
- * Proprietary Software License
- *
- * Copyright (c) 2018-2024 Jose Luis Blanco-Claraco, University of Almeria.
- * All rights reserved.
- *
- * This file is part of MOLA (Modular Optimization framework
- * for Localization and mApping)
- *
- * Unauthorized copying, distribution, modification, or use of this file,
- * via any medium, is strictly prohibited without the prior written permission
- * of University of Almería (PI: Jose Luis Blanco-Claraco).
- *
- * License:
- * You may use this file in accordance with the terms and conditions
- * set forth in the Proprietary Software License, which is included
- * with this software or can be obtained at University of Almeria.
- *
- * Disclaimer:
- * This software is provided "as is," without warranty of any kind,
- * express or implied, including but not limited to the warranties
- * of merchantability, fitness for a particular purpose, and noninfringement.
- * In no event shall the authors or copyright holders be liable
- * for any claim, damages, or other liability, whether in an action
- * of contract, tort, or otherwise, arising from, out of, or in connection
- * with the software or the use or other dealings in the software.
- */
+// -----------------------------------------------------------------------------
+//   A Modular Optimization framework for Localization and mApping  (MOLA)
+//
+// Copyright (C) 2018-2025 Jose Luis Blanco, University of Almeria
+// Licensed under the GNU GPL v3.
+//
+// This file is part of MOLA.
+// MOLA is free software: you can redistribute it and/or modify it under the
+// terms of the GNU General Public License as published by the Free Software
+// Foundation, either version 3 of the License, or (at your option) any later
+// version.
+//
+// MOLA is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
+// A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along with
+// MOLA. If not, see <https://www.gnu.org/licenses/>.
+//
+// Closed-source licenses available upon request, for this odometry package
+// alone or in combination with the complete SLAM system.
+// -----------------------------------------------------------------------------
 
 #include <mola_sm_loop_closure/SimplemapLoopClosure.h>
 #include <mola_yaml/yaml_helpers.h>
