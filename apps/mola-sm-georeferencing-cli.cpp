@@ -81,7 +81,7 @@ struct Cli
         "verbosity",
         "Verbosity level: ERROR|WARN|INFO|DEBUG (Default: INFO)",
         false,
-        "",
+        "INFO",
         "INFO",
         cmd};
 };
@@ -101,20 +101,30 @@ void run_sm_georef(Cli& cli)
         }
     }
 
+    mrpt::system::COutputLogger logger;
+    logger.setLoggerName("mola-sm-georeferencing-cli");
+    logger.setVerbosityLevel(
+        mrpt::typemeta::str2enum<mrpt::system::VerbosityLevel>(
+            cli.arg_verbosity_level.getValue()));
+
     const auto& filSM = cli.argInput.getValue();
 
     mrpt::maps::CSimpleMap sm;
 
-    std::cout << "[mola-sm-georeferencing-cli] Reading simplemap from: '"
-              << filSM << "'..." << std::endl;
+    logger.logFmt(
+        mrpt::system::LVL_INFO, "Reading simplemap from: '%s'...",
+        filSM.c_str());
 
     sm.loadFromFile(filSM);
 
-    std::cout << "[mola-sm-georeferencing-cli] Done read simplemap with "
-              << sm.size() << " keyframes." << std::endl;
+    logger.logFmt(
+        mrpt::system::LVL_INFO, "Done read simplemap with %zu keyframes.",
+        sm.size());
+
     ASSERT_(!sm.empty());
 
     mola::SMGeoReferencingParams p;
+    p.logger = &logger;
 
     if (cli.argHorz.isSet())
     {

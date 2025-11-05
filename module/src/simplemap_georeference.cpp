@@ -39,6 +39,22 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
     const GNSSFrames smFrames =
         extract_gnss_frames_from_sm(sm, params.geodeticReference);
 
+    if (params.logger)
+    {
+        std::stringstream ss;
+        ss << "[simplemap_georeference] Found: " << smFrames.frames.size()
+           << " GNSS frames";
+        params.logger->logStr(mrpt::system::LVL_INFO, ss.str());
+    }
+
+    if (smFrames.frames.empty())
+    {
+        params.logger->logStr(
+            mrpt::system::LVL_ERROR,
+            "The input simplemap seems not to have any GNSS observations!");
+        return ret;
+    }
+
     // Build and optimize GTSAM graph:
     using gtsam::symbol_shorthand::P;  // P(i): each vehicle pose
     using gtsam::symbol_shorthand::T;  // T(0): the single sought transformation
