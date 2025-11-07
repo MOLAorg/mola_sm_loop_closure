@@ -96,8 +96,6 @@ SimplemapLoopClosure::SimplemapLoopClosure()
     threads_.name("sm_localmaps_build");
 }
 
-SimplemapLoopClosure::~SimplemapLoopClosure() = default;
-
 void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
 {
     MRPT_TRY_START
@@ -826,7 +824,10 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
 
     const auto invSubmapPose = -submap.global_pose;
 
-    if (params_.assume_planar_world) make_pose_planar(submap.global_pose);
+    if (params_.assume_planar_world)
+    {
+        make_pose_planar(submap.global_pose);
+    }
 
     MRPT_LOG_DEBUG_STREAM(
         "Defining submap #" << submap.id << " with " << ids.size()
@@ -868,8 +869,10 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
             const auto pMinLoc = p.composePoint(pMin);
             const auto pMaxLoc = p.composePoint(pMax);
             if (!bbox)
+            {
                 bbox = mrpt::math::TBoundingBox::FromUnsortedPoints(
                     pMinLoc, pMaxLoc);
+            }
             else
             {
                 bbox->updateWithPoint(pMinLoc);

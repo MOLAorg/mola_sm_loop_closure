@@ -43,13 +43,12 @@
 
 namespace mola
 {
-/** LIDAR-inertial odometry based on ICP against a local metric map model.
+/** LIDAR-inertial loop closure engine.
  */
 class SimplemapLoopClosure : public mrpt::system::COutputLogger
 {
    public:
     SimplemapLoopClosure();
-    ~SimplemapLoopClosure();
 
     /** @name Main API
      * @{ */
@@ -138,8 +137,7 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
 
     struct State
     {
-        State()  = default;
-        ~State() = default;
+        State() = default;
 
         bool initialized = false;
 
@@ -179,11 +177,11 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         // Submaps:
         std::map<submap_id_t, SubMap> submaps;
 
-        // This graph is used for Dijsktra only:
+        // This graph is used for Dijkstra only:
         mrpt::graphs::CNetworkOfPoses3DCov submapsGraph;
 
         std::optional<mrpt::topography::TGeodeticCoords> globalGeoRef;
-        submap_id_t                                      globalGeoRefSubmapId;
+        submap_id_t                                      globalGeoRefSubmapId{};
 
         gtsam::Values               kfGraphValues;
         gtsam::NonlinearFactorGraph kfGraphFG, kfGraphFGRobust;
