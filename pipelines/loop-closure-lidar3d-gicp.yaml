@@ -280,18 +280,25 @@ observations_filter:
   # and with the given parameters. Filters are run in definition order on the
   # input metric_map_t object.
   #
+  - class_name: mp2p_icp_filters::FilterAdjustTimestamps
+    params:
+      pointcloud_layer: "raw"
+      silently_ignore_no_timestamps: false
+      method: "TimestampAdjustMethod::MiddleIsZero"
+
   - class_name: mp2p_icp_filters::FilterDeskew
     params:
       input_pointcloud_layer: "raw"
       output_pointcloud_layer: "deskewed"
-      #method: "${MOLA_DESKEW_METHOD|MotionCompensationMethod::Linear}"
-      method: "${MOLA_DESKEW_METHOD|MotionCompensationMethod::None}"
-      silently_ignore_no_timestamps: true # To handle more dataset types
+      method: "${MOLA_DESKEW_METHOD|MotionCompensationMethod::Linear}"
+      silently_ignore_no_timestamps: "${MOLA_DESKEW_IGNORE_NO_TIMESTAMPS|false}" # To handle more dataset types
       output_layer_class: "mrpt::maps::CPointsMapXYZIRT" # Keep intensity & ring channels
 
       # These (vx,...wz) are variable names that must be defined via the
       # mp2p_icp::Parameterizable API to update them dynamically.
       twist: [vx, vy, vz, wx, wy, wz]
+
+      points_already_global: false # In the loop-closure module we first deskew in local, then convert to global coordinates
 
   - class_name: mp2p_icp_filters::FilterDecimateVoxels
     params:
@@ -299,7 +306,6 @@ observations_filter:
       output_pointcloud_layer: "decimated_for_map_raw"
       voxel_filter_resolution: 0.70*1e-2*ESTIMATED_SENSOR_MAX_RANGE # [m]
       decimate_method: DecimateMethod::FirstPoint
-      #decimate_method: DecimateMethod::ClosestToAverage
 
   # Remove points too close, to prevent "noise" from the vehicle,
   # the person next to the robot, etc. Remove too distant points since

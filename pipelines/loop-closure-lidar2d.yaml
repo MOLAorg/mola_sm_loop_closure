@@ -229,16 +229,25 @@ observations_filter:
   # and with the given parameters. Filters are run in definition order on the
   # input metric_map_t object.
   #
+  - class_name: mp2p_icp_filters::FilterAdjustTimestamps
+    params:
+      pointcloud_layer: "raw"
+      silently_ignore_no_timestamps: false
+      method: "TimestampAdjustMethod::MiddleIsZero"
+
   - class_name: mp2p_icp_filters::FilterDeskew
     params:
       input_pointcloud_layer: "raw"
       output_pointcloud_layer: "deskewed"
-      silently_ignore_no_timestamps: true # To handle more dataset types
+      method: "${MOLA_DESKEW_METHOD|MotionCompensationMethod::Linear}"
+      silently_ignore_no_timestamps: "${MOLA_DESKEW_IGNORE_NO_TIMESTAMPS|false}" # To handle more dataset types
       output_layer_class: "mrpt::maps::CPointsMapXYZIRT" # Keep intensity & ring channels
 
       # These (vx,...wz) are variable names that must be defined via the
       # mp2p_icp::Parameterizable API to update them dynamically.
-      twist: [VX, VY, VZ, WX, WY, WZ]
+      twist: [vx, vy, vz, wx, wy, wz]
+
+      points_already_global: false # In the loop-closure module we first deskew in local, then convert to global coordinates
 
   - class_name: mp2p_icp_filters::FilterDecimateVoxels
     params:

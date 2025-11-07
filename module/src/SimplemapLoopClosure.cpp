@@ -123,7 +123,9 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     ASSERT_(!params_.lidar_sensor_labels.empty());
 
     if (cfg.has("gnss_sensor_label"))
+    {
         params_.gnss_sensor_label = cfg["gnss_sensor_label"].as<std::string>();
+    }
 
     YAML_LOAD_REQ(params_, min_icp_goodness, double);
     YAML_LOAD_OPT(params_, profiler_enabled, bool);
@@ -1041,25 +1043,28 @@ void SimplemapLoopClosure::updatePipelineDynamicVariablesForKeyframe(
     // (e.g. de-skew methods)
     {
         mrpt::math::TTwist3D twistForIcpVars = {0, 0, 0, 0, 0, 0};
-        if (twist) twistForIcpVars = *twist;
+        if (twist)
+        {
+            twistForIcpVars = *twist;
+        }
 
-        ps.updateVariable("VX", twistForIcpVars.vx);
-        ps.updateVariable("VY", twistForIcpVars.vy);
-        ps.updateVariable("VZ", twistForIcpVars.vz);
-        ps.updateVariable("WX", twistForIcpVars.wx);
-        ps.updateVariable("WY", twistForIcpVars.wy);
-        ps.updateVariable("WZ", twistForIcpVars.wz);
+        ps.updateVariable("vx", twistForIcpVars.vx);
+        ps.updateVariable("vy", twistForIcpVars.vy);
+        ps.updateVariable("vz", twistForIcpVars.vz);
+        ps.updateVariable("wx", twistForIcpVars.wx);
+        ps.updateVariable("wy", twistForIcpVars.wy);
+        ps.updateVariable("wz", twistForIcpVars.wz);
     }
 
     // robot pose:
     const auto p = keyframe_relative_pose_in_simplemap(id, referenceId);
 
-    ps.updateVariable("ROBOT_X", p.x());
-    ps.updateVariable("ROBOT_Y", p.y());
-    ps.updateVariable("ROBOT_Z", p.z());
-    ps.updateVariable("ROBOT_YAW", p.yaw());
-    ps.updateVariable("ROBOT_PITCH", p.pitch());
-    ps.updateVariable("ROBOT_ROLL", p.roll());
+    ps.updateVariable("robot_x", p.x());
+    ps.updateVariable("robot_y", p.y());
+    ps.updateVariable("robot_z", p.z());
+    ps.updateVariable("robot_yaw", p.yaw());
+    ps.updateVariable("robot_pitch", p.pitch());
+    ps.updateVariable("robot_roll", p.roll());
 
     // pts.REL_POSE_SIGMA_XY;
     if (!pts.expr_threshold_sigma_final.is_compiled())
