@@ -1909,13 +1909,65 @@ std::future<mp2p_icp::metric_map_t::Ptr>
 mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(
     const SubMap& submap)
 {
-    if (submap.local_map) return submap.local_map;
+    if (submap.local_map)
+    {
+        return submap.local_map;
+    }
 
     const size_t threadIdx = submap.id % state_.perThreadState_.size();
 
     const keyframe_id_t refFrameId = *submap.kf_ids.begin();
 
     auto& pts = state_.perThreadState_.at(threadIdx);
+
+    const auto lambdaProcessLocalVelocityBuffer =
+        [&](const mrpt::obs::CObservation::Ptr& obs)
+    {
+        auto obsComment =
+            std::dynamic_pointer_cast<mrpt::obs::CObservationComment>(obs);
+        if (!obsComment)
+        {
+            return;
+        }
+
+        const auto commentYaml = [&]()
+        {
+            try
+            {
+                return mrpt::containers::yaml::FromText(obsComment->text);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Error parsing YAML in comment: " << e.what()
+                          << std::endl;
+                return mrpt::containers::yaml();
+            }
+        }();
+
+        if (!commentYaml.isMap() || !commentYaml.has("local_velocity_buffer"))
+        {
+            return;
+        }
+
+        const auto lvb = commentYaml["local_velocity_buffer"];
+        if (!lvb.isMap())
+        {
+            std::cerr << "Error: 'local_velocity_buffer' field is not a map!"
+                      << std::endl;
+            return;
+        }
+
+        try
+        {
+            pts.parameter_source.localVelocityBuffer.fromYAML(lvb);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Error parsing 'local_velocity_buffer': " << e.what()
+                      << std::endl;
+            return;
+        }
+    };
 
     // Insert all observations in this submap:
     for (const auto& id : submap.kf_ids)
@@ -1951,24 +2003,35 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(
 
         const auto& [pose, sf, twist] = state_.sm->get(id);
 
-#if 0
-        MRPT_LOG_DEBUG_STREAM(
-            "Processing KF#" << id << " with |SF|=" << sf->size());
-#endif
-
         // Some frames may be empty:
-        if (sf->empty()) continue;
+        if (sf->empty())
+        {
+            continue;
+        }
         if (sf->size() == 1 &&
             IS_CLASS(
                 *sf->getObservationByIndex(0), mrpt::obs::CObservationComment))
+        {
             continue;
+        }
+
+        // First, search for velocity buffer data:
+        for (const auto& obs : *sf)
+        {
+            ASSERT_(obs);
+            lambdaProcessLocalVelocityBuffer(obs);
+        }
+
+        // Next, do the actual sensor data processing:
 
         mrpt::system::CTimeLoggerEntry tle0(
             profiler_, "add_submap_from_kfs.apply_generators");
 
         for (const auto& o : *sf)
+        {
             mp2p_icp_filters::apply_generators(
                 pts.obs_generators, *o, *observation);
+        }
 
         tle0.stop();
 
@@ -2016,7 +2079,9 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(
 
         // 4/4: remove temporary layers:
         for (const auto& [lyName, lyMap] : observation->layers)
+        {
             submap.local_map->layers.erase(lyName);
+        }
 
         tle3.stop();
     }  // end for each keyframe ID
@@ -2029,7 +2094,10 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(
     submap.local_map->id    = submap.id;
 
     // Add geo-referencing, if it exists:
-    if (submap.geo_ref) submap.local_map->georeferencing = submap.geo_ref;
+    if (submap.geo_ref)
+    {
+        submap.local_map->georeferencing = submap.geo_ref;
+    }
 
     // Actual bbox: from point cloud layer:
     std::optional<mrpt::math::TBoundingBoxf> theBBox;
@@ -2037,13 +2105,20 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(
     for (const auto& [name, map] : submap.local_map->layers)
     {
         const auto* ptsMap = mp2p_icp::MapToPointsMap(*map);
-        if (!ptsMap || ptsMap->empty()) continue;
+        if (!ptsMap || ptsMap->empty())
+        {
+            continue;
+        }
 
         auto bbox = ptsMap->boundingBox();
         if (!theBBox)
+        {
             theBBox = bbox;
+        }
         else
+        {
             theBBox = theBBox->unionWith(bbox);
+        }
     }
 
     std::stringstream debugInfo;
