@@ -64,6 +64,8 @@
 
 using namespace mola;
 
+namespace
+{
 const bool PRINT_ALL_SCORES = mrpt::get_env<bool>("PRINT_ALL_SCORES", false);
 const bool SAVE_LCS         = mrpt::get_env<bool>("SAVE_LCS", false);
 const bool SAVE_TREES       = mrpt::get_env<bool>("SAVE_TREES", false);
@@ -72,8 +74,9 @@ const bool PRINT_FG_ERRORS  = mrpt::get_env<bool>("PRINT_FG_ERRORS", false);
 const bool ADD_GNSS_FACTORS_2ND_STAGE =
     mrpt::get_env<bool>("ADD_GNSS_FACTORS_2ND_STAGE", true);
 
-namespace
-{
+const bool DEBUG_PRINT_BETWEEN_EDGES =
+    mrpt::get_env<bool>("DEBUG_PRINT_BETWEEN_EDGES", false);
+
 mrpt::math::TBoundingBox SimpleMapBoundingBox(const mrpt::maps::CSimpleMap& sm)
 {
     // estimate path bounding box:
@@ -144,6 +147,13 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
 
     YAML_LOAD_REQ(params_, icp_edge_robust_param, double);
     YAML_LOAD_REQ(params_, icp_edge_worst_multiplier, double);
+
+    YAML_LOAD_REQ(params_, icp_edge_additional_noise_xyz, double);
+    YAML_LOAD_REQ(params_, icp_edge_additional_noise_ang_deg, double);
+    YAML_LOAD_REQ(params_, input_odometry_edge_additional_noise_xyz, double);
+    YAML_LOAD_REQ(
+        params_, input_odometry_edge_additional_noise_ang_deg, double);
+
     YAML_LOAD_OPT(params_, input_edges_uncertainty_multiplier, double);
     YAML_LOAD_OPT(params_, max_number_lc_candidates, uint32_t);
     YAML_LOAD_OPT(params_, max_number_lc_candidates_per_submap, uint32_t);
@@ -499,22 +509,24 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         // Enlarge uncertainty?
         sigmasXYZYPR *= params_.input_edges_uncertainty_multiplier;
 
-#if 0
-        // Minimum translation uncertainty:
-        const double min_t_std = 0.001;  // [m]
-        for (int k = 0; k < 3; k++)  //
-            mrpt::keep_min(sigmasXYZYPR[k], min_t_std);
-#endif
+        // Minimum uncertainty?
+        for (int k = 0; k < 3; k++)
+        {
+            sigmasXYZYPR[k] += params_.input_odometry_edge_additional_noise_xyz;
+            sigmasXYZYPR[3 + k] += mrpt::DEG2RAD(
+                params_.input_odometry_edge_additional_noise_ang_deg);
+        }
 
-#if 0
-        MRPT_LOG_INFO_STREAM(
-            "[FG] Adding edge: "
-            << i - 1 << " => " << i << " pose: " << relPose.getPoseMean()
-            << " sigmas: " << sigmasXYZYPR.transpose() << "\n"
-            << "relPose: " << relPose.cov << "\n"
-            << "ppi: " << ppi << "\n"
-            << "ppim1: " << ppim1 << "\n\n");
-#endif
+        if (DEBUG_PRINT_BETWEEN_EDGES)
+        {
+            MRPT_LOG_INFO_STREAM(
+                "[FG] Adding edge: "
+                << i - 1 << " => " << i << " pose: " << relPose.getPoseMean()
+                << " sigmas: " << sigmasXYZYPR.transpose() << "\n"
+                << "relPose: " << relPose.cov << "\n"
+                << "ppi: " << ppi << "\n"
+                << "ppim1: " << ppim1 << "\n\n");
+        }
 
         const gtsam::Pose3 deltaPose =
             mrpt::gtsam_wrappers::toPose3(relPose.getPoseMean());
@@ -541,7 +553,10 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         for (const auto& [id, submap] : state_.submaps)
         {
             // has this submap GNSS?
-            if (!submap.geo_ref) continue;
+            if (!submap.geo_ref)
+            {
+                continue;
+            }
 
             // add edge: gpsRefId => id
             const auto this_id = id;
@@ -1517,7 +1532,6 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
 
         // (1/2) Non-Robust edge for 1st PASS optimization, with "fake" cov
         double edge_std_xyz = 0.5;  // [m]
-        // icpRelPose.norm() * 0.5 * 1e-2);// 0.5% RTE
         double edge_std_ang = mrpt::DEG2RAD(0.5);
 
         // Use a variable variance depending on the ICP quality:
@@ -1545,10 +1559,22 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
             X(*submapGlobal.kf_ids.begin()), X(*submapLocal.kf_ids.begin()),
             deltaPose, icpNoiseNoRubust);
 
+        if (DEBUG_PRINT_BETWEEN_EDGES)
+        {
+            state_.kfGraphFG.back()->print("1/2 ICP edge factor: ");
+        }
+
         // (2/2) Robust edge for 2nd PASS optimization, with real cov
 
-        const gtsam::Vector6 realSigmasXYZYPR =
+        gtsam::Vector6 realSigmasXYZYPR =
             icpRelPose.cov.asEigen().diagonal().array().sqrt().eval();
+
+        for (int i = 0; i < 3; i++)
+        {
+            realSigmasXYZYPR[3 + i] += params_.icp_edge_additional_noise_xyz;
+            realSigmasXYZYPR[i] +=
+                mrpt::DEG2RAD(params_.icp_edge_additional_noise_ang_deg);
+        }
 
         gtsam::Vector6 realSigmasGtsam;
         realSigmasGtsam << realSigmasXYZYPR[5], realSigmasXYZYPR[4],
@@ -1566,6 +1592,11 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
             .emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
                 X(*submapGlobal.kf_ids.begin()), X(*submapLocal.kf_ids.begin()),
                 deltaPose, icpRobNoise);
+
+        if (DEBUG_PRINT_BETWEEN_EDGES)
+        {
+            state_.kfGraphFGRobust.back()->print("2/2 ICP edge factor: ");
+        }
 
         atLeastOneGoodIcp = true;
     };

@@ -55,7 +55,13 @@ params:
   # Minimum ICP quality to accept a loop closure:
   min_icp_goodness: "${LC_MIN_ICP_QUALITY|0.55}"
   icp_edge_worst_multiplier: 3.0 # how much uncertainty for the "min_icp_goodness" in comparison to a 100% icp result
-  icp_edge_robust_param: 10.0
+  icp_edge_robust_param: ${MOLA_LC_ICP_EDGE_ROBUST_PARAMETER|10.0}
+
+  icp_edge_additional_noise_xyz: 0.01 # [m]
+  icp_edge_additional_noise_ang_deg: 0.05 # [deg]
+
+  input_odometry_edge_additional_noise_xyz: 0.001 # [m]
+  input_odometry_edge_additional_noise_ang_deg: 0.001 # [deg]
 
   input_edges_uncertainty_multiplier: 1.0
 
