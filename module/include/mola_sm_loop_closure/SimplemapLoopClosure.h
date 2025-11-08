@@ -69,11 +69,6 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
          */
         std::vector<std::regex> lidar_sensor_labels;
 
-        /** Sensor labels or regex to be matched to input observations
-         *  to be used as GNSS (GPS) observations.
-         */
-        std::optional<std::regex> gnss_sensor_label;
-
         mp2p_icp::Parameters icp_parameters;
 
         std::string threshold_sigma_initial                        = "5.0";

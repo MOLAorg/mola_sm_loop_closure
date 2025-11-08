@@ -125,11 +125,6 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     }
     ASSERT_(!params_.lidar_sensor_labels.empty());
 
-    if (cfg.has("gnss_sensor_label"))
-    {
-        params_.gnss_sensor_label = cfg["gnss_sensor_label"].as<std::string>();
-    }
-
     YAML_LOAD_REQ(params_, min_icp_goodness, double);
     YAML_LOAD_OPT(params_, profiler_enabled, bool);
     YAML_LOAD_REQ(params_, submap_max_length_wrt_map, double);
