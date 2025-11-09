@@ -11,7 +11,7 @@
 cmake_minimum_required(VERSION 3.5)
 
 if("$ENV{ROS_VERSION}" STREQUAL "2")
-	set(DETECTED_ROS2 TRUE)
+  set(DETECTED_ROS2 TRUE)
 endif()
 
 # Tell CMake we'll use C++ for use in its tests/flags
@@ -35,68 +35,70 @@ find_package(mp2p_icp_filters REQUIRED)
 
 # -----------------------
 # define lib:
-file(GLOB_RECURSE LIB_SRCS module/src/*.cpp module/src/*.h)
-file(GLOB_RECURSE LIB_PUBLIC_HDRS module/include/*.h)
-
 mola_add_library(
-	TARGET ${PROJECT_NAME}
-	SOURCES ${LIB_SRCS} ${LIB_PUBLIC_HDRS}
-	PUBLIC_LINK_LIBRARIES
-		mrpt::maps
-		mrpt::gui
-		mola::mp2p_icp
-		mola::mp2p_icp_filters
-		mola::mola_yaml
-		mola::mola_pose_list
-		mola::mola_relocalization
-		gtsam
+  TARGET ${PROJECT_NAME}
+  SOURCES
+    module/src/SimplemapLoopClosure.cpp
+    module/src/simplemap_georeference.cpp
+    module/src/FactorGNSS2ENU.h
+    module/include/mola_sm_loop_closure/simplemap_georeference.h
+    module/include/mola_sm_loop_closure/SimplemapLoopClosure.h
+  PUBLIC_LINK_LIBRARIES
+    mrpt::maps
+    mrpt::gui
+    mola::mp2p_icp
+    mola::mp2p_icp_filters
+    mola::mola_yaml
+    mola::mola_pose_list
+    mola::mola_relocalization
+    gtsam
 #	PRIVATE_LINK_LIBRARIES
-	CMAKE_DEPENDENCIES
-		mp2p_icp
-		mp2p_icp_filters
-		mola_pose_list
-		mola_relocalization
-		mrpt-maps
+  CMAKE_DEPENDENCIES
+    mp2p_icp
+    mp2p_icp_filters
+    mola_pose_list
+    mola_relocalization
+    mrpt-maps
 )
 
 # mola_add_library() expects headers under "ROOT/include", so do this manually here:
 target_include_directories(${PROJECT_NAME} PUBLIC
-	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/module/include>
-	$<INSTALL_INTERFACE:include>
-	PRIVATE src
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/module/include>
+  $<INSTALL_INTERFACE:include>
+  PRIVATE src
 )
 install(
-	DIRECTORY module/include/
-	DESTINATION ${CMAKE_INSTALL_PREFIX}/include
+  DIRECTORY module/include/
+  DESTINATION ${CMAKE_INSTALL_PREFIX}/include
 )
 
 # CLI apps:
 # ---------------------------------
 mola_add_executable(
-	TARGET  mola-sm-lc-cli
-	SOURCES apps/mola-sm-lc-cli.cpp
-	LINK_LIBRARIES
-		${PROJECT_NAME}
-		mrpt::maps
-		mrpt::tclap
+  TARGET  mola-sm-lc-cli
+  SOURCES apps/mola-sm-lc-cli.cpp
+  LINK_LIBRARIES
+    ${PROJECT_NAME}
+    mrpt::maps
+    mrpt::tclap
 )
 
 mola_add_executable(
-	TARGET  mola-sm-georeferencing
-	SOURCES apps/mola-sm-georeferencing-cli.cpp
-	LINK_LIBRARIES
-		${PROJECT_NAME}
-		mrpt::maps
-		mrpt::tclap
+  TARGET  mola-sm-georeferencing
+  SOURCES apps/mola-sm-georeferencing-cli.cpp
+  LINK_LIBRARIES
+    ${PROJECT_NAME}
+    mrpt::maps
+    mrpt::tclap
 )
 
 mola_add_executable(
-	TARGET  mola-trajectory-georef
-	SOURCES apps/mola-trajectory-georef-cli.cpp
-	LINK_LIBRARIES
-		${PROJECT_NAME}
-		mrpt::maps
-		mrpt::tclap
+  TARGET  mola-trajectory-georef
+  SOURCES apps/mola-trajectory-georef-cli.cpp
+  LINK_LIBRARIES
+    ${PROJECT_NAME}
+    mrpt::maps
+    mrpt::tclap
 )
 
 # -----------------------
@@ -104,19 +106,12 @@ mola_add_executable(
 #enable_testing()
 #add_subdirectory(module/tests)
 
-# Install files:
-#install(DIRECTORY mola-cli-launchs DESTINATION share/${PROJECT_NAME})
-
 # -----------------------------------------------------------------------------
 #  ROS2
 # -----------------------------------------------------------------------------
 if (DETECTED_ROS2)
-	# find dependencies
-	find_package(ament_cmake REQUIRED)
+  # find dependencies
+  find_package(ament_cmake REQUIRED)
 
-	#ament_target_dependencies(MY_TARGET
-	#  rclcpp...
-	#)
-
-	ament_package()
+  ament_package()
 endif()
