@@ -74,8 +74,10 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
     const double errInit = graph.error(v);
     const double errEnd  = graph.error(optimal);
 
-    const double rmseInit = std::sqrt(errInit / graph.size());
-    const double rmseEnd  = std::sqrt(errEnd / graph.size());
+    const double rmseInit =
+        std::sqrt(errInit / static_cast<double>(graph.size()));
+    const double rmseEnd =
+        std::sqrt(errEnd / static_cast<double>(graph.size()));
 
     gtsam::Marginals marginals(graph, optimal);
 
@@ -89,7 +91,11 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
         ss << "[simplemap_georeference] LM iterations: " << lm.iterations()
            << ", init error: " << errInit << " (rmse=" << rmseInit
            << "), final error: " << errEnd << "(rmse=" << rmseEnd << ") , for "
-           << smFrames.frames.size() << " frames, sigmas: " << stds.transpose();
+           << smFrames.frames.size()
+           << " frames, GTSAM sigmas: " << mrpt::RAD2DEG(stds[0]) << " [deg], "
+           << mrpt::RAD2DEG(stds[1]) << " [deg], " << mrpt::RAD2DEG(stds[2])
+           << " [deg], " << stds[3] << " [m], " << stds[4] << " [m], "
+           << stds[4] << " [m]";
         params.logger->logStr(mrpt::system::LVL_INFO, ss.str());
     }
 
@@ -196,7 +202,9 @@ void mola::add_gnss_factors(
         const auto& frame = frames.frames.at(i);
 
         auto noiseOrg = gtsam::noiseModel::Diagonal::Sigmas(
-            gtsam::Vector3(frame.sigma_E, frame.sigma_N, frame.sigma_U));
+            gtsam::Vector3(frame.sigma_E, frame.sigma_N, frame.sigma_U)
+                .array()
+                .max(params.minimumUncertaintyXYZ));
 
         auto robustNoise = gtsam::noiseModel::Robust::Create(
             gtsam::noiseModel::mEstimator::Huber::Create(1.5), noiseOrg);

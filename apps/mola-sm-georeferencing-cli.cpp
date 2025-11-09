@@ -131,6 +131,7 @@ void run_sm_georef(Cli& cli)
         p.fgParams.addHorizontalityConstraints = true;
         p.fgParams.horizontalitySigmaZ         = cli.argHorz.getValue();
     }
+    // TODO: p.fgParams.minimumUncertaintyXYZ = xxx;
 
     const mola::SMGeoReferencingOutput smGeo =
         mola::simplemap_georeference(sm, p);

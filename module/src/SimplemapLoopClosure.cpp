@@ -31,6 +31,7 @@
 #include <mrpt/obs/CObservationPointCloud.h>
 #include <mrpt/obs/CObservationVelodyneScan.h>
 #include <mrpt/opengl/CEllipsoid2D.h>
+#include <mrpt/poses/CPose3DInterpolator.h>
 #include <mrpt/poses/CPoseRandomSampler.h>
 #include <mrpt/poses/Lie/SO.h>
 #include <mrpt/poses/gtsam_wrappers.h>
@@ -116,6 +117,7 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, do_montecarlo_icp, bool);
     YAML_LOAD_OPT(params_, assume_planar_world, bool);
     YAML_LOAD_OPT(params_, use_gnss, bool);
+    YAML_LOAD_OPT(params_, gnss_minimum_uncertainty_xyz, double);
 
     YAML_LOAD_REQ(params_, threshold_sigma_initial, std::string);
     YAML_LOAD_REQ(params_, threshold_sigma_final, std::string);
@@ -561,9 +563,15 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
                 params_.debug_files_prefix + "_submaps_initial_pre.3Dscene"s);
         }
 
+        save_current_key_frame_poses_as_tum(
+            params_.debug_files_prefix + "_initial_pre_gnss.tum"s);
+
         // Run an initial LM pass to fit the GNSS measurements:
         optimize_graph();
     }
+
+    save_current_key_frame_poses_as_tum(
+        params_.debug_files_prefix + "_initial.tum"s);
 
     if (params_.save_submaps_viz_files)
     {  // Save viz of initial state:
@@ -706,6 +714,8 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
         scene.saveToFile(params_.debug_files_prefix + "_submaps_final.3Dscene");
     }
+    save_current_key_frame_poses_as_tum(
+        params_.debug_files_prefix + "_final.tum"s);
 
     // At this point, we have optimized the KFs in state_.keyframesGraph.
     // Now, update all low-level keyframes in the simplemap:
@@ -839,6 +849,9 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
 
         geoParams.logger            = this;
         geoParams.geodeticReference = state_.globalGeoRef;
+
+        geoParams.fgParams.minimumUncertaintyXYZ =
+            params_.gnss_minimum_uncertainty_xyz;
 
         auto geoResult = simplemap_georeference(subSM, geoParams);
 
@@ -2334,4 +2347,26 @@ std::vector<std::set<SimplemapLoopClosure::keyframe_id_t>>
     }
 
     return detectedSubMaps;
+}
+
+void SimplemapLoopClosure::save_current_key_frame_poses_as_tum(
+    const std::string& outTumFile) const
+{
+    ASSERT_(state_.sm);
+
+    mrpt::poses::CPose3DInterpolator path;
+
+    for (size_t id = 0; id < state_.sm->size(); id++)
+    {
+        auto& [oldPose, sf, twist] = state_.sm->get(id);
+
+        const auto& newKfGlobalPose = state_.kfGraph_get_pose(id);
+
+        ASSERT_(!sf->empty());
+        const auto t = sf->getObservationByIndex(0)->timestamp;
+
+        path.insert(t, newKfGlobalPose);
+    }
+
+    path.saveToTextFile_TUM(outTumFile);
 }

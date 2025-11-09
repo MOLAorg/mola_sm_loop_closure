@@ -82,7 +82,8 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         double      min_volume_intersection_ratio_for_lc_candidate = 0.6;
         bool        assume_planar_world                            = false;
         bool        use_gnss                                       = true;
-        uint32_t    max_number_lc_candidates = 150;  // 0: no limit
+        double      gnss_minimum_uncertainty_xyz = 0.10;  // [m]
+        uint32_t    max_number_lc_candidates     = 150;  // 0: no limit
         double      min_lc_uncertainty_ratio_to_draw_several_samples = 2.0;
         double      largest_delta_for_reconsider_all                 = 10.0;
         uint32_t    max_number_lc_candidates_per_submap              = 4;
@@ -238,6 +239,9 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
 
     /// Detect submaps in "state_.sm".
     std::vector<std::set<keyframe_id_t>> detect_sub_maps() const;
+
+    void save_current_key_frame_poses_as_tum(
+        const std::string& outTumFile) const;
 };
 
 }  // namespace mola

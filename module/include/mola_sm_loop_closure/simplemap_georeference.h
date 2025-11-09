@@ -48,6 +48,8 @@ struct AddGNSSFactorParams
     /// is not >10 times the GNSS uncertainty.
     bool   addHorizontalityConstraints = false;
     double horizontalitySigmaZ         = 1.0;  // [m]
+
+    double minimumUncertaintyXYZ = 0.20;  // [m]
 };
 
 struct SMGeoReferencingParams
