@@ -2256,7 +2256,8 @@ double SimplemapLoopClosure::optimize_graph()
 
     // Pass 1
     const double errorInit1 = state_.kfGraphFG.error(state_.kfGraphValues);
-    const double rmseInit1  = std::sqrt(errorInit1 / state_.kfGraphFG.size());
+    const double rmseInit1 =
+        std::sqrt(errorInit1 / static_cast<double>(state_.kfGraphFG.size()));
 
     gtsam::LevenbergMarquardtOptimizer lm1(
         state_.kfGraphFG, state_.kfGraphValues, lmParams);
@@ -2264,12 +2265,13 @@ double SimplemapLoopClosure::optimize_graph()
     const auto& optimalValues1 = lm1.optimize();
 
     const double errorEnd1 = state_.kfGraphFG.error(optimalValues1);
-    const double rmseEnd1  = std::sqrt(errorEnd1 / state_.kfGraphFG.size());
+    const double rmseEnd1 =
+        std::sqrt(errorEnd1 / static_cast<double>(state_.kfGraphFG.size()));
 
     // Pass 2
     const double errorInit2 = state_.kfGraphFGRobust.error(optimalValues1);
-    const double rmseInit2 =
-        std::sqrt(errorInit2 / state_.kfGraphFGRobust.size());
+    const double rmseInit2  = std::sqrt(
+        errorInit2 / static_cast<double>(state_.kfGraphFGRobust.size()));
 
     gtsam::LevenbergMarquardtOptimizer lm2(
         state_.kfGraphFGRobust, optimalValues1, lmParams);
@@ -2278,8 +2280,8 @@ double SimplemapLoopClosure::optimize_graph()
     state_.kfGraphValues = optimalValues2;
 
     const double errorEnd2 = state_.kfGraphFGRobust.error(optimalValues2);
-    const double rmseEnd2 =
-        std::sqrt(errorEnd2 / state_.kfGraphFGRobust.size());
+    const double rmseEnd2  = std::sqrt(
+        errorEnd2 / static_cast<double>(state_.kfGraphFGRobust.size()));
 
     // Update submaps global pose:
     double largestDelta = 0;
