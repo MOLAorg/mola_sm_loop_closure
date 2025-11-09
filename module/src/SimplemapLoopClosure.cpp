@@ -2222,7 +2222,7 @@ double SimplemapLoopClosure::optimize_graph()
         << lm1.iterations() << "/" << lm2.iterations()
         << " iters, RMSE: 1st PASS:" << rmseInit1 << " ==> " << rmseEnd1
         << " / 2nd PASS: " << rmseInit2 << " ==> " << rmseEnd2
-        << " largestDelta=" << largestDelta);
+        << " largestDelta=" << largestDelta << " [m]");
     this->mrpt::system::COutputLogger::logging_levels_to_colors().at(
         mrpt::system::LVL_INFO) = bckCol;
 
