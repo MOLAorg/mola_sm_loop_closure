@@ -267,26 +267,37 @@ namespace
 {
 bool sf_has_real_mapping_observations(const mrpt::obs::CSensoryFrame& sf)
 {
-    if (sf.empty()) return false;
+    if (sf.empty())
+    {
+        return false;
+    }
     if (auto oPC =
             sf.getObservationByClass<mrpt::obs::CObservationPointCloud>();
         oPC)
+    {
         return true;
+    }
 
     if (auto o2D =
             sf.getObservationByClass<mrpt::obs::CObservation2DRangeScan>();
         o2D)
+    {
         return true;
+    }
 
     if (auto o3D =
             sf.getObservationByClass<mrpt::obs::CObservation3DRangeScan>();
         o3D)
+    {
         return true;
+    }
 
     if (auto oVl =
             sf.getObservationByClass<mrpt::obs::CObservationVelodyneScan>();
         oVl)
+    {
         return true;
+    }
 
     // We don't recognize any valid mapping-suitable observation in the SF.
     return false;
@@ -297,8 +308,14 @@ std::optional<mrpt::Clock::time_point> sf_timestamp(
 {
     for (const auto& o : sf)
     {
-        if (!o) continue;
-        if (o->timestamp == mrpt::Clock::time_point()) continue;
+        if (!o)
+        {
+            continue;
+        }
+        if (o->timestamp == mrpt::Clock::time_point())
+        {
+            continue;
+        }
         return o->timestamp;
     }
     return {};
@@ -351,11 +368,17 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             // don't cut a submap while we are processing empty SFs since we
             // don't know for how long it will take and we might end up with a
             // totally empty final submap
-            if (!sf_has_real_mapping_observations(*sf_i)) continue;
+            if (!sf_has_real_mapping_observations(*sf_i))
+            {
+                continue;
+            }
             anyValidObsInPendingSet = true;
 
             mrpt::poses::CPose3D incrPose;
-            if (lastPose) incrPose = pose_i_local.getPoseMean() - *lastPose;
+            if (lastPose)
+            {
+                incrPose = pose_i_local.getPoseMean() - *lastPose;
+            }
             lastPose = pose_i_local.getPoseMean();
 
             pendingKFsAccumDistance += incrPose.translation().norm();
@@ -365,10 +388,15 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
                 sf_timestamp(*sf_i);
 
             if (lastTime && thisTime)
+            {
                 time_since_last_kf =
                     mrpt::system::timeDifference(*lastTime, *thisTime);
+            }
 
-            if (!lastTime && thisTime) lastTime = *thisTime;
+            if (!lastTime && thisTime)
+            {
+                lastTime = *thisTime;
+            }
 
             if (pendingKFsAccumDistance >= max_submap_length ||
                 time_since_last_kf >
@@ -393,7 +421,9 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
                 // just append to the last submap, since none of the SFs has
                 // data to build a new local map
                 for (const auto id : pendingKFs)
+                {
                     detectedSubMaps.back().insert(id);
+                }
             }
         }
     }
@@ -711,7 +741,10 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
             auto IDs = std::make_pair(lc.smallest_id, lc.largest_id);
 
-            if (alreadyChecked.count(IDs) != 0) continue;
+            if (alreadyChecked.count(IDs) != 0)
+            {
+                continue;
+            }
 
             // a new pair. add it:
             alreadyChecked.insert(IDs);
@@ -753,7 +786,10 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         }
 
         // end of loop closures?
-        if (!checkedCount) break;  // no new LC was checked, we are done.
+        if (!checkedCount)
+        {
+            break;  // no new LC was checked, we are done.
+        }
 
         // any change to the graph? re-optimize it:
         if (anyGraphChange)
@@ -762,7 +798,9 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
             // re-visit all areas again
             if (largestDelta > params_.largest_delta_for_reconsider_all)
+            {
                 alreadyChecked.clear();
+            }
         }
     }
 
@@ -1040,8 +1078,8 @@ mrpt::poses::CPose3D SimplemapLoopClosure::keyframe_relative_pose_in_simplemap(
 }
 
 void SimplemapLoopClosure::updatePipelineDynamicVariablesForKeyframe(
-    const keyframe_id_t id, const keyframe_id_t referenceId,
-    const size_t threadIdx)
+    const keyframe_id_t id, const keyframe_id_t referenceId,  // NOLINT
+    const size_t threadIdx)  // NOLINT
 {
     auto& pts = state_.perThreadState_.at(threadIdx);
 
@@ -1167,7 +1205,10 @@ SimplemapLoopClosure::PotentialLoopOutput
 
     mrpt::system::CTimeLoggerEntry tle(profiler_, "find_next_loop_closure");
 
-    if (state_.submapsGraph.nodes.size() < 2) return {};
+    if (state_.submapsGraph.nodes.size() < 2)
+    {
+        return {};
+    }
 
     struct InfoPerSubmap
     {
@@ -1210,9 +1251,15 @@ SimplemapLoopClosure::PotentialLoopOutput
 
             mrpt::poses::CPose3DPDFGaussian edge = *edgeToChild.data;
 
-            if (edgeToChild.reverse) edge = -edge;
+            if (edgeToChild.reverse)
+            {
+                edge = -edge;
+            }
 
-            if (params_.assume_planar_world) make_pose_planar_pdf(edge);
+            if (params_.assume_planar_world)
+            {
+                make_pose_planar_pdf(edge);
+            }
 
             ips.pose  = submapPoses[parent].pose + edge;
             ips.depth = depthLevel;
@@ -1248,7 +1295,9 @@ SimplemapLoopClosure::PotentialLoopOutput
                     label += " d="s + std::to_string(m.depth);
 
                     if (state_.submaps.at(id).geo_ref.has_value())
+                    {
                         label += " (WITH GPS)"s;
+                    }
 
                     glCorner->setName(label);
                     glCorner->setPose(m.pose.mean);
@@ -1292,7 +1341,10 @@ SimplemapLoopClosure::PotentialLoopOutput
         {
             // dont match against myself &
             // only analyze submaps IDs > root, to avoid duplicated checks:
-            if (submapId <= root_id) continue;
+            if (submapId <= root_id)
+            {
+                continue;
+            }
 
             // we need at least topological distance>=2 for this to be L.C.
             // (except if we are using GNSS edges and one ID is the GNSS
@@ -1300,14 +1352,19 @@ SimplemapLoopClosure::PotentialLoopOutput
             if (ips.depth <= 1 && (!state_.globalGeoRef.has_value() ||
                                    (submapId != state_.globalGeoRefSubmapId &&
                                     root_id != state_.globalGeoRefSubmapId)))
+            {
                 continue;  // skip it
+            }
 
             const auto min_id = std::min<submap_id_t>(root_id, submapId);
             const auto max_id = std::max<submap_id_t>(root_id, submapId);
 
             // already checked?
             const auto IDs = std::make_pair(min_id, max_id);
-            if (alreadyChecked.count(IDs) != 0) continue;
+            if (alreadyChecked.count(IDs) != 0)
+            {
+                continue;
+            }
 
             // TODO(jlbc): finer approach without enlarging bboxes to their
             // global XYZ axis alined boxes:
@@ -1342,7 +1399,10 @@ SimplemapLoopClosure::PotentialLoopOutput
 
                 const auto bboxIntersect = rootBbox.intersection(relativeBBox);
 
-                if (!bboxIntersect.has_value()) continue;  // no overlap at all
+                if (!bboxIntersect.has_value())
+                {
+                    continue;  // no overlap at all
+                }
 
                 const double intersectRatio =
                     bboxIntersect->volume() /
@@ -1366,7 +1426,9 @@ SimplemapLoopClosure::PotentialLoopOutput
 
             if (bestScore <
                 params_.min_volume_intersection_ratio_for_lc_candidate)
+            {
                 continue;
+            }
 
             PotentialLoop lc;
             lc.largest_id           = max_id;
@@ -1374,7 +1436,9 @@ SimplemapLoopClosure::PotentialLoopOutput
             lc.topological_distance = ips.depth;
             lc.score                = bestScore;
             if (root_id == min_id)
+            {
                 lc.relative_pose_largest_wrt_smallest = ips.pose;
+            }
             else
             {  // inverse SE(3) relative pose
                 ips.pose.inverse(lc.relative_pose_largest_wrt_smallest);
@@ -1393,9 +1457,11 @@ SimplemapLoopClosure::PotentialLoopOutput
                     submap_size > 0 ? (std_xy / submap_size) : 1.0;
 
                 if (PRINT_ALL_SCORES)
+                {
                     MRPT_LOG_INFO_STREAM(
                         "|C(1:2,1:2)|=" << std_xy << " |submap_size|="
                                         << submap_size << " ratio=" << ratio);
+                }
 
                 if (ratio >
                     params_.min_lc_uncertainty_ratio_to_draw_several_samples)
@@ -1409,7 +1475,10 @@ SimplemapLoopClosure::PotentialLoopOutput
         }
 
         // Do we have enough with this root_id submap?
-        if (!potentialLCs[root_id].empty()) break;
+        if (!potentialLCs[root_id].empty())
+        {
+            break;
+        }
 
     }  // end for each root_id
 
@@ -1655,7 +1724,9 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         constexpr size_t MAX_BEST_POSES = 10;
 
         while (bestPoses.size() > MAX_BEST_POSES)
+        {
             bestPoses.erase(--bestPoses.end());
+        }
 
         MRPT_LOG_INFO_STREAM(
             "[Relocalize SE(2)] time_cost: " <<  //
@@ -1797,7 +1868,10 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
             [&](const mola::HashedSetSE3::global_index3d_t&,
                 const mola::HashedSetSE3::VoxelData& v)
             {
-                if (v.poses().empty()) return;
+                if (v.poses().empty())
+                {
+                    return;
+                }
                 bestVoxels[v.poses().size()] = v.poses().front();
             });
 
@@ -1844,7 +1918,9 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
                 for (int iy = -2; iy <= 2; iy += 1)
                 {
                     if (ix == 0 && iy == 0)
+                    {
                         continue;  // center already added above
+                    }
 
                     auto p = initGuess;
                     p.x += ix * std_x;
@@ -1901,7 +1977,10 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
             mrpt::typemeta::enum2str(icp_result.terminationReason).c_str());
 
         // keep the best:
-        if (icp_result.quality < params_.min_icp_goodness) continue;
+        if (icp_result.quality < params_.min_icp_goodness)
+        {
+            continue;
+        }
 
         lambdaAddIcpEdge(icp_result.optimal_tf, icp_result.quality);
     }
