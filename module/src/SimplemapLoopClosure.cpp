@@ -106,25 +106,6 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     // Load params:
     const auto cfg = c["params"];
 
-    if (cfg["lidar_sensor_labels"].isSequence())
-    {
-        const auto seq = cfg["lidar_sensor_labels"].asSequence();
-        for (const auto& sl : seq)
-        {
-            const auto s = sl.as<std::string>();
-            MRPT_LOG_DEBUG_STREAM("Adding as input lidar sensor label: " << s);
-            params_.lidar_sensor_labels.emplace_back(s);
-        }
-    }
-    else
-    {
-        ASSERT_(cfg["lidar_sensor_labels"].isScalar());
-        const auto s = cfg["lidar_sensor_labels"].as<std::string>();
-        MRPT_LOG_DEBUG_STREAM("Adding as input lidar sensor label: " << s);
-        params_.lidar_sensor_labels.emplace_back(s);
-    }
-    ASSERT_(!params_.lidar_sensor_labels.empty());
-
     YAML_LOAD_REQ(params_, min_icp_goodness, double);
     YAML_LOAD_OPT(params_, profiler_enabled, bool);
     YAML_LOAD_REQ(params_, submap_max_length_wrt_map, double);

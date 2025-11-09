@@ -24,16 +24,6 @@
 # This file holds parameters for mola_sm_loop_closure
 
 params:
-  # These sensor labels will be handled as LIDAR observations:
-  # Can be overriden with cli flag --lidar-sensor-label
-  lidar_sensor_labels: ["${MOLA_LIDAR_NAME|lidar}", "/ouster/points"]
-
-  # These sensor labels will be handled as IMU observations:
-  imu_sensor_label: "imu"
-
-  # These sensor labels will be handled as wheel odometry observation (C++11 regex):
-  wheel_odometry_sensor_label: "odometry|ODOMETRY"
-
   submap_max_length_wrt_map: "${SUBMAP_MAX_RELATIVE_LENGTH|0.125}" # [m/m]
   submap_max_absolute_length: "${SUBMAP_MAX_ABS_LENGTH|300}" # [m]
   submap_min_absolute_length: "${SUBMAP_MIN_ABS_LENGTH|60}" # [m]

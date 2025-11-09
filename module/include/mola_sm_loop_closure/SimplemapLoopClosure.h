@@ -64,11 +64,6 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
 
     struct Parameters
     {
-        /** List of sensor labels or regex's to be matched to input observations
-         *  to be used as raw lidar observations.
-         */
-        std::vector<std::regex> lidar_sensor_labels;
-
         mp2p_icp::Parameters icp_parameters;
 
         std::string threshold_sigma_initial                        = "5.0";
