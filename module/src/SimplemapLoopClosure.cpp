@@ -336,97 +336,8 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     // ASSERT_GT_(sm.size(), 3 * params_.submap_keyframe_count);
 
     // Build submaps:
-    std::vector<std::set<keyframe_id_t>> detectedSubMaps;
-
-    {
-        std::set<keyframe_id_t>                pendingKFs;
-        double                                 pendingKFsAccumDistance = 0;
-        std::optional<mrpt::poses::CPose3D>    lastPose;
-        std::optional<mrpt::Clock::time_point> lastTime;
-
-        bool anyValidObsInPendingSet = false;
-
-        const auto   bbox     = SimpleMapBoundingBox(sm);
-        const double smLength = (bbox.max - bbox.min).norm();
-
-        const double max_submap_length = mrpt::saturate_val(
-            params_.submap_max_length_wrt_map * smLength,
-            params_.submap_min_absolute_length,
-            params_.submap_max_absolute_length);
-
-        MRPT_LOG_INFO_FMT("Using submap length=%.02f m", max_submap_length);
-
-        for (size_t i = 0; i < sm.size(); i++)
-        {
-            pendingKFs.insert(i);
-
-            const auto pose_i_local =
-                keyframe_relative_pose_in_simplemap(i, *pendingKFs.begin());
-
-            const auto& [pose_i, sf_i, twist_i] = state_.sm->get(i);
-
-            // don't cut a submap while we are processing empty SFs since we
-            // don't know for how long it will take and we might end up with a
-            // totally empty final submap
-            if (!sf_has_real_mapping_observations(*sf_i))
-            {
-                continue;
-            }
-            anyValidObsInPendingSet = true;
-
-            mrpt::poses::CPose3D incrPose;
-            if (lastPose)
-            {
-                incrPose = pose_i_local.getPoseMean() - *lastPose;
-            }
-            lastPose = pose_i_local.getPoseMean();
-
-            pendingKFsAccumDistance += incrPose.translation().norm();
-
-            double                                       time_since_last_kf = 0;
-            const std::optional<mrpt::Clock::time_point> thisTime =
-                sf_timestamp(*sf_i);
-
-            if (lastTime && thisTime)
-            {
-                time_since_last_kf =
-                    mrpt::system::timeDifference(*lastTime, *thisTime);
-            }
-
-            if (!lastTime && thisTime)
-            {
-                lastTime = *thisTime;
-            }
-
-            if (pendingKFsAccumDistance >= max_submap_length ||
-                time_since_last_kf >
-                    params_.max_time_between_kfs_to_break_submap)
-            {
-                detectedSubMaps.emplace_back(pendingKFs);
-                pendingKFs.clear();
-                lastTime.reset();
-                pendingKFsAccumDistance = 0;
-                anyValidObsInPendingSet = false;
-            }
-        }
-        // remaining ones?
-        if (!pendingKFs.empty())
-        {
-            if (anyValidObsInPendingSet)
-            {
-                detectedSubMaps.emplace_back(pendingKFs);
-            }
-            else
-            {
-                // just append to the last submap, since none of the SFs has
-                // data to build a new local map
-                for (const auto id : pendingKFs)
-                {
-                    detectedSubMaps.back().insert(id);
-                }
-            }
-        }
-    }
+    // ------------------------------------------------
+    const auto detectedSubMaps = detect_sub_maps();
 
     // process pending submap creation, in parallel threads:
     const size_t nSubMaps = detectedSubMaps.size();
@@ -2345,4 +2256,101 @@ double SimplemapLoopClosure::optimize_graph()
     }
 
     return largestDelta;
+}
+
+std::vector<std::set<SimplemapLoopClosure::keyframe_id_t>>
+    SimplemapLoopClosure::detect_sub_maps() const
+{
+    std::vector<std::set<keyframe_id_t>>   detectedSubMaps;
+    std::set<keyframe_id_t>                pendingKFs;
+    double                                 pendingKFsAccumDistance = 0;
+    std::optional<mrpt::poses::CPose3D>    lastPose;
+    std::optional<mrpt::Clock::time_point> lastTime;
+
+    bool anyValidObsInPendingSet = false;
+
+    ASSERT_(state_.sm);
+
+    const auto& sm = *state_.sm;
+
+    const auto   bbox     = SimpleMapBoundingBox(sm);
+    const double smLength = (bbox.max - bbox.min).norm();
+
+    const double max_submap_length = mrpt::saturate_val(
+        params_.submap_max_length_wrt_map * smLength,
+        params_.submap_min_absolute_length, params_.submap_max_absolute_length);
+
+    MRPT_LOG_INFO_FMT("Using submap length=%.02f m", max_submap_length);
+
+    for (size_t i = 0; i < sm.size(); i++)
+    {
+        pendingKFs.insert(i);
+
+        const auto pose_i_local =
+            keyframe_relative_pose_in_simplemap(i, *pendingKFs.begin());
+
+        const auto& [pose_i, sf_i, twist_i] = state_.sm->get(i);
+
+        // don't cut a submap while we are processing empty SFs since we
+        // don't know for how long it will take and we might end up with a
+        // totally empty final submap
+        if (!sf_has_real_mapping_observations(*sf_i))
+        {
+            continue;
+        }
+        anyValidObsInPendingSet = true;
+
+        mrpt::poses::CPose3D incrPose;
+        if (lastPose)
+        {
+            incrPose = pose_i_local.getPoseMean() - *lastPose;
+        }
+        lastPose = pose_i_local.getPoseMean();
+
+        pendingKFsAccumDistance += incrPose.translation().norm();
+
+        double                                       time_since_last_kf = 0;
+        const std::optional<mrpt::Clock::time_point> thisTime =
+            sf_timestamp(*sf_i);
+
+        if (lastTime && thisTime)
+        {
+            time_since_last_kf =
+                mrpt::system::timeDifference(*lastTime, *thisTime);
+        }
+
+        if (!lastTime && thisTime)
+        {
+            lastTime = *thisTime;
+        }
+
+        if (pendingKFsAccumDistance >= max_submap_length ||
+            time_since_last_kf > params_.max_time_between_kfs_to_break_submap)
+        {
+            detectedSubMaps.emplace_back(pendingKFs);
+            pendingKFs.clear();
+            lastTime.reset();
+            pendingKFsAccumDistance = 0;
+            anyValidObsInPendingSet = false;
+        }
+    }
+    // remaining ones?
+    if (!pendingKFs.empty())
+    {
+        if (anyValidObsInPendingSet)
+        {
+            detectedSubMaps.emplace_back(pendingKFs);
+        }
+        else
+        {
+            // just append to the last submap, since none of the SFs has
+            // data to build a new local map
+            for (const auto id : pendingKFs)
+            {
+                detectedSubMaps.back().insert(id);
+            }
+        }
+    }
+
+    return detectedSubMaps;
 }

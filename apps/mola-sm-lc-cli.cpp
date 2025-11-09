@@ -156,7 +156,9 @@ void run_sm_to_mm(Cli& cli)
     }
 
     if (!lazyLoadBaseDir.empty())
+    {
         mrpt::io::setLazyLoadPathBase(lazyLoadBaseDir);
+    }
 
     // generate meaningful output debug files, if enabled:
     lc.params_.debug_files_prefix = mrpt::system::extractFileName(filSM);
@@ -181,13 +183,16 @@ int main(int argc, char** argv)
         Cli cli;
 
         // Parse arguments:
-        if (!cli.cmd.parse(argc, argv)) return 1;  // should exit.
+        if (!cli.cmd.parse(argc, argv))
+        {
+            return 1;  // should exit.
+        }
 
         run_sm_to_mm(cli);
     }
     catch (const std::exception& e)
     {
-        std::cerr << e.what();
+        std::cerr << e.what() << std::endl;
         return 1;
     }
     return 0;

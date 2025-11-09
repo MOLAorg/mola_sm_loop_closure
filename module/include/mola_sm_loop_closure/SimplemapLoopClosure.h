@@ -241,6 +241,9 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
 
     /// Optimizes the graph and returns the largestDelta
     double optimize_graph();
+
+    /// Detect submaps in "state_.sm".
+    std::vector<std::set<keyframe_id_t>> detect_sub_maps() const;
 };
 
 }  // namespace mola
