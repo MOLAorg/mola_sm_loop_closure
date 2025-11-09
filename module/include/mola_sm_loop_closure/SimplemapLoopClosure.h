@@ -38,7 +38,6 @@
 #include <mrpt/system/COutputLogger.h>
 #include <mrpt/system/CTimeLogger.h>
 
-#include <regex>
 #include <set>
 
 namespace mola

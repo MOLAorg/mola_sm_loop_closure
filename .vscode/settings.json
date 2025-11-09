@@ -35,6 +35,8 @@
     },
     "ros.distro": "humble",
     "cSpell.words": [
+        "CPose3DPDFGaussian",
+        "relocalize",
         "Velodyne"
     ]
 }
