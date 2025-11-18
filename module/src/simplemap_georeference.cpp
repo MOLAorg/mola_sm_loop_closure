@@ -158,9 +158,12 @@ mola::GNSSFrames mola::extract_gnss_frames_from_sm(
                 f.sigma_U = f.sigma_E;
             }
 
-            ASSERT_(f.sigma_E > 0);
-            ASSERT_(f.sigma_N > 0);
-            ASSERT_(f.sigma_U > 0);
+            if (f.sigma_E <= 0 || f.sigma_N <= 0 || f.sigma_U <= 0 ||
+                std::isnan(f.sigma_E) || std::isnan(f.sigma_N) ||
+                std::isnan(f.sigma_U))
+            {
+                continue;  // skip invalid entry
+            }
 
             f.coords.lat    = f.gga.fields.latitude_degrees;
             f.coords.lon    = f.gga.fields.longitude_degrees;
