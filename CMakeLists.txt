@@ -39,9 +39,6 @@ mola_add_library(
   TARGET ${PROJECT_NAME}
   SOURCES
     module/src/SimplemapLoopClosure.cpp
-    module/src/simplemap_georeference.cpp
-    module/src/FactorGNSS2ENU.h
-    module/include/mola_sm_loop_closure/simplemap_georeference.h
     module/include/mola_sm_loop_closure/SimplemapLoopClosure.h
   PUBLIC_LINK_LIBRARIES
     mrpt::maps
@@ -83,23 +80,6 @@ mola_add_executable(
     mrpt::tclap
 )
 
-mola_add_executable(
-  TARGET  mola-sm-georeferencing
-  SOURCES apps/mola-sm-georeferencing-cli.cpp
-  LINK_LIBRARIES
-    ${PROJECT_NAME}
-    mrpt::maps
-    mrpt::tclap
-)
-
-mola_add_executable(
-  TARGET  mola-trajectory-georef
-  SOURCES apps/mola-trajectory-georef-cli.cpp
-  LINK_LIBRARIES
-    ${PROJECT_NAME}
-    mrpt::maps
-    mrpt::tclap
-)
 
 # -----------------------
 # define tests:
