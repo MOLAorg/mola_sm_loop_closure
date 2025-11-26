@@ -16,17 +16,17 @@
 
   <author email="joseluisblancoc@gmail.com">Jose-Luis Blanco-Claraco</author>
 
+  <depend>gtsam</depend>
   <depend>mola_common</depend>
-  <depend>mola_yaml</depend>
-  <depend>mp2p_icp</depend>
+  <depend>mola_georeferencing</depend>
+  <depend>mola_gtsam_factors</depend>
   <depend>mola_pose_list</depend>
   <depend>mola_relocalization</depend>
-
-  <depend>mrpt_libtclap</depend>
-  <depend>mrpt_libmaps</depend>
+  <depend>mola_yaml</depend>
+  <depend>mp2p_icp</depend>
   <depend>mrpt_libgui</depend>
-
-  <depend>gtsam</depend>
+  <depend>mrpt_libmaps</depend>
+  <depend>mrpt_libtclap</depend>
 
   <doc_depend>doxygen</doc_depend>
 
