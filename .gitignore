@@ -19,3 +19,4 @@ CMakeLists.txt.user
 .vscode/*
 !.vscode/settings.json
 **/.vscode
+.cache

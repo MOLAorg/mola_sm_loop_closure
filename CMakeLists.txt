@@ -19,19 +19,20 @@ project(mola_sm_loop_closure LANGUAGES CXX)
 
 # MOLA CMake scripts: "mola_xxx()"
 find_package(mola_common REQUIRED)
-find_package(mola_yaml REQUIRED)
-find_package(mola_pose_list REQUIRED)
-find_package(mola_relocalization REQUIRED)
+
 
 # find dependencies:
-find_package(mrpt-maps REQUIRED)
-find_package(mrpt-gui REQUIRED)
-find_package(mrpt-tclap REQUIRED)
-
 find_package(GTSAM REQUIRED)
-
+find_package(mola_georeferencing REQUIRED)
+find_package(mola_gtsam_factors REQUIRED)
+find_package(mola_pose_list REQUIRED)
+find_package(mola_relocalization REQUIRED)
+find_package(mola_yaml REQUIRED)
 find_package(mp2p_icp REQUIRED)
 find_package(mp2p_icp_filters REQUIRED)
+find_package(mrpt-gui REQUIRED)
+find_package(mrpt-maps REQUIRED)
+find_package(mrpt-tclap REQUIRED)
 
 # -----------------------
 # define lib:
@@ -39,25 +40,26 @@ mola_add_library(
   TARGET ${PROJECT_NAME}
   SOURCES
     module/src/SimplemapLoopClosure.cpp
-    module/src/simplemap_georeference.cpp
-    module/src/FactorGNSS2ENU.h
-    module/include/mola_sm_loop_closure/simplemap_georeference.h
     module/include/mola_sm_loop_closure/SimplemapLoopClosure.h
   PUBLIC_LINK_LIBRARIES
-    mrpt::maps
-    mrpt::gui
-    mola::mp2p_icp
-    mola::mp2p_icp_filters
-    mola::mola_yaml
+    gtsam
+    mola::mola_georeferencing
+    mola::mola_gtsam_factors
     mola::mola_pose_list
     mola::mola_relocalization
-    gtsam
+    mola::mola_yaml
+    mola::mp2p_icp
+    mola::mp2p_icp_filters
+    mrpt::gui
+    mrpt::maps
 #	PRIVATE_LINK_LIBRARIES
   CMAKE_DEPENDENCIES
-    mp2p_icp
-    mp2p_icp_filters
+    mola_georeferencing
+    mola_gtsam_factors
     mola_pose_list
     mola_relocalization
+    mp2p_icp
+    mp2p_icp_filters
     mrpt-maps
 )
 
@@ -83,23 +85,6 @@ mola_add_executable(
     mrpt::tclap
 )
 
-mola_add_executable(
-  TARGET  mola-sm-georeferencing
-  SOURCES apps/mola-sm-georeferencing-cli.cpp
-  LINK_LIBRARIES
-    ${PROJECT_NAME}
-    mrpt::maps
-    mrpt::tclap
-)
-
-mola_add_executable(
-  TARGET  mola-trajectory-georef
-  SOURCES apps/mola-trajectory-georef-cli.cpp
-  LINK_LIBRARIES
-    ${PROJECT_NAME}
-    mrpt::maps
-    mrpt::tclap
-)
 
 # -----------------------
 # define tests:

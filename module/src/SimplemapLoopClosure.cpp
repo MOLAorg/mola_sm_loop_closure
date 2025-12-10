@@ -22,7 +22,7 @@
 // -----------------------------------------------------------------------------
 
 // MRPT:
-#include <mola_sm_loop_closure/simplemap_georeference.h>
+#include <mola_georeferencing/simplemap_georeference.h>
 #include <mrpt/core/get_env.h>
 #include <mrpt/obs/CObservation2DRangeScan.h>
 #include <mrpt/obs/CObservation3DRangeScan.h>
