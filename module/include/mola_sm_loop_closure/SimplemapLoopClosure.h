@@ -65,25 +65,25 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
     {
         mp2p_icp::Parameters icp_parameters;
 
-        std::string threshold_sigma_initial                        = "5.0";
-        std::string threshold_sigma_final                          = "0.5";
-        double      max_sensor_range                               = 100.0;
-        double      icp_edge_robust_param                          = 1.0;
-        double      icp_edge_worst_multiplier                      = 10.0;
-        double      icp_edge_additional_noise_xyz                  = 1e-2;
-        double      icp_edge_additional_noise_ang_deg              = 0.05;
-        double      input_odometry_edge_additional_noise_xyz       = 0.001;
-        double      input_odometry_edge_additional_noise_ang_deg   = 0.001;
-        double      input_edges_uncertainty_multiplier             = 1.0;
-        double      submap_max_length_wrt_map                      = 0.10;
-        double      submap_max_absolute_length                     = 100.0;
-        double      submap_min_absolute_length                     = 50.0;
-        double      max_time_between_kfs_to_break_submap           = 10.0;
-        double      min_volume_intersection_ratio_for_lc_candidate = 0.6;
-        bool        assume_planar_world                            = false;
-        bool        use_gnss                                       = true;
-        double      gnss_minimum_uncertainty_xyz = 0.10;  // [m]
-        uint32_t    max_number_lc_candidates     = 150;  // 0: no limit
+        std::string threshold_sigma_initial                          = "5.0";
+        std::string threshold_sigma_final                            = "0.5";
+        double      max_sensor_range                                 = 100.0;
+        double      icp_edge_robust_param                            = 1.0;
+        double      icp_edge_worst_multiplier                        = 10.0;
+        double      icp_edge_additional_noise_xyz                    = 1e-2;
+        double      icp_edge_additional_noise_ang_deg                = 0.05;
+        double      input_odometry_edge_additional_noise_xyz         = 0.001;
+        double      input_odometry_edge_additional_noise_ang_deg     = 0.001;
+        double      input_edges_uncertainty_multiplier               = 1.0;
+        double      submap_max_length_wrt_map                        = 0.10;
+        double      submap_max_absolute_length                       = 100.0;
+        double      submap_min_absolute_length                       = 50.0;
+        double      max_time_between_kfs_to_break_submap             = 10.0;
+        double      min_volume_intersection_ratio_for_lc_candidate   = 0.6;
+        bool        assume_planar_world                              = false;
+        bool        use_gnss                                         = true;
+        double      gnss_minimum_uncertainty_xyz                     = 0.10;  // [m]
+        uint32_t    max_number_lc_candidates                         = 150;  // 0: no limit
         double      min_lc_uncertainty_ratio_to_draw_several_samples = 2.0;
         double      largest_delta_for_reconsider_all                 = 10.0;
         uint32_t    max_number_lc_candidates_per_submap              = 4;
@@ -124,8 +124,7 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
 
     /** Get (or build upon first request) the metric local map of a submap
      */
-    std::future<mp2p_icp::metric_map_t::Ptr> get_submap_local_map(
-        const SubMap& submap);
+    std::future<mp2p_icp::metric_map_t::Ptr> get_submap_local_map(const SubMap& submap);
 
     mp2p_icp::metric_map_t::Ptr impl_get_submap_local_map(const SubMap& submap);
 
@@ -165,8 +164,7 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         };
 
         // One copy of the state per working thread:
-        std::vector<PerThreadState> perThreadState_{
-            std::thread::hardware_concurrency()};
+        std::vector<PerThreadState> perThreadState_{std::thread::hardware_concurrency()};
 
         // Submaps:
         std::map<submap_id_t, SubMap> submaps;
@@ -188,8 +186,7 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
     mrpt::system::CTimeLogger profiler_{true, "sm_loop_closure"};
 
     // private methods:
-    void build_submap_from_kfs_into(
-        const std::set<keyframe_id_t>& ids, SubMap& submap);
+    void build_submap_from_kfs_into(const std::set<keyframe_id_t>& ids, SubMap& submap);
 
     struct VizOptions
     {
@@ -200,16 +197,14 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         bool        show_edges      = true;
     };
 
-    mrpt::opengl::CSetOfObjects::Ptr build_submaps_visualization(
-        const VizOptions& p) const;
+    mrpt::opengl::CSetOfObjects::Ptr build_submaps_visualization(const VizOptions& p) const;
 
     mrpt::poses::CPose3D keyframe_pose_in_simplemap(keyframe_id_t kfId) const;
     mrpt::poses::CPose3D keyframe_relative_pose_in_simplemap(
         keyframe_id_t kfId, keyframe_id_t referenceKfId) const;
 
     void updatePipelineDynamicVariablesForKeyframe(
-        const keyframe_id_t id, const keyframe_id_t referenceId,
-        const size_t threadIdx);
+        const keyframe_id_t id, const keyframe_id_t referenceId, const size_t threadIdx);
 
     struct PotentialLoop
     {
@@ -227,8 +222,7 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
     using PotentialLoopOutput = std::vector<PotentialLoop>;
 
     PotentialLoopOutput find_next_loop_closures(
-        const std::set<std::pair<submap_id_t, submap_id_t>>& alreadyChecked)
-        const;
+        const std::set<std::pair<submap_id_t, submap_id_t>>& alreadyChecked) const;
 
     [[nodiscard]] bool process_loop_candidate(const PotentialLoop& lc);
 
@@ -240,8 +234,7 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
     /// Detect submaps in "state_.sm".
     std::vector<std::set<keyframe_id_t>> detect_sub_maps() const;
 
-    void save_current_key_frame_poses_as_tum(
-        const std::string& outTumFile) const;
+    void save_current_key_frame_poses_as_tum(const std::string& outTumFile) const;
 };
 
 }  // namespace mola
