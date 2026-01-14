@@ -36,9 +36,7 @@ struct Cli
     TCLAP::CmdLine cmd{"mola-sm-lc-cli"};
 
     TCLAP::ValueArg<std::string> argInput{
-        "i",  "input",         "Input .simplemap file",
-        true, "map.simplemap", "map.simplemap",
-        cmd};
+        "i", "input", "Input .simplemap file", true, "map.simplemap", "map.simplemap", cmd};
 
     TCLAP::ValueArg<std::string> argOutput{
         "o",
@@ -60,22 +58,13 @@ struct Cli
         cmd};
 
     TCLAP::ValueArg<std::string> argPipeline{
-        "p",
-        "pipeline",
-        "YAML file with the SimplemapLoopClosure configuration file.",
-        true,
-        "loop_closure.yaml",
-        "loop_closure.yaml",
+        "p",  "pipeline",          "YAML file with the SimplemapLoopClosure configuration file.",
+        true, "loop_closure.yaml", "loop_closure.yaml",
         cmd};
 
     TCLAP::ValueArg<std::string> arg_verbosity_level{
-        "v",
-        "verbosity",
-        "Verbosity level: ERROR|WARN|INFO|DEBUG (Default: INFO)",
-        false,
-        "",
-        "INFO",
-        cmd};
+        "v",    "verbosity", "Verbosity level: ERROR|WARN|INFO|DEBUG (Default: INFO)", false, "",
+        "INFO", cmd};
 
     TCLAP::ValueArg<std::string> arg_lazy_load_base_dir{
         "",
@@ -95,12 +84,10 @@ void run_sm_to_mm(Cli& cli)
     if (cli.argPlugins.isSet())
     {
         std::string sErrs;
-        bool        ok =
-            mrpt::system::loadPluginModules(cli.argPlugins.getValue(), sErrs);
+        bool        ok = mrpt::system::loadPluginModules(cli.argPlugins.getValue(), sErrs);
         if (!ok)
         {
-            std::cerr << "Errors loading plugins: " << cli.argPlugins.getValue()
-                      << std::endl;
+            std::cerr << "Errors loading plugins: " << cli.argPlugins.getValue() << std::endl;
             throw std::runtime_error(sErrs.c_str());
         }
     }
@@ -113,13 +100,12 @@ void run_sm_to_mm(Cli& cli)
 
     mrpt::maps::CSimpleMap sm;
 
-    std::cout << "[mola-sm-lc-cli] Reading simplemap from: '" << filSM << "'..."
-              << std::endl;
+    std::cout << "[mola-sm-lc-cli] Reading simplemap from: '" << filSM << "'..." << std::endl;
 
     sm.loadFromFile(filSM);
 
-    std::cout << "[mola-sm-lc-cli] Done read simplemap with " << sm.size()
-              << " keyframes." << std::endl;
+    std::cout << "[mola-sm-lc-cli] Done read simplemap with " << sm.size() << " keyframes."
+              << std::endl;
     ASSERT_(!sm.empty());
 
     mola::SimplemapLoopClosure lc;
@@ -150,8 +136,8 @@ void run_sm_to_mm(Cli& cli)
         {
             lazyLoadBaseDir = candidateDir;
 
-            std::cout << "[mola-sm-lc-cli] Found lazy-load base directory: '"
-                      << candidateDir << "'\n";
+            std::cout << "[mola-sm-lc-cli] Found lazy-load base directory: '" << candidateDir
+                      << "'\n";
         }
     }
 
@@ -168,8 +154,7 @@ void run_sm_to_mm(Cli& cli)
 
     // save output:
     const auto filOut = cli.argOutput.getValue();
-    std::cout << "[mola-sm-lc-cli] Writing output map to: '" << filOut << "'..."
-              << std::endl;
+    std::cout << "[mola-sm-lc-cli] Writing output map to: '" << filOut << "'..." << std::endl;
 
     sm.saveToFile(filOut);
 
