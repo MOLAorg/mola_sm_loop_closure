@@ -378,10 +378,10 @@ void FrameToFrameLoopClosure::add_gnss_factors()
             continue;
         }
 
-        auto noiseOrg =
-            gtsam::noiseModel::Diagonal::Sigmas(gtsam::Vector3(gf.sigma_E, gf.sigma_N, gf.sigma_U)
-                                                    .array()
-                                                    .max(params_.gnss_minimum_uncertainty_xyz));
+        auto noiseOrg = gtsam::noiseModel::Diagonal::Sigmas(
+            gtsam::Vector3(gf.sigma_E, gf.sigma_N, gf.sigma_U)
+                .array()
+                .max(params_.gnss_minimum_uncertainty_xyz));
 
         auto robustNoise = gtsam::noiseModel::Robust::Create(
             gtsam::noiseModel::mEstimator::Huber::Create(1.5), noiseOrg);
@@ -507,7 +507,7 @@ bool FrameToFrameLoopClosure::process_loop_candidate(const LoopCandidate& lc)
 
     MRPT_LOG_INFO_STREAM(
         "ICP " << lc.frame_i << " <-> " << lc.frame_j << ": quality="
-               << (100.0 * icp_result.quality) << "% iters=" << icp_result.nIterations << "delta="
+               << (100.0 * icp_result.quality) << "% iters=" << icp_result.nIterations << " delta="
                << (icp_result.optimal_tf.getMeanVal().asTPose() - initGuess).asString());
 
     if (icp_result.quality < params_.min_icp_goodness)

@@ -72,7 +72,7 @@ struct Cli
         "C++ class name of the loop-closure algorithm to use.",
         false,
         "mola::SimplemapLoopClosure",
-        "INFO",
+        "ClassName",
         cmd};
 
     TCLAP::ValueArg<std::string> arg_lazy_load_base_dir{
