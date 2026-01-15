@@ -25,6 +25,7 @@
 
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/Values.h>
+#include <mola_sm_loop_closure/LoopClosureInterface.h>
 #include <mp2p_icp/icp_pipeline_from_yaml.h>
 #include <mp2p_icp/metricmap.h>
 #include <mp2p_icp_filters/FilterBase.h>
@@ -35,7 +36,6 @@
 #include <mrpt/maps/CSimpleMap.h>
 #include <mrpt/maps/CSimplePointsMap.h>
 #include <mrpt/opengl/CSetOfObjects.h>
-#include <mrpt/system/COutputLogger.h>
 #include <mrpt/system/CTimeLogger.h>
 
 #include <set>
@@ -44,8 +44,10 @@ namespace mola
 {
 /** LIDAR-inertial loop closure engine.
  */
-class SimplemapLoopClosure : public mrpt::system::COutputLogger
+class SimplemapLoopClosure : public mola::LoopClosureInterface
 {
+    DEFINE_MRPT_OBJECT(SimplemapLoopClosure, mola)
+
    public:
     SimplemapLoopClosure();
 
@@ -56,10 +58,10 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
     using submap_id_t   = uint32_t;
 
     // See docs in base class
-    void initialize(const mrpt::containers::yaml& cfg);
+    void initialize(const mrpt::containers::yaml& cfg) override;
 
     /** Find and apply loop closures in the input/output simplemap */
-    void process(mrpt::maps::CSimpleMap& sm);
+    void process(mrpt::maps::CSimpleMap& sm) override;
 
     struct Parameters
     {

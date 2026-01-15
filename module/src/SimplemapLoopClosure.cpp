@@ -65,6 +65,8 @@
 
 using namespace mola;
 
+IMPLEMENTS_SERIALIZABLE(SimplemapLoopClosure, LoopClosureInterface, mola)
+
 namespace
 {
 const bool PRINT_ALL_SCORES = mrpt::get_env<bool>("PRINT_ALL_SCORES", false);

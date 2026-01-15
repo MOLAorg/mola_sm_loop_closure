@@ -26,6 +26,8 @@
 
 using namespace mola;
 
+IMPLEMENTS_SERIALIZABLE(FrameToFrameLoopClosure, LoopClosureInterface, mola)
+
 namespace
 {
 const bool PRINT_LC_SCORES = mrpt::get_env<bool>("PRINT_LC_SCORES", false);
@@ -376,10 +378,10 @@ void FrameToFrameLoopClosure::add_gnss_factors()
             continue;
         }
 
-        auto noiseOrg = gtsam::noiseModel::Diagonal::Sigmas(
-            gtsam::Vector3(gf.sigma_E, gf.sigma_N, gf.sigma_U)
-                .array()
-                .max(params_.gnss_minimum_uncertainty_xyz));
+        auto noiseOrg =
+            gtsam::noiseModel::Diagonal::Sigmas(gtsam::Vector3(gf.sigma_E, gf.sigma_N, gf.sigma_U)
+                                                    .array()
+                                                    .max(params_.gnss_minimum_uncertainty_xyz));
 
         auto robustNoise = gtsam::noiseModel::Robust::Create(
             gtsam::noiseModel::mEstimator::Huber::Create(1.5), noiseOrg);

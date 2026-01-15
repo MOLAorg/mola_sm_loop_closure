@@ -41,6 +41,8 @@ mola_add_library(
   SOURCES
     module/src/SimplemapLoopClosure.cpp
     module/src/FrameToFrameLoopClosure.cpp
+    module/src/LoopClosureInterface.cpp
+    module/src/register.cpp
     # Headers:
     module/include/mola_sm_loop_closure/SimplemapLoopClosure.h
     module/include/mola_sm_loop_closure/FrameToFrameLoopClosure.h

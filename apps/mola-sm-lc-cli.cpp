@@ -21,8 +21,7 @@
 // alone or in combination with the complete SLAM system.
 // -----------------------------------------------------------------------------
 
-#include <mola_sm_loop_closure/FrameToFrameLoopClosure.h>
-#include <mola_sm_loop_closure/SimplemapLoopClosure.h>
+#include <mola_sm_loop_closure/LoopClosureInterface.h>
 #include <mola_yaml/yaml_helpers.h>
 #include <mrpt/3rdparty/tclap/CmdLine.h>
 #include <mrpt/containers/yaml.h>
@@ -67,6 +66,15 @@ struct Cli
         "v",    "verbosity", "Verbosity level: ERROR|WARN|INFO|DEBUG (Default: INFO)", false, "",
         "INFO", cmd};
 
+    TCLAP::ValueArg<std::string> arg_algo{
+        "a",
+        "algorithm",
+        "C++ class name of the loop-closure algorithm to use.",
+        false,
+        "mola::SimplemapLoopClosure",
+        "INFO",
+        cmd};
+
     TCLAP::ValueArg<std::string> arg_lazy_load_base_dir{
         "",
         "externals-dir",
@@ -110,8 +118,21 @@ void run_sm_to_mm(Cli& cli)
     std::cout << "[mola-sm-lc-cli] Done read simplemap with " << sm.size() << " keyframes.\n";
     ASSERT_(!sm.empty());
 
-    // mola::SimplemapLoopClosure lc;
-    mola::FrameToFrameLoopClosure lc;
+    // Create algorithm:
+    auto algoPtr = mrpt::rtti::classFactory(cli.arg_algo.getValue());
+    if (!algoPtr)
+    {
+        THROW_EXCEPTION_FMT(
+            "Unregistered algorithm C++ class: '%s'", cli.arg_algo.getValue().c_str());
+    }
+    auto lcPtr = std::dynamic_pointer_cast<mola::LoopClosureInterface>(algoPtr);
+    if (!lcPtr)
+    {
+        THROW_EXCEPTION_FMT(
+            "Algorithm C++ class seems not to be an implementation of 'LoopClosureInterface': '%s'",
+            cli.arg_algo.getValue().c_str());
+    }
+    auto& lc = *lcPtr;
 
     mrpt::system::VerbosityLevel logLevel = mrpt::system::LVL_INFO;
     if (cli.arg_verbosity_level.isSet())
@@ -148,9 +169,6 @@ void run_sm_to_mm(Cli& cli)
     {
         mrpt::io::setLazyLoadPathBase(lazyLoadBaseDir);
     }
-
-    // generate meaningful output debug files, if enabled:
-    lc.params_.debug_files_prefix = mrpt::system::extractFileName(filSM);
 
     // Main stuff here:
     lc.process(sm);

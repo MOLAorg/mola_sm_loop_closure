@@ -22,6 +22,7 @@
 
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/Values.h>
+#include <mola_sm_loop_closure/LoopClosureInterface.h>
 #include <mp2p_icp/icp_pipeline_from_yaml.h>
 #include <mp2p_icp/metricmap.h>
 #include <mp2p_icp_filters/FilterBase.h>
@@ -30,7 +31,6 @@
 #include <mrpt/core/WorkerThreadsPool.h>
 #include <mrpt/maps/CSimpleMap.h>
 #include <mrpt/opengl/CSetOfObjects.h>
-#include <mrpt/system/COutputLogger.h>
 #include <mrpt/system/CTimeLogger.h>
 #include <mrpt/topography/data_types.h>
 
@@ -46,8 +46,10 @@ namespace mola
  * 2) Runs frame-to-frame ICP between loop closure candidates
  * 3) Optimizes the full graph with robust factors
  */
-class FrameToFrameLoopClosure : public mrpt::system::COutputLogger
+class FrameToFrameLoopClosure : public mola::LoopClosureInterface
 {
+    DEFINE_MRPT_OBJECT(FrameToFrameLoopClosure, mola)
+
    public:
     FrameToFrameLoopClosure();
 
@@ -56,10 +58,10 @@ class FrameToFrameLoopClosure : public mrpt::system::COutputLogger
 
     using frame_id_t = uint32_t;
 
-    void initialize(const mrpt::containers::yaml& cfg);
+    void initialize(const mrpt::containers::yaml& cfg) override;
 
     /** Find and apply loop closures in the input/output simplemap */
-    void process(mrpt::maps::CSimpleMap& sm);
+    void process(mrpt::maps::CSimpleMap& sm) override;
 
     struct Parameters
     {
