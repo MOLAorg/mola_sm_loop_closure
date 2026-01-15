@@ -35,9 +35,12 @@
     },
     "ros.distro": "humble",
     "cSpell.words": [
+        "3Dscene",
         "CPose3DPDFGaussian",
+        "Eigen",
+        "Geman",
+        "Marquardt",
         "relocalize",
-        "Velodyne",
-        "3Dscene"
+        "Velodyne"
     ]
 }

@@ -1,7 +1,7 @@
 # -----------------------------------------------------------------------------
 #   A Modular Optimization framework for Localization and mApping  (MOLA)
 #
-# Copyright (C) 2018-2025 Jose Luis Blanco, University of Almeria
+# Copyright (C) 2018-2026 Jose Luis Blanco, University of Almeria
 # Licensed under the GNU GPL v3.
 #
 # This file is part of MOLA.
@@ -228,7 +228,7 @@ observations_filter:
       output_pointcloud_layer: "deskewed"
       method: "${MOLA_DESKEW_METHOD|MotionCompensationMethod::Linear}"
       silently_ignore_no_timestamps: "${MOLA_DESKEW_IGNORE_NO_TIMESTAMPS|false}" # To handle more dataset types
-      output_layer_class: "mrpt::maps::CPointsMapXYZIRT" # Keep intensity & ring channels
+      output_layer_class: "mrpt::maps::CGenericPointsMap" # Keep intensity & ring channels
 
       # These (vx,...wz) are variable names that must be defined via the
       # mp2p_icp::Parameterizable API to update them dynamically.

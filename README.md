@@ -39,7 +39,7 @@ mola-sm-lc-cli \
 ```
 
 # License
-Copyright (C) 2018-2025 Jose Luis Blanco <jlblanco@ual.es>, University of Almeria
+Copyright (C) 2018-2026 Jose Luis Blanco <jlblanco@ual.es>, University of Almeria
 
 This package is released under the GNU GPL v3 license as open source, with the main 
 intention of being useful for research and evaluation purposes.

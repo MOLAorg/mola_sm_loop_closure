@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //   A Modular Optimization framework for Localization and mApping  (MOLA)
 //
-// Copyright (C) 2018-2025 Jose Luis Blanco, University of Almeria
+// Copyright (C) 2018-2026 Jose Luis Blanco, University of Almeria
 // Licensed under the GNU GPL v3.
 //
 // This file is part of MOLA.
@@ -25,6 +25,7 @@
 
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/Values.h>
+#include <mola_sm_loop_closure/LoopClosureInterface.h>
 #include <mp2p_icp/icp_pipeline_from_yaml.h>
 #include <mp2p_icp/metricmap.h>
 #include <mp2p_icp_filters/FilterBase.h>
@@ -35,7 +36,6 @@
 #include <mrpt/maps/CSimpleMap.h>
 #include <mrpt/maps/CSimplePointsMap.h>
 #include <mrpt/opengl/CSetOfObjects.h>
-#include <mrpt/system/COutputLogger.h>
 #include <mrpt/system/CTimeLogger.h>
 
 #include <set>
@@ -44,8 +44,10 @@ namespace mola
 {
 /** LIDAR-inertial loop closure engine.
  */
-class SimplemapLoopClosure : public mrpt::system::COutputLogger
+class SimplemapLoopClosure : public mola::LoopClosureInterface
 {
+    DEFINE_MRPT_OBJECT(SimplemapLoopClosure, mola)
+
    public:
     SimplemapLoopClosure();
 
@@ -56,10 +58,10 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
     using submap_id_t   = uint32_t;
 
     // See docs in base class
-    void initialize(const mrpt::containers::yaml& cfg);
+    void initialize(const mrpt::containers::yaml& cfg) override;
 
     /** Find and apply loop closures in the input/output simplemap */
-    void process(mrpt::maps::CSimpleMap& sm);
+    void process(mrpt::maps::CSimpleMap& sm) override;
 
     struct Parameters
     {
@@ -164,7 +166,8 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         };
 
         // One copy of the state per working thread:
-        std::vector<PerThreadState> perThreadState_{std::thread::hardware_concurrency()};
+        std::vector<PerThreadState> perThreadState_{
+            std::max(1u, std::thread::hardware_concurrency())};
 
         // Submaps:
         std::map<submap_id_t, SubMap> submaps;
@@ -178,7 +181,7 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         gtsam::Values               kfGraphValues;
         gtsam::NonlinearFactorGraph kfGraphFG, kfGraphFGRobust;
 
-        mrpt::poses::CPose3D kfGraph_get_pose(const keyframe_id_t id) const;
+        mrpt::poses::CPose3D kfGraph_get_pose(keyframe_id_t id) const;
     };
 
     State state_;
@@ -204,7 +207,7 @@ class SimplemapLoopClosure : public mrpt::system::COutputLogger
         keyframe_id_t kfId, keyframe_id_t referenceKfId) const;
 
     void updatePipelineDynamicVariablesForKeyframe(
-        const keyframe_id_t id, const keyframe_id_t referenceId, const size_t threadIdx);
+        keyframe_id_t id, keyframe_id_t referenceId, size_t threadIdx);
 
     struct PotentialLoop
     {
