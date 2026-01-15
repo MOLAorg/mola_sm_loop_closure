@@ -8,7 +8,7 @@
                          and individual contributors.
  SPDX-License-Identifier: GPL-3.0
  See LICENSE for full license information.
- Closed-source licenses available upon request, for this odometry package
+ Closed-source licenses available upon request, for this package
  alone or in combination with the complete SLAM system.
 */
 
@@ -23,7 +23,7 @@
 #include <mola_sm_loop_closure/SimplemapLoopClosure.h>
 #include <mrpt/core/initializer.h>
 
-MRPT_INITIALIZER(do_register_sm_loop_closure)  // NOLINT(use-anonymous-namespace)
+MRPT_INITIALIZER(do_register_sm_loop_closure)  // NOLINT(misc-use-anonymous-namespace)
 {
     mrpt::rtti::registerClass(CLASS_ID(mola::FrameToFrameLoopClosure));
     mrpt::rtti::registerClass(CLASS_ID(mola::SimplemapLoopClosure));
