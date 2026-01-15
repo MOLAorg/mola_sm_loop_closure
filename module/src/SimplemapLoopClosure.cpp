@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //   A Modular Optimization framework for Localization and mApping  (MOLA)
 //
-// Copyright (C) 2018-2025 Jose Luis Blanco, University of Almeria
+// Copyright (C) 2018-2026 Jose Luis Blanco, University of Almeria
 // Licensed under the GNU GPL v3.
 //
 // This file is part of MOLA.
@@ -382,7 +382,8 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     for (size_t i = 1; i < sm.size(); i++)
     {
         // Extract cov from simplemap cov from icp odometry:
-        mrpt::poses::CPose3DPDFGaussian ppi, ppim1;
+        mrpt::poses::CPose3DPDFGaussian ppi;
+        mrpt::poses::CPose3DPDFGaussian ppim1;
         {
             const auto& [pose_i, sf_i, twist_i]       = state_.sm->get(i);
             const auto& [pose_im1, sf_im1, twist_im1] = state_.sm->get(i - 1);
@@ -674,7 +675,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
     for (size_t id = 0; id < sm.size(); id++)
     {
-        auto& [oldPose, sf, twist] = state_.sm->get(id);
+        const auto& [oldPose, sf, twist] = state_.sm->get(id);
 
         const auto& newKfGlobalPose = state_.kfGraph_get_pose(id);
 
@@ -688,7 +689,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     MRPT_LOG_INFO_STREAM("Overall number of accepted loop-closures: " << accepted_lcs);
 
     // Overwrite with new SM:
-    sm = std::move(outSM);
+    sm = outSM;  // TODO: Implement CSimpleMap move ctor and use move() here
 }
 
 namespace
@@ -914,8 +915,7 @@ mrpt::poses::CPose3D SimplemapLoopClosure::keyframe_relative_pose_in_simplemap(
 }
 
 void SimplemapLoopClosure::updatePipelineDynamicVariablesForKeyframe(
-    const keyframe_id_t id, const keyframe_id_t referenceId,  // NOLINT
-    const size_t threadIdx)  // NOLINT
+    const keyframe_id_t id, const keyframe_id_t referenceId, const size_t threadIdx)
 {
     auto& pts = state_.perThreadState_.at(threadIdx);
 
@@ -1106,7 +1106,7 @@ SimplemapLoopClosure::PotentialLoopOutput SimplemapLoopClosure::find_next_loop_c
             mrpt::system::createDirectory(d);
             const auto sFil = mrpt::format(
                 "%s/tree_root_%04u_iter_%02i.3Dscene", d.c_str(), (unsigned int)root_id, tree_iter);
-            std::cout << "[SAVE_TREES] Saving tree : " << sFil << std::endl;
+            std::cout << "[SAVE_TREES] Saving tree : " << sFil << "\n";
 
             mrpt::opengl::Scene scene;
 
@@ -1827,7 +1827,7 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(cons
             }
             catch (const std::exception& e)
             {
-                std::cerr << "Error parsing YAML in comment: " << e.what() << std::endl;
+                std::cerr << "Error parsing YAML in comment: " << e.what() << "\n";
                 return mrpt::containers::yaml();
             }
         }();
@@ -1840,7 +1840,7 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(cons
         const auto lvb = commentYaml["local_velocity_buffer"];
         if (!lvb.isMap())
         {
-            std::cerr << "Error: 'local_velocity_buffer' field is not a map!" << std::endl;
+            std::cerr << "Error: 'local_velocity_buffer' field is not a map!\n";
             return;
         }
 
@@ -1850,7 +1850,7 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(cons
         }
         catch (const std::exception& e)
         {
-            std::cerr << "Error parsing 'local_velocity_buffer': " << e.what() << std::endl;
+            std::cerr << "Error parsing 'local_velocity_buffer': " << e.what() << "\n";
             return;
         }
     };
@@ -2070,16 +2070,15 @@ double SimplemapLoopClosure::optimize_graph()
     }
 
     auto bckCol =
-        this->mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO);
-    this->mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO) =
+        mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO);
+    mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO) =
         mrpt::system::ConsoleForegroundColor::BRIGHT_GREEN;
     MRPT_LOG_INFO_STREAM(
         "***** Graph re-optimized in "
         << lm1.iterations() << "/" << lm2.iterations() << " iters, RMSE: 1st PASS:" << rmseInit1
         << " ==> " << rmseEnd1 << " / 2nd PASS: " << rmseInit2 << " ==> " << rmseEnd2
         << " largestDelta=" << largestDelta << " [m]");
-    this->mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO) =
-        bckCol;
+    mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO) = bckCol;
 
     if (PRINT_FG_ERRORS)
     {
@@ -2205,7 +2204,7 @@ void SimplemapLoopClosure::save_current_key_frame_poses_as_tum(const std::string
 
     for (size_t id = 0; id < state_.sm->size(); id++)
     {
-        auto& [oldPose, sf, twist] = state_.sm->get(id);
+        const auto& [oldPose, sf, twist] = state_.sm->get(id);
 
         const auto& newKfGlobalPose = state_.kfGraph_get_pose(id);
 

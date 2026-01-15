@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //   A Modular Optimization framework for Localization and mApping  (MOLA)
 //
-// Copyright (C) 2018-2025 Jose Luis Blanco, University of Almeria
+// Copyright (C) 2018-2026 Jose Luis Blanco, University of Almeria
 // Licensed under the GNU GPL v3.
 //
 // This file is part of MOLA.
@@ -21,6 +21,7 @@
 // alone or in combination with the complete SLAM system.
 // -----------------------------------------------------------------------------
 
+#include <mola_sm_loop_closure/FrameToFrameLoopClosure.h>
 #include <mola_sm_loop_closure/SimplemapLoopClosure.h>
 #include <mola_yaml/yaml_helpers.h>
 #include <mrpt/3rdparty/tclap/CmdLine.h>
@@ -58,7 +59,7 @@ struct Cli
         cmd};
 
     TCLAP::ValueArg<std::string> argPipeline{
-        "p",  "pipeline",          "YAML file with the SimplemapLoopClosure configuration file.",
+        "p",  "pipeline",          "YAML file with the loop closure algorithm configuration file.",
         true, "loop_closure.yaml", "loop_closure.yaml",
         cmd};
 
@@ -79,6 +80,8 @@ struct Cli
         cmd};
 };
 
+namespace
+{
 void run_sm_to_mm(Cli& cli)
 {
     if (cli.argPlugins.isSet())
@@ -87,7 +90,7 @@ void run_sm_to_mm(Cli& cli)
         bool        ok = mrpt::system::loadPluginModules(cli.argPlugins.getValue(), sErrs);
         if (!ok)
         {
-            std::cerr << "Errors loading plugins: " << cli.argPlugins.getValue() << std::endl;
+            std::cerr << "Errors loading plugins: " << cli.argPlugins.getValue() << "\n";
             throw std::runtime_error(sErrs.c_str());
         }
     }
@@ -100,15 +103,15 @@ void run_sm_to_mm(Cli& cli)
 
     mrpt::maps::CSimpleMap sm;
 
-    std::cout << "[mola-sm-lc-cli] Reading simplemap from: '" << filSM << "'..." << std::endl;
+    std::cout << "[mola-sm-lc-cli] Reading simplemap from: '" << filSM << "'...\n";
 
     sm.loadFromFile(filSM);
 
-    std::cout << "[mola-sm-lc-cli] Done read simplemap with " << sm.size() << " keyframes."
-              << std::endl;
+    std::cout << "[mola-sm-lc-cli] Done read simplemap with " << sm.size() << " keyframes.\n";
     ASSERT_(!sm.empty());
 
-    mola::SimplemapLoopClosure lc;
+    // mola::SimplemapLoopClosure lc;
+    mola::FrameToFrameLoopClosure lc;
 
     mrpt::system::VerbosityLevel logLevel = mrpt::system::LVL_INFO;
     if (cli.arg_verbosity_level.isSet())
@@ -154,12 +157,13 @@ void run_sm_to_mm(Cli& cli)
 
     // save output:
     const auto filOut = cli.argOutput.getValue();
-    std::cout << "[mola-sm-lc-cli] Writing output map to: '" << filOut << "'..." << std::endl;
+    std::cout << "[mola-sm-lc-cli] Writing output map to: '" << filOut << "'...\n";
 
     sm.saveToFile(filOut);
 
-    std::cout << "[mola-sm-lc-cli] Done." << std::endl;
+    std::cout << "[mola-sm-lc-cli] Done.\n";
 }
+}  // namespace
 
 int main(int argc, char** argv)
 {
@@ -177,7 +181,7 @@ int main(int argc, char** argv)
     }
     catch (const std::exception& e)
     {
-        std::cerr << e.what() << std::endl;
+        std::cerr << e.what() << "\n";
         return 1;
     }
     return 0;

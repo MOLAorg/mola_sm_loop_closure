@@ -2,7 +2,7 @@
 #        A Modular Optimization framework for Localization and mApping
 #                              (MOLA)
 #
-# Copyright (C) 2018-2025, Jose Luis Blanco-Claraco
+# Copyright (C) 2018-2026, Jose Luis Blanco-Claraco
 # All rights reserved.
 # Released under GNU GPL v3. See LICENSE file
 # ------------------------------------------------------------------------------
@@ -40,7 +40,10 @@ mola_add_library(
   TARGET ${PROJECT_NAME}
   SOURCES
     module/src/SimplemapLoopClosure.cpp
+    module/src/FrameToFrameLoopClosure.cpp
+    # Headers:
     module/include/mola_sm_loop_closure/SimplemapLoopClosure.h
+    module/include/mola_sm_loop_closure/FrameToFrameLoopClosure.h
   PUBLIC_LINK_LIBRARIES
     gtsam
     mola::mola_georeferencing
