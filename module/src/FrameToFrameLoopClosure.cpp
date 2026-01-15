@@ -289,9 +289,9 @@ void FrameToFrameLoopClosure::build_initial_graph()
         state_.graphValues.insert(X(i), mrpt::gtsam_wrappers::toPose3(pose_i));
     }
 
-    // Add prior on first frame
+    // Add prior on first frame: very weak, so GNSS can override it as needed.
     const auto pose0      = frame_pose_in_simplemap(0);
-    auto       priorNoise = gtsam::noiseModel::Isotropic::Sigma(6, 1e-3);
+    auto       priorNoise = gtsam::noiseModel::Isotropic::Sigma(6, 1e+3);
 
     state_.graphFG.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
         X(0), mrpt::gtsam_wrappers::toPose3(pose0), priorNoise);
