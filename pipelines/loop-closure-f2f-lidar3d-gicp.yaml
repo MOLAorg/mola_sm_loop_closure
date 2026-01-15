@@ -20,6 +20,7 @@ params:
   max_distance_for_lc_candidate: "${MAX_LC_DISTANCE|50.0}" # [m] Max distance to consider
   max_lc_candidates: "${MAX_LC_CANDIDATES|20}" # Maximum candidates per iteration
   min_frames_between_lc: "${MIN_FRAMES_BETWEEN_LC|20}" # Minimum frame index separation
+  max_lc_optimization_rounds: "${MAX_LC_OPTIMIZATION_ROUNDS|5}" # Maximum LC+optimization rounds to run
 
   # ===== ICP Parameters =====
   min_icp_goodness: "${MIN_ICP_QUALITY|0.65}" # [0-1] Minimum ICP quality to accept
