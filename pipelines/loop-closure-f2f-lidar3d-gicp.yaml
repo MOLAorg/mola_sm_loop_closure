@@ -18,16 +18,17 @@ params:
   # ===== Loop Closure Candidate Selection =====
   min_distance_between_frames: "${MIN_LC_DISTANCE|2.0}" # [m] Min spatial separation
   max_distance_for_lc_candidate: "${MAX_LC_DISTANCE|50.0}" # [m] Max distance to consider
-  max_lc_candidates: "${MAX_LC_CANDIDATES|10}" # Maximum candidates per iteration
+  max_lc_candidates: "${MAX_LC_CANDIDATES|20}" # Maximum candidates per iteration
   min_frames_between_lc: "${MIN_FRAMES_BETWEEN_LC|20}" # Minimum frame index separation
+  max_lc_optimization_rounds: "${MAX_LC_OPTIMIZATION_ROUNDS|5}" # Maximum LC+optimization rounds to run
 
   # ===== ICP Parameters =====
   min_icp_goodness: "${MIN_ICP_QUALITY|0.65}" # [0-1] Minimum ICP quality to accept
   icp_edge_robust_param: "${ICP_ROBUST_PARAM|5.0}" # Robust kernel parameter
   icp_edge_additional_noise_xyz: 0.02 # [m] Additional edge uncertainty
   icp_edge_additional_noise_ang: 0.1 # [deg] Additional angular uncertainty
-  threshold_sigma_initial: 1.0
-  threshold_sigma_final: 0.05
+  threshold_sigma_initial: "${LC_ICP_INITIAL_SIGMA|1.0}"
+  threshold_sigma_final: "${LC_ICP_FINAL_SIGMA|0.05}"
 
   # ===== Odometry Edge Parameters =====
   input_odometry_noise_xyz: 0.01 # [m] Odometry translational noise
@@ -78,7 +79,6 @@ icp_settings:
       params:
         maxIterations: 2
         robustKernel: "${MOLA_LC_ROBUST_KERNEL|RobustKernel::GemanMcClure}"
-        #robustKernelParam: '0.5*max(SIGMA_FINAL, SIGMA_INIT-(SIGMA_INIT-SIGMA_FINAL)*ICP_ITERATION/300)'  # [m]  # (adaptive)
         robustKernelParam: "${MOLA_LO_ROBUST_KERNEL_PARAM|6.0}" # In GICP, errors are normalized by covariance
         #innerLoopVerbose: true
 
@@ -87,8 +87,8 @@ icp_settings:
   matchers:
     - class: mp2p_icp::Matcher_Cov2Cov
       params:
-        #threshold: "2.0*max(SIGMA_FINAL, SIGMA_INIT-(SIGMA_INIT-SIGMA_FINAL)*ICP_ITERATION/300)" # [m]
-        threshold: "SIGMA_INIT"
+        threshold: "min(SIGMA_FINAL, SIGMA_INIT-(SIGMA_INIT-SIGMA_FINAL)*ICP_ITERATION/100)" # [m]
+        #threshold: "SIGMA_INIT"
         pairingsPerPoint: 1
         allowMatchAlreadyMatchedGlobalPoints: true # faster
         # Both layers here must be of type 'mola::KeyframePointCloudMap'

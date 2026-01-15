@@ -91,6 +91,13 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, max_distance_for_lc_candidate, double);
     YAML_LOAD_OPT(params_, max_lc_candidates, size_t);
     YAML_LOAD_OPT(params_, min_frames_between_lc, size_t);
+    YAML_LOAD_OPT(params_, max_lc_optimization_rounds, size_t);
+
+    if (params_.min_frames_between_lc == 0)
+    {
+        MRPT_LOG_WARN("min_frames_between_lc=0 is invalid; clamping to 1.");
+        params_.min_frames_between_lc = 1;
+    }
 
     YAML_LOAD_OPT(params_, min_icp_goodness, double);
     YAML_LOAD_OPT(params_, icp_edge_robust_param, double);
@@ -189,7 +196,7 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     size_t                                      accepted_lcs = 0;
     std::set<std::pair<frame_id_t, frame_id_t>> alreadyChecked;
 
-    for (;;)
+    for (size_t lcRound = 0; lcRound < params_.max_lc_optimization_rounds; lcRound++)
     {
         size_t checkedCount   = 0;
         bool   anyGraphChange = false;
@@ -289,9 +296,9 @@ void FrameToFrameLoopClosure::build_initial_graph()
         state_.graphValues.insert(X(i), mrpt::gtsam_wrappers::toPose3(pose_i));
     }
 
-    // Add prior on first frame
+    // Add prior on first frame: very weak, so GNSS can override it as needed.
     const auto pose0      = frame_pose_in_simplemap(0);
-    auto       priorNoise = gtsam::noiseModel::Isotropic::Sigma(6, 1e-3);
+    auto       priorNoise = gtsam::noiseModel::Isotropic::Sigma(6, 1e+3);
 
     state_.graphFG.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
         X(0), mrpt::gtsam_wrappers::toPose3(pose0), priorNoise);
@@ -385,10 +392,10 @@ void FrameToFrameLoopClosure::add_gnss_factors()
             continue;
         }
 
-        auto noiseOrg = gtsam::noiseModel::Diagonal::Sigmas(
-            gtsam::Vector3(gf.sigma_E, gf.sigma_N, gf.sigma_U)
-                .array()
-                .max(params_.gnss_minimum_uncertainty_xyz));
+        auto noiseOrg =
+            gtsam::noiseModel::Diagonal::Sigmas(gtsam::Vector3(gf.sigma_E, gf.sigma_N, gf.sigma_U)
+                                                    .array()
+                                                    .max(params_.gnss_minimum_uncertainty_xyz));
 
         auto robustNoise = gtsam::noiseModel::Robust::Create(
             gtsam::noiseModel::mEstimator::Huber::Create(1.5), noiseOrg);
@@ -412,6 +419,8 @@ std::vector<FrameToFrameLoopClosure::LoopCandidate> FrameToFrameLoopClosure::fin
     ASSERT_(state_.sm);
     const auto& sm = *state_.sm;
 
+    const auto frameGroup = static_cast<double>(params_.min_frames_between_lc);
+
     // Compare each frame against potential loop closure frames
     for (size_t i = 0; i < sm.size(); i++)
     {
@@ -423,7 +432,14 @@ std::vector<FrameToFrameLoopClosure::LoopCandidate> FrameToFrameLoopClosure::fin
         // 3. Not already checked
         for (size_t j = i + params_.min_frames_between_lc; j < sm.size(); j++)
         {
-            const auto IDs = std::make_pair(static_cast<frame_id_t>(i), static_cast<frame_id_t>(j));
+            // Decimate the frame IDs so we are effectively counting "blocks" of frames for what
+            // concerns already-checked:
+            const auto frameGroup_i = mrpt::round(static_cast<double>(i) / frameGroup);
+            const auto frameGroup_j = mrpt::round(static_cast<double>(j) / frameGroup);
+
+            const auto IDs = std::make_pair(
+                std::min<frame_id_t>(frameGroup_i, frameGroup_j),
+                std::max<frame_id_t>(frameGroup_i, frameGroup_j));
 
             if (alreadyChecked.count(IDs) != 0)
             {
@@ -733,6 +749,10 @@ void FrameToFrameLoopClosure::update_dynamic_variables(frame_id_t frameId, size_
     ps.updateVariable("SIGMA_INIT", pts.expr_threshold_sigma_initial.eval());
     ps.updateVariable("SIGMA_FINAL", pts.expr_threshold_sigma_final.eval());
     ps.updateVariable("ESTIMATED_SENSOR_MAX_RANGE", params_.max_sensor_range);
+
+    // This will be overwritten by the actual ICP loop later on,
+    // but we need to define all variables before building a local map:
+    ps.updateVariable("ICP_ITERATION", 0);
 
     ps.realize();
 }

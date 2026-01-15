@@ -72,6 +72,7 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         double max_distance_for_lc_candidate = 50.0;  // [m] maximum distance to consider
         size_t max_lc_candidates             = 100;  // maximum candidates to check
         size_t min_frames_between_lc         = 50;  // minimum frame separation
+        size_t max_lc_optimization_rounds    = 5;  // maximum LC+optimization rounds to run
 
         // ICP parameters
         double      min_icp_goodness              = 0.50;
