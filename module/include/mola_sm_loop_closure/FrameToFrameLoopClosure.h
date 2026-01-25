@@ -27,6 +27,7 @@
 #include <mrpt/opengl/CSetOfObjects.h>
 #include <mrpt/system/CTimeLogger.h>
 #include <mrpt/topography/data_types.h>
+#include <mrpt/typemeta/TEnumType.h>
 
 #include <set>
 #include <vector>
@@ -73,6 +74,56 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         size_t max_lc_candidates             = 100;  // maximum candidates to check
         size_t min_frames_between_lc         = 50;  // minimum frame separation
         size_t max_lc_optimization_rounds    = 5;  // maximum LC+optimization rounds to run
+
+        /** Loop closure candidate selection strategy */
+        enum class CandidateSelectionStrategy : uint8_t
+        {
+            PROXIMITY_ONLY      = 0,  ///< Simple method: score = 1/(1+distance)
+            DISTANCE_STRATIFIED = 1,  ///< Stratified sampling across distance bins
+            MULTI_OBJECTIVE     = 2,  ///< Complex multi-criteria scoring
+        };
+
+        /** Active candidate selection strategy */
+        CandidateSelectionStrategy lc_candidate_strategy =
+            CandidateSelectionStrategy::DISTANCE_STRATIFIED;
+
+        /** Number of distance bins for DISTANCE_STRATIFIED strategy
+         * The valid distance range [min_distance_between_frames,
+         * max_distance_for_lc_candidate] is divided into this many bins,
+         * and candidates are sampled proportionally from each bin.
+         * Typical values: 3-7
+         */
+        size_t lc_distance_bins = 5;
+
+        /** Weight for proximity in multi-objective scoring
+         * How much to favor spatially close candidates.
+         * Valid range: [0.0, 1.0]
+         */
+        double lc_weight_proximity = 0.40;
+
+        /** Weight for frame separation in multi-objective scoring
+         * How much to favor temporally distant candidates (large frame index gap).
+         * Valid range: [0.0, 1.0]
+         */
+        double lc_weight_frame_separation = 0.25;
+
+        /** Weight for distance diversity in multi-objective scoring
+         * How much to penalize candidates with similar distances to already selected ones.
+         * Valid range: [0.0, 1.0]
+         */
+        double lc_weight_diversity = 0.20;
+
+        /** Weight for geometric coverage in multi-objective scoring
+         * How much to favor candidates that cover different parts of the trajectory.
+         * Valid range: [0.0, 1.0]
+         */
+        double lc_weight_coverage = 0.15;
+
+        /** Enable detailed logging of candidate selection process
+         * When true, logs information about each distance bin, selection statistics,
+         * and distribution of selected candidates.
+         */
+        bool lc_verbose_candidate_selection = false;
 
         // ICP parameters
         double      min_icp_goodness              = 0.50;
@@ -182,3 +233,17 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
 };
 
 }  // namespace mola
+
+// Enum type machinery for CandidateSelectionStrategy:
+MRPT_ENUM_TYPE_BEGIN_NAMESPACE(
+    mola, mola::FrameToFrameLoopClosure::Parameters::CandidateSelectionStrategy)
+MRPT_FILL_ENUM_CUSTOM_NAME(
+    FrameToFrameLoopClosure::Parameters::CandidateSelectionStrategy::PROXIMITY_ONLY,
+    "PROXIMITY_ONLY");
+MRPT_FILL_ENUM_CUSTOM_NAME(
+    FrameToFrameLoopClosure::Parameters::CandidateSelectionStrategy::DISTANCE_STRATIFIED,
+    "DISTANCE_STRATIFIED");
+MRPT_FILL_ENUM_CUSTOM_NAME(
+    FrameToFrameLoopClosure::Parameters::CandidateSelectionStrategy::MULTI_OBJECTIVE,
+    "MULTI_OBJECTIVE");
+MRPT_ENUM_TYPE_END()

@@ -31,6 +31,9 @@
 #include <mrpt/poses/gtsam_wrappers.h>
 #include <mrpt/system/filesystem.h>
 
+#include <cmath>
+#include <numeric>
+
 using namespace mola;
 
 IMPLEMENTS_SERIALIZABLE(FrameToFrameLoopClosure, LoopClosureInterface, mola)
@@ -67,6 +70,72 @@ bool frame_has_mapping_observations(const mrpt::obs::CSensoryFrame& sf)
     return false;
 }
 
+/**
+ * Compute score using original proximity-only strategy
+ */
+double score_proximity_only(double distance) { return 1.0 / (1.0 + distance); }
+
+/**
+ * Compute score for distance-stratified strategy
+ * Combines proximity with frame separation
+ */
+double score_stratified(
+    double distance, double minDist, double maxDist, size_t frameI, size_t frameJ,
+    size_t totalFrames)
+{
+    const double distRange = maxDist - minDist;
+    const double normDist  = (distance - minDist) / distRange;
+
+    // Softer proximity score
+    const double proximityScore = std::sqrt(1.0 - normDist);
+
+    // Frame separation bonus
+    const double frameSep        = static_cast<double>(frameJ - frameI);
+    const double maxFrameSep     = static_cast<double>(totalFrames);
+    const double separationScore = frameSep / maxFrameSep;
+
+    return 0.6 * proximityScore + 0.4 * separationScore;
+}
+
+/**
+ * Compute score using multi-objective strategy
+ */
+double score_multi_objective(
+    double distance, [[maybe_unused]] double minDist, [[maybe_unused]] double maxDist,
+    size_t frameI, size_t frameJ, size_t totalFrames, const std::vector<double>& selectedDistances,
+    double wProx, double wSep, double wDiv, double wCov)
+{
+    // 1. Proximity score
+    const double proximityScore = 1.0 / (1.0 + distance);
+
+    // 2. Frame separation score
+    const auto   frameSep        = static_cast<double>(frameJ - frameI);
+    const auto   maxFrameSep     = static_cast<double>(totalFrames);
+    const double separationScore = frameSep / maxFrameSep;
+
+    // 3. Distance diversity score
+    double diversityScore = 1.0;
+    for (const auto existingDist : selectedDistances)
+    {
+        const double distDiff = std::abs(distance - existingDist);
+        const double penalty  = std::exp(-distDiff / 5.0);  // 5m characteristic scale
+        diversityScore *= (1.0 - 0.3 * penalty);
+    }
+
+    // 4. Geometric coverage score (trajectory mid-point coverage)
+    const double midPoint      = static_cast<double>(frameI + frameJ) / 2.0;
+    const double coverageScore = std::abs(std::sin(M_PI * midPoint / maxFrameSep));
+
+    // Normalize weights (in case they don't sum to 1.0)
+    const double wSum = wProx + wSep + wDiv + wCov;
+    const double w1   = wProx / wSum;
+    const double w2   = wSep / wSum;
+    const double w3   = wDiv / wSum;
+    const double w4   = wCov / wSum;
+
+    return w1 * proximityScore + w2 * separationScore + w3 * diversityScore + w4 * coverageScore;
+}
+
 }  // namespace
 
 FrameToFrameLoopClosure::FrameToFrameLoopClosure()
@@ -97,6 +166,28 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     {
         MRPT_LOG_WARN("min_frames_between_lc=0 is invalid; clamping to 1.");
         params_.min_frames_between_lc = 1;
+    }
+
+    YAML_LOAD_OPT(params_, lc_distance_bins, size_t);
+    YAML_LOAD_OPT(params_, lc_weight_proximity, double);
+    YAML_LOAD_OPT(params_, lc_weight_frame_separation, double);
+    YAML_LOAD_OPT(params_, lc_weight_diversity, double);
+    YAML_LOAD_OPT(params_, lc_weight_coverage, double);
+    YAML_LOAD_OPT(params_, lc_verbose_candidate_selection, bool);
+
+    // Load enum with string-to-enum conversion
+    if (cfg.has("lc_candidate_strategy"))
+    {
+        params_.lc_candidate_strategy =
+            mrpt::typemeta::TEnumType<Parameters::CandidateSelectionStrategy>::name2value(
+                cfg["lc_candidate_strategy"].as<std::string>());
+    }
+
+    // Validate parameters
+    if (params_.lc_distance_bins == 0)
+    {
+        MRPT_LOG_WARN("lc_distance_bins=0 is invalid; clamping to 1.");
+        params_.lc_distance_bins = 1;
     }
 
     YAML_LOAD_OPT(params_, min_icp_goodness, double);
@@ -409,31 +500,51 @@ void FrameToFrameLoopClosure::add_gnss_factors()
     }
 }
 
-std::vector<FrameToFrameLoopClosure::LoopCandidate> FrameToFrameLoopClosure::find_loop_candidates(
-    const std::set<std::pair<frame_id_t, frame_id_t>>& alreadyChecked) const
+std::vector<FrameToFrameLoopClosure::LoopCandidate>  //
+    FrameToFrameLoopClosure::
+        find_loop_candidates(  // NOLINT(readability-function-cognitive-complexity)
+            const std::set<std::pair<frame_id_t, frame_id_t>>& alreadyChecked) const
 {
     mrpt::system::CTimeLoggerEntry tle(profiler_, "find_loop_candidates");
-
-    std::vector<LoopCandidate> candidates;
 
     ASSERT_(state_.sm);
     const auto& sm = *state_.sm;
 
-    const auto frameGroup = static_cast<double>(params_.min_frames_between_lc);
+    const auto   frameGroup = static_cast<double>(params_.min_frames_between_lc);
+    const double minDist    = params_.min_distance_between_frames;
+    const double maxDist    = params_.max_distance_for_lc_candidate;
 
-    // Compare each frame against potential loop closure frames
+    // For multi-objective strategy: track selected distances for diversity scoring
+    std::vector<double> selectedDistances;
+
+    // Determine if we need distance binning
+    const bool useStratification =
+        (params_.lc_candidate_strategy ==
+         Parameters::CandidateSelectionStrategy::DISTANCE_STRATIFIED);
+
+    // Setup distance bins if using stratified strategy
+    std::vector<std::vector<LoopCandidate>> binnedCandidates;
+    double                                  binWidth = 0.0;
+    if (useStratification)
+    {
+        binnedCandidates.resize(params_.lc_distance_bins);
+        binWidth = (maxDist - minDist) / static_cast<double>(params_.lc_distance_bins);
+    }
+
+    // Single vector for non-stratified approaches
+    std::vector<LoopCandidate> candidates;
+
+    // ========================================================================
+    // STEP 1: Generate and score all candidates
+    // ========================================================================
+
     for (size_t i = 0; i < sm.size(); i++)
     {
         const auto pose_i = state_.get_pose(i);
 
-        // Look for candidates that are:
-        // 1. Far enough in frame index
-        // 2. Close enough in space
-        // 3. Not already checked
         for (size_t j = i + params_.min_frames_between_lc; j < sm.size(); j++)
         {
-            // Decimate the frame IDs so we are effectively counting "blocks" of frames for what
-            // concerns already-checked:
+            // Check if already evaluated
             const auto frameGroup_i = mrpt::round(static_cast<double>(i) / frameGroup);
             const auto frameGroup_j = mrpt::round(static_cast<double>(j) / frameGroup);
 
@@ -446,32 +557,63 @@ std::vector<FrameToFrameLoopClosure::LoopCandidate> FrameToFrameLoopClosure::fin
                 continue;
             }
 
+            // Compute spatial distance
             const auto   pose_j   = state_.get_pose(j);
             const double distance = (pose_i.translation() - pose_j.translation()).norm();
 
-            // Check distance criteria
-            if (distance < params_.min_distance_between_frames ||
-                distance > params_.max_distance_for_lc_candidate)
+            // Apply distance constraints
+            if (distance < minDist || distance > maxDist)
             {
                 continue;
             }
 
-            // Check both frames have valid observations
-            const auto& [_, sf_i, __]     = sm.get(i);  // NOLINT(bugprone-reserved-identifier)
-            const auto& [___, sf_j, ____] = sm.get(j);  // NOLINT(bugprone-reserved-identifier)
+            // Verify valid observations
+            const auto& [_, sf_i, __]     = sm.get(i);
+            const auto& [___, sf_j, ____] = sm.get(j);
 
             if (!frame_has_mapping_observations(*sf_i) || !frame_has_mapping_observations(*sf_j))
             {
                 continue;
             }
 
+            // Create candidate
             LoopCandidate lc;
             lc.frame_i  = i;
             lc.frame_j  = j;
             lc.distance = distance;
-            lc.score    = 1.0 / (1.0 + distance);  // Closer = better score
 
-            candidates.push_back(lc);
+            // Compute score based on selected strategy
+            switch (params_.lc_candidate_strategy)
+            {
+                case Parameters::CandidateSelectionStrategy::PROXIMITY_ONLY:
+                    lc.score = score_proximity_only(distance);
+                    break;
+
+                case Parameters::CandidateSelectionStrategy::DISTANCE_STRATIFIED:
+                    lc.score = score_stratified(distance, minDist, maxDist, i, j, sm.size());
+                    break;
+
+                case Parameters::CandidateSelectionStrategy::MULTI_OBJECTIVE:
+                    lc.score = score_multi_objective(
+                        distance, minDist, maxDist, i, j, sm.size(), selectedDistances,
+                        params_.lc_weight_proximity, params_.lc_weight_frame_separation,
+                        params_.lc_weight_diversity, params_.lc_weight_coverage);
+                    break;
+            }
+
+            // Add to appropriate container
+            if (useStratification)
+            {
+                // Determine bin index
+                const size_t binIdx = std::min(
+                    static_cast<size_t>((distance - minDist) / binWidth),
+                    params_.lc_distance_bins - 1);
+                binnedCandidates[binIdx].push_back(lc);
+            }
+            else
+            {
+                candidates.push_back(lc);
+            }
 
             if (PRINT_LC_SCORES)
             {
@@ -482,18 +624,118 @@ std::vector<FrameToFrameLoopClosure::LoopCandidate> FrameToFrameLoopClosure::fin
         }
     }
 
-    // Sort by score (best first)
-    std::sort(
-        candidates.begin(), candidates.end(),
-        [](const LoopCandidate& a, const LoopCandidate& b) { return a.score > b.score; });
+    // ========================================================================
+    // STEP 2: Select final candidates based on strategy
+    // ========================================================================
 
-    // Limit to max candidates
-    if (candidates.size() > params_.max_lc_candidates)
+    std::vector<LoopCandidate> finalCandidates;
+
+    if (useStratification)
     {
-        candidates.resize(params_.max_lc_candidates);
+        // Strategy: Sample proportionally from each distance bin
+
+        const size_t baseCandidatesPerBin = params_.max_lc_candidates / params_.lc_distance_bins;
+        const size_t extraCandidates      = params_.max_lc_candidates % params_.lc_distance_bins;
+
+        for (size_t binIdx = 0; binIdx < params_.lc_distance_bins; binIdx++)
+        {
+            auto& bin = binnedCandidates[binIdx];
+
+            if (bin.empty())
+            {
+                continue;
+            }
+
+            // Sort within bin
+            std::sort(
+                bin.begin(), bin.end(),
+                [](const LoopCandidate& a, const LoopCandidate& b) { return a.score > b.score; });
+
+            // Determine number to select from this bin
+            size_t toTake = baseCandidatesPerBin;
+            if (binIdx < extraCandidates)
+            {
+                toTake++;
+            }
+            toTake = std::min(toTake, bin.size());
+
+            // Add top candidates from bin
+            for (size_t k = 0; k < toTake; k++)
+            {
+                finalCandidates.push_back(bin[k]);
+            }
+
+            if (params_.lc_verbose_candidate_selection)
+            {
+                const double binMin = minDist + binIdx * binWidth;
+                const double binMax = minDist + (binIdx + 1) * binWidth;
+                MRPT_LOG_INFO_STREAM(
+                    "Bin [" << binMin << ", " << binMax << "] m: " << bin.size()
+                            << " candidates, selected " << toTake);
+            }
+        }
+
+        // Final global sort
+        std::sort(
+            finalCandidates.begin(), finalCandidates.end(),
+            [](const LoopCandidate& a, const LoopCandidate& b) { return a.score > b.score; });
+    }
+    else
+    {
+        // Strategy: Simple top-K selection by score
+
+        std::sort(
+            candidates.begin(), candidates.end(),
+            [](const LoopCandidate& a, const LoopCandidate& b) { return a.score > b.score; });
+
+        finalCandidates = std::move(candidates);
     }
 
-    return candidates;
+    // Limit to max candidates
+    if (finalCandidates.size() > params_.max_lc_candidates)
+    {
+        finalCandidates.resize(params_.max_lc_candidates);
+    }
+
+    // ========================================================================
+    // STEP 3: Log statistics (if verbose or always at INFO level)
+    // ========================================================================
+
+    if (!finalCandidates.empty() && (params_.lc_verbose_candidate_selection || PRINT_LC_SCORES))
+    {
+        std::vector<double> distances;
+        distances.reserve(finalCandidates.size());
+        for (const auto& lc : finalCandidates)
+        {
+            distances.push_back(lc.distance);
+        }
+
+        const double minSelectedDist = *std::min_element(distances.begin(), distances.end());
+        const double maxSelectedDist = *std::max_element(distances.begin(), distances.end());
+        const double sumDist         = std::accumulate(distances.begin(), distances.end(), 0.0);
+        const double meanDist        = sumDist / static_cast<double>(distances.size());
+
+        // Compute standard deviation
+        double variance = 0.0;
+        for (const auto d : distances)
+        {
+            const double diff = d - meanDist;
+            variance += diff * diff;
+        }
+        const double stdDist = std::sqrt(variance / static_cast<double>(distances.size()));
+
+        // Compute coefficient of variation (normalized measure of variance)
+        const double cv = (meanDist > 0.0) ? (stdDist / meanDist) : 0.0;
+
+        MRPT_LOG_INFO_STREAM(
+            "Selected " << finalCandidates.size() << " LC candidates. "
+                        << "Distance: [" << minSelectedDist << ", " << maxSelectedDist << "] m, "
+                        << "mean=" << meanDist << " m, "
+                        << "std=" << stdDist << " m, "
+                        << "CV=" << cv);
+    }
+
+    return finalCandidates;
 }
 
 bool FrameToFrameLoopClosure::process_loop_candidate(const LoopCandidate& lc)

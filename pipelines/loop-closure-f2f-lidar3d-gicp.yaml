@@ -22,6 +22,18 @@ params:
   min_frames_between_lc: "${MIN_FRAMES_BETWEEN_LC|20}" # Minimum frame index separation
   max_lc_optimization_rounds: "${MAX_LC_OPTIMIZATION_ROUNDS|5}" # Maximum LC+optimization rounds to run
 
+  lc_candidate_strategy: "${LC_SELECTION_METHOD|DISTANCE_STRATIFIED}"  # or PROXIMITY_ONLY, MULTI_OBJECTIVE
+  lc_verbose_candidate_selection: "${LC_SELECTION_VERBOSE|0}"
+
+  # For DISTANCE_STRATIFIED:
+  lc_distance_bins: 5   # Number of bins to divide the valid distance range
+
+  # For MULTI_OBJECTIVE:
+  lc_weight_proximity: 0.40        # Favor spatially close candidates
+  lc_weight_frame_separation: 0.25 # Favor temporally distant candidates
+  lc_weight_diversity: 0.20        # Penalize similar distances
+  lc_weight_coverage: 0.15         # Favor distributed trajectory coverage
+
   # ===== ICP Parameters =====
   min_icp_goodness: "${MIN_ICP_QUALITY|0.65}" # [0-1] Minimum ICP quality to accept
   icp_edge_robust_param: "${ICP_ROBUST_PARAM|5.0}" # Robust kernel parameter
