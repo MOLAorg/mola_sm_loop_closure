@@ -500,10 +500,10 @@ void FrameToFrameLoopClosure::add_gnss_factors()
     }
 }
 
-std::vector<FrameToFrameLoopClosure::LoopCandidate>  //
-    FrameToFrameLoopClosure::
-        find_loop_candidates(  // NOLINT(readability-function-cognitive-complexity)
-            const std::set<std::pair<frame_id_t, frame_id_t>>& alreadyChecked) const
+auto FrameToFrameLoopClosure::
+    find_loop_candidates(  // NOLINT(readability-function-cognitive-complexity)
+        const std::set<std::pair<frame_id_t, frame_id_t>>& alreadyChecked) const
+    -> std::vector<FrameToFrameLoopClosure::LoopCandidate>
 {
     mrpt::system::CTimeLoggerEntry tle(profiler_, "find_loop_candidates");
 

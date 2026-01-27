@@ -141,6 +141,16 @@ void run_sm_to_mm(Cli& cli)
         logLevel = vl::name2value(cli.arg_verbosity_level.getValue());
     }
 
+    // Set "params.debug_files_prefix" so generated .tum files, etc. have the expected prefix:
+    if (yamlData.has("params"))
+    {
+        auto debugFilesPrefix = mrpt::system::pathJoin(
+            {mrpt::system::extractFileDirectory(filSM),
+             mrpt::system::extractFileName(filSM) + "_lc_"});
+
+        yamlData["params"]["debug_files_prefix"] = debugFilesPrefix;
+    }
+
     lc.setMinLoggingLevel(logLevel);
 
     lc.initialize(yamlData);
