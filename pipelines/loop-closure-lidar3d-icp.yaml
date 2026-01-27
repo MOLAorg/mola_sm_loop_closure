@@ -36,6 +36,7 @@ params:
   largest_delta_for_reconsider_all: 10.0 # [m]
 
   use_gnss: "${USE_GNSS|true}"
+  gnss_edges_uncertainty_multiplier: "${GNSS_EDGES_UNCERTAINTY_MULTIPLIER|true}"
 
   assume_planar_world: false
 
@@ -49,8 +50,6 @@ params:
 
   input_odometry_edge_additional_noise_xyz: 0.001 # [m]
   input_odometry_edge_additional_noise_ang_deg: 0.001 # [deg]
-
-  input_edges_uncertainty_multiplier: 1.0
 
   min_volume_intersection_ratio_for_lc_candidate: 0.20
 

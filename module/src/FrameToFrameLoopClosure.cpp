@@ -155,6 +155,7 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, gnss_minimum_uncertainty_xyz, double);
     YAML_LOAD_OPT(params_, gnss_add_horizontality, bool);
     YAML_LOAD_OPT(params_, gnss_horizontality_sigma_z, double);
+    YAML_LOAD_OPT(params_, gnss_edges_uncertainty_multiplier, double);
 
     YAML_LOAD_OPT(params_, min_distance_between_frames, double);
     YAML_LOAD_OPT(params_, max_distance_for_lc_candidate, double);
@@ -199,13 +200,13 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
 
     YAML_LOAD_OPT(params_, input_odometry_noise_xyz, double);
     YAML_LOAD_OPT(params_, input_odometry_noise_ang, double);
-    YAML_LOAD_OPT(params_, input_edges_uncertainty_multiplier, double);
 
     YAML_LOAD_OPT(params_, largest_delta_for_reconsider, double);
     YAML_LOAD_OPT(params_, max_sensor_range, double);
 
     YAML_LOAD_OPT(params_, profiler_enabled, bool);
     YAML_LOAD_OPT(params_, save_trajectory_files, bool);
+    YAML_LOAD_OPT(params_, save_trajectory_files_with_cov, bool);
     YAML_LOAD_OPT(params_, debug_files_prefix, std::string);
 
     profiler_.enable(params_.profiler_enabled);
@@ -260,26 +261,29 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     // Build initial graph with odometry edges
     build_initial_graph();
 
+    if (params_.save_trajectory_files)
+    {
+        optimize_graph();
+
+        save_trajectory_as_tum(
+            params_.debug_files_prefix + "initial.tum"s, params_.save_trajectory_files_with_cov);
+    }
+
     // Add GNSS factors if available
     if (params_.use_gnss)
     {
         add_gnss_factors();
-    }
 
-    if (params_.save_trajectory_files)
-    {
-        save_trajectory_as_tum(params_.debug_files_prefix + "initial.tum"s);
-    }
+        // Initial optimization with GNSS
 
-    // Initial optimization with GNSS
-    if (params_.use_gnss)
-    {
         MRPT_LOG_INFO("Running initial GNSS optimization...");
         optimize_graph();
 
         if (params_.save_trajectory_files)
         {
-            save_trajectory_as_tum(params_.debug_files_prefix + "after_gnss.tum"s);
+            save_trajectory_as_tum(
+                params_.debug_files_prefix + "after_gnss.tum"s,
+                params_.save_trajectory_files_with_cov);
         }
     }
 
@@ -388,8 +392,11 @@ void FrameToFrameLoopClosure::build_initial_graph()
     }
 
     // Add prior on first frame: very weak, so GNSS can override it as needed.
+    // if not using GNSS, let X(0) be anchored.
+    const double priorSigma = params_.use_gnss ? 1e+2 : 1e-2;
+
     const auto pose0      = frame_pose_in_simplemap(0);
-    auto       priorNoise = gtsam::noiseModel::Isotropic::Sigma(6, 1e+3);
+    auto       priorNoise = gtsam::noiseModel::Isotropic::Sigma(6, priorSigma);
 
     state_.graphFG.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
         X(0), mrpt::gtsam_wrappers::toPose3(pose0), priorNoise);
@@ -408,8 +415,6 @@ void FrameToFrameLoopClosure::build_initial_graph()
             mrpt::DEG2RAD(params_.input_odometry_noise_ang),
             mrpt::DEG2RAD(params_.input_odometry_noise_ang), params_.input_odometry_noise_xyz,
             params_.input_odometry_noise_xyz, params_.input_odometry_noise_xyz;
-
-        sigmas *= params_.input_edges_uncertainty_multiplier;
 
         auto edgeNoise = gtsam::noiseModel::Diagonal::Sigmas(sigmas);
 
@@ -483,10 +488,11 @@ void FrameToFrameLoopClosure::add_gnss_factors()
             continue;
         }
 
-        auto noiseOrg =
-            gtsam::noiseModel::Diagonal::Sigmas(gtsam::Vector3(gf.sigma_E, gf.sigma_N, gf.sigma_U)
-                                                    .array()
-                                                    .max(params_.gnss_minimum_uncertainty_xyz));
+        auto noiseOrg = gtsam::noiseModel::Diagonal::Sigmas(
+            gtsam::Vector3(gf.sigma_E, gf.sigma_N, gf.sigma_U)
+                .array()
+                .max(params_.gnss_minimum_uncertainty_xyz) *
+            params_.gnss_edges_uncertainty_multiplier);
 
         auto robustNoise = gtsam::noiseModel::Robust::Create(
             gtsam::noiseModel::mEstimator::Huber::Create(1.5), noiseOrg);
@@ -929,6 +935,10 @@ double FrameToFrameLoopClosure::optimize_graph()
     // Save new optimal values
     state_.graphValues = optimalValues;
 
+    // Compute marginals:
+    state_.graphMarginals.emplace(state_.graphFG, state_.graphValues);
+
+    // Logging:
     auto bckCol =
         mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO);
     mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO) =
@@ -956,6 +966,14 @@ mrpt::poses::CPose3D FrameToFrameLoopClosure::State::get_pose(frame_id_t id) con
     using gtsam::symbol_shorthand::X;
     return mrpt::poses::CPose3D(
         mrpt::gtsam_wrappers::toTPose3D(graphValues.at<gtsam::Pose3>(X(id))));
+}
+
+mrpt::math::CMatrixDouble66 FrameToFrameLoopClosure::State::get_pose_cov(frame_id_t id) const
+{
+    using gtsam::symbol_shorthand::X;
+    ASSERT_(graphMarginals.has_value());
+
+    return mrpt::gtsam_wrappers::to_mrpt_se3_cov6(graphMarginals->marginalCovariance(X(id)));
 }
 
 void FrameToFrameLoopClosure::update_dynamic_variables(frame_id_t frameId, size_t threadIdx)
@@ -999,11 +1017,19 @@ void FrameToFrameLoopClosure::update_dynamic_variables(frame_id_t frameId, size_
     ps.realize();
 }
 
-void FrameToFrameLoopClosure::save_trajectory_as_tum(const std::string& filename) const
+void FrameToFrameLoopClosure::save_trajectory_as_tum(
+    const std::string& filename, bool saveCovariancesToo) const
 {
     ASSERT_(state_.sm);
 
     mrpt::poses::CPose3DInterpolator path;
+    mrpt::math::CMatrixDouble        pathSigmas;
+
+    if (saveCovariancesToo)
+    {
+        ASSERT_(state_.graphMarginals.has_value());
+        pathSigmas.setZero(state_.sm->size(), 6);
+    }
 
     for (size_t id = 0; id < state_.sm->size(); id++)
     {
@@ -1018,8 +1044,28 @@ void FrameToFrameLoopClosure::save_trajectory_as_tum(const std::string& filename
         const auto t = sf->getObservationByIndex(0)->timestamp;
 
         path.insert(t, newPose);
+
+        if (saveCovariancesToo)
+        {
+            const auto& cov = state_.get_pose_cov(id);
+
+            for (int i = 0; i < 6; i++)
+            {
+                pathSigmas(id, i) = std::sqrt(cov(i, i));
+            }
+        }
     }
 
     path.saveToTextFile_TUM(filename);
+
+    if (saveCovariancesToo)
+    {
+        const std::string header =
+            "# sigma_x_m sigma_y_m sigma_z_m sigma_yaw_rad sigma_pitch_rad sigma_roll_rad";
+        pathSigmas.saveToTextFile(
+            mrpt::system::fileNameChangeExtension(filename, "cov"), mrpt::math::MATRIX_FORMAT_ENG,
+            false, header);
+    }
+
     MRPT_LOG_INFO_STREAM("Saved trajectory to: " << filename);
 }

@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <gtsam/nonlinear/Marginals.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/Values.h>
 #include <mola_sm_loop_closure/LoopClosureInterface.h>
@@ -63,10 +64,11 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         mp2p_icp::Parameters icp_parameters;
 
         // GNSS optimization parameters
-        bool   use_gnss                     = true;
-        double gnss_minimum_uncertainty_xyz = 0.10;  // [m]
-        bool   gnss_add_horizontality       = false;
-        double gnss_horizontality_sigma_z   = 0.01;  // [m]
+        bool   use_gnss                          = true;
+        double gnss_minimum_uncertainty_xyz      = 0.10;  // [m]
+        bool   gnss_add_horizontality            = false;
+        double gnss_horizontality_sigma_z        = 0.01;  // [m]
+        double gnss_edges_uncertainty_multiplier = 1.0;
 
         // Loop closure candidate selection
         double min_distance_between_frames   = 20.0;  // [m] minimum separation for LC
@@ -134,9 +136,8 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         std::string threshold_sigma_final         = "0.05";
 
         // Odometry edge parameters
-        double input_odometry_noise_xyz           = 0.01;  // [m]
-        double input_odometry_noise_ang           = 0.1;  // [deg]
-        double input_edges_uncertainty_multiplier = 1.0;
+        double input_odometry_noise_xyz = 0.01;  // [m]
+        double input_odometry_noise_ang = 0.1;  // [deg]
 
         // Optimization parameters
         double largest_delta_for_reconsider = 15.0;  // [m] re-check LCs if change > this
@@ -145,9 +146,10 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         double max_sensor_range = 100.0;  // [m]
 
         // Output and profiling
-        bool        profiler_enabled      = true;
-        bool        save_trajectory_files = true;
-        std::string debug_files_prefix    = "f2f_lc_";
+        bool        profiler_enabled               = true;
+        bool        save_trajectory_files          = true;
+        bool        save_trajectory_files_with_cov = false;
+        std::string debug_files_prefix             = "f2f_lc_";
     };
 
     Parameters params_;
@@ -184,10 +186,14 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         std::optional<mrpt::topography::TGeodeticCoords> globalGeoRef;
 
         // GTSAM graph and values
-        gtsam::Values               graphValues;
-        gtsam::NonlinearFactorGraph graphFG;
+        gtsam::Values                   graphValues;
+        gtsam::NonlinearFactorGraph     graphFG;
+        std::optional<gtsam::Marginals> graphMarginals;
 
         [[nodiscard]] mrpt::poses::CPose3D get_pose(frame_id_t id) const;
+
+        /// Cov in MRPT order: xyz yaw pitch roll
+        [[nodiscard]] mrpt::math::CMatrixDouble66 get_pose_cov(frame_id_t id) const;
     };
 
     State state_;
@@ -226,7 +232,7 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
     double optimize_graph();
 
     /** Save trajectory to TUM format file */
-    void save_trajectory_as_tum(const std::string& filename) const;
+    void save_trajectory_as_tum(const std::string& filename, bool saveCovariancesToo = false) const;
 
     /** Update dynamic variables for ICP pipeline */
     void update_dynamic_variables(frame_id_t frameId, size_t threadIdx);

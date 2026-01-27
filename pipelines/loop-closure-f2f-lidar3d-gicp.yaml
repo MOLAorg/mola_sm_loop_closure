@@ -14,6 +14,7 @@ params:
   gnss_minimum_uncertainty_xyz: 0.10 # [m] Minimum GPS uncertainty
   gnss_add_horizontality: false # Add constraints for flat terrain
   gnss_horizontality_sigma_z: 0.10 # [m] Z-axis constraint if enabled
+  gnss_edges_uncertainty_multiplier: "${GNSS_EDGES_UNCERTAINTY_MULTIPLIER|1.0}"
 
   # ===== Loop Closure Candidate Selection =====
   min_distance_between_frames: "${MIN_LC_DISTANCE|2.0}" # [m] Min spatial separation
@@ -22,17 +23,17 @@ params:
   min_frames_between_lc: "${MIN_FRAMES_BETWEEN_LC|20}" # Minimum frame index separation
   max_lc_optimization_rounds: "${MAX_LC_OPTIMIZATION_ROUNDS|5}" # Maximum LC+optimization rounds to run
 
-  lc_candidate_strategy: "${LC_SELECTION_METHOD|DISTANCE_STRATIFIED}"  # or PROXIMITY_ONLY, MULTI_OBJECTIVE
+  lc_candidate_strategy: "${LC_SELECTION_METHOD|DISTANCE_STRATIFIED}" # or PROXIMITY_ONLY, MULTI_OBJECTIVE
   lc_verbose_candidate_selection: "${LC_SELECTION_VERBOSE|0}"
 
   # For DISTANCE_STRATIFIED:
-  lc_distance_bins: 5   # Number of bins to divide the valid distance range
+  lc_distance_bins: 5 # Number of bins to divide the valid distance range
 
   # For MULTI_OBJECTIVE:
-  lc_weight_proximity: 0.40        # Favor spatially close candidates
+  lc_weight_proximity: 0.40 # Favor spatially close candidates
   lc_weight_frame_separation: 0.25 # Favor temporally distant candidates
-  lc_weight_diversity: 0.20        # Penalize similar distances
-  lc_weight_coverage: 0.15         # Favor distributed trajectory coverage
+  lc_weight_diversity: 0.20 # Penalize similar distances
+  lc_weight_coverage: 0.15 # Favor distributed trajectory coverage
 
   # ===== ICP Parameters =====
   min_icp_goodness: "${MIN_ICP_QUALITY|0.65}" # [0-1] Minimum ICP quality to accept
@@ -43,9 +44,8 @@ params:
   threshold_sigma_final: "${LC_ICP_FINAL_SIGMA|0.05}"
 
   # ===== Odometry Edge Parameters =====
-  input_odometry_noise_xyz: 0.01 # [m] Odometry translational noise
-  input_odometry_noise_ang: 0.1 # [deg] Odometry angular noise
-  input_edges_uncertainty_multiplier: 1.0 # Multiplier for all odometry uncertainties
+  input_odometry_noise_xyz: 0.005 # [m] Odometry translational noise
+  input_odometry_noise_ang: 0.01 # [deg] Odometry angular noise
 
   # ===== Optimization Control =====
   largest_delta_for_reconsider: "${RECONSIDER_THRESHOLD|5.0}" # [m] Re-check all if change > this
@@ -53,6 +53,7 @@ params:
   # ===== Output and Profiling =====
   profiler_enabled: true
   save_trajectory_files: true
+  save_trajectory_files_with_cov: true
   debug_files_prefix: "f2f_lc_"
 
 # ===== ICP Settings =====
