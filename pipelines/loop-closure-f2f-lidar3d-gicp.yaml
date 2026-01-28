@@ -191,8 +191,8 @@ observations_filter:
     params:
       input_pointcloud_layer: "deskewed"
       output_layer_between: "points_to_register_points"
-      range_min: max(1.0, 0.03*ESTIMATED_SENSOR_MAX_RANGE)
-      range_max: 1.2*ESTIMATED_SENSOR_MAX_RANGE
+      range_min: ${MOLA_LC_SENSOR_FILTER_MIN_RANGE|max(1.0, 0.03*ESTIMATED_SENSOR_MAX_RANGE)}
+      range_max: ${MOLA_LC_SENSOR_FILTER_MAX_RANGE|1.2*ESTIMATED_SENSOR_MAX_RANGE}
 
   - class_name: mp2p_icp_filters::FilterMerge
     params:

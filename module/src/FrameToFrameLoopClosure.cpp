@@ -28,6 +28,7 @@
 #include <mrpt/obs/CObservationPointCloud.h>
 #include <mrpt/obs/CObservationVelodyneScan.h>
 #include <mrpt/poses/CPose3DInterpolator.h>
+#include <mrpt/poses/Lie/SO.h>
 #include <mrpt/poses/gtsam_wrappers.h>
 #include <mrpt/system/filesystem.h>
 
@@ -320,10 +321,6 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
             alreadyChecked.insert(IDs);
             checkedCount++;
-
-            MRPT_LOG_INFO_STREAM(
-                "Checking LC candidate: " << lc.frame_i << " <-> " << lc.frame_j
-                                          << " distance=" << lc.distance << " score=" << lc.score);
 
             const bool accepted = process_loop_candidate(lc);
             if (accepted)
@@ -776,10 +773,15 @@ bool FrameToFrameLoopClosure::process_loop_candidate(const LoopCandidate& lc)
     mp2p_icp::Results icp_result;
     pts.icp->align(*pc_j, *pc_i, initGuess, params_.icp_parameters, icp_result);
 
+    const auto poseDelta = (icp_result.optimal_tf.getMeanVal().asTPose() - initGuess);
+
     MRPT_LOG_INFO_STREAM(
-        "ICP " << lc.frame_i << " <-> " << lc.frame_j << ": quality="
-               << (100.0 * icp_result.quality) << "% iters=" << icp_result.nIterations << " delta="
-               << (icp_result.optimal_tf.getMeanVal().asTPose() - initGuess).asString());
+        "ICP " << lc.frame_i << " <-> " << lc.frame_j << " distance=" << lc.distance
+               << " score=" << lc.score << " icp_quality=" << (100.0 * icp_result.quality)
+               << "% iters=" << icp_result.nIterations << " Δp=" << poseDelta.translation().norm()
+               << " [m] ΔR="
+               << mrpt::RAD2DEG(mrpt::poses::Lie::SO<3>::log(poseDelta.getRotationMatrix()).norm())
+               << " [deg]");
 
     if (icp_result.quality < params_.min_icp_goodness)
     {
