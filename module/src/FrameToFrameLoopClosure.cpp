@@ -137,6 +137,31 @@ double score_multi_objective(
     return w1 * proximityScore + w2 * separationScore + w3 * diversityScore + w4 * coverageScore;
 }
 
+std::string first_n_lines(const std::string& input, std::size_t n)
+{
+    if (n == 0)
+    {
+        return {};
+    }
+
+    std::size_t pos   = 0;
+    std::size_t lines = 0;
+
+    while (lines < n)
+    {
+        pos = input.find('\n', pos);
+        if (pos == std::string::npos)
+        {
+            // Fewer than n lines: return entire string
+            return input;
+        }
+        ++pos;  // move past '\n'
+        ++lines;
+    }
+
+    return input.substr(0, pos);
+}
+
 }  // namespace
 
 FrameToFrameLoopClosure::FrameToFrameLoopClosure()
@@ -571,8 +596,8 @@ auto FrameToFrameLoopClosure::
             }
 
             // Verify valid observations
-            const auto& [_, sf_i, __]     = sm.get(i);
-            const auto& [___, sf_j, ____] = sm.get(j);
+            const auto& [_, sf_i, __]     = sm.get(i);  // NOLINT(bugprone-reserved-identifier)
+            const auto& [___, sf_j, ____] = sm.get(j);  // NOLINT(bugprone-reserved-identifier)
 
             if (!frame_has_mapping_observations(*sf_i) || !frame_has_mapping_observations(*sf_j))
             {
@@ -670,8 +695,8 @@ auto FrameToFrameLoopClosure::
 
             if (params_.lc_verbose_candidate_selection)
             {
-                const double binMin = minDist + binIdx * binWidth;
-                const double binMax = minDist + (binIdx + 1) * binWidth;
+                const double binMin = minDist + static_cast<double>(binIdx) * binWidth;
+                const double binMax = minDist + static_cast<double>(binIdx + 1) * binWidth;
                 MRPT_LOG_INFO_STREAM(
                     "Bin [" << binMin << ", " << binMax << "] m: " << bin.size()
                             << " candidates, selected " << toTake);
@@ -873,7 +898,7 @@ mp2p_icp::metric_map_t::Ptr FrameToFrameLoopClosure::generate_frame_pointcloud(
 
     if (!frame_has_mapping_observations(*sf))
     {
-        return nullptr;
+        return {};
     }
 
     auto& pts         = state_.perThreadState_.at(threadIdx);
@@ -889,10 +914,29 @@ mp2p_icp::metric_map_t::Ptr FrameToFrameLoopClosure::generate_frame_pointcloud(
     update_dynamic_variables(frameId, threadIdx);
 
     // Next, do the actual sensor data processing:
-    // Generate point cloud from observations
-    for (const auto& obs : *sf)
+
+    try
     {
-        mp2p_icp_filters::apply_generators(pts.obs_generators, *obs, *observation);
+        // Generate point cloud from observations
+        for (const auto& obs : *sf)
+        {
+            mp2p_icp_filters::apply_generators(pts.obs_generators, *obs, *observation);
+        }
+    }
+    catch (const std::exception& e)
+    {
+        // If the exception msg contains "Assert file existence failed", it's due to missing
+        // external files. Emit a warning and return an empty cloud for this frame,
+        // but continue with the rest without quitting.
+        const std::string errMsg = e.what();
+        if (errMsg.find("Assert file existence failed") != std::string::npos)
+        {
+            MRPT_LOG_WARN_STREAM(
+                "Frame " << frameId << ": Skipping observation due to missing external files: "
+                         << first_n_lines(errMsg, 3));
+            return {};
+        }
+        throw;  // Rethrow other exceptions
     }
 
     // Apply filters
