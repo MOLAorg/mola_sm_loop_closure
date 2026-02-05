@@ -83,6 +83,34 @@ mrpt::math::TBoundingBox SimpleMapBoundingBox(const mrpt::maps::CSimpleMap& sm)
     return bbox;
 }
 
+// TODO: Remove these helpers once all ROS distros have mola_georefrencing >= 2.1.0
+//
+// Helper to check if something is an optional (false for plain types)
+template <typename T>
+constexpr bool is_nullopt(const T&)  // NOLINT
+{
+    return false;
+}
+
+template <typename T>
+constexpr bool is_nullopt(const std::optional<T>& o)
+{
+    return !o.has_value();
+}
+
+// Unified access: works for both Foo and std::optional<Foo>
+template <typename T>
+constexpr auto& deref(T& x)
+{
+    return x;
+}
+
+template <typename T>
+constexpr auto& deref(std::optional<T>& x)
+{
+    return *x;
+}
+
 }  // namespace
 
 SimplemapLoopClosure::SimplemapLoopClosure()
@@ -792,17 +820,25 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
         auto geoResult = simplemap_georeference(subSM, geoParams);
 
         // decent solution?
-        const auto se3Stds =
-            geoResult.geo_ref.T_enu_to_map.cov.asEigen().diagonal().array().sqrt().eval();
+        Eigen::Vector<double, 6> se3Stds = Eigen::Vector<double, 6>::Constant(100.0);
+
+        if (!is_nullopt(geoResult.geo_ref))
+        {
+            se3Stds = deref(geoResult.geo_ref)
+                          .T_enu_to_map.cov.asEigen()
+                          .diagonal()
+                          .array()
+                          .sqrt()
+                          .eval();
+        }
         const auto angleStds = se3Stds.tail<3>();
 
         if (geoResult.final_rmse < 1.0)
         {
             // save in submap:
 
-#if 1
             // reset yaw/pitch/roll if they don't seem reliable:
-            auto&                 p      = geoResult.geo_ref.T_enu_to_map;
+            auto&                 p      = deref(geoResult.geo_ref).T_enu_to_map;
             std::array<double, 3> angles = {p.mean.yaw(), p.mean.pitch(), p.mean.roll()};
             for (int angleIdx = 0; angleIdx < 3; angleIdx++)
             {
@@ -822,14 +858,7 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
                 }
             }
             p.mean.setYawPitchRoll(angles[0], angles[1], angles[2]);
-#else
-            if (angleStds.maxCoeff() > 0.5_deg)  // important threshold!
-            {
-                // Null pitch & roll since they don't seem reliable:
-                auto& p = geoResult.geo_ref.T_enu_to_map.mean;
-                p.setYawPitchRoll(p.yaw(), .0, .0);
-            }
-#endif
+
             submap.geo_ref = geoResult.geo_ref;
 
             // Use one single global reference frame for all submaps:
@@ -851,7 +880,7 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
 
             MRPT_LOG_INFO_STREAM(
                 "[build_submap_from_kfs_into] ACCEPTING submap #"
-                << submap.id << " GNSS T_enu_to_map=" << geoResult.geo_ref.T_enu_to_map.mean
+                << submap.id << " GNSS T_enu_to_map=" << deref(geoResult.geo_ref).T_enu_to_map.mean
                 << "\n globalPose=" << T_0_i.mean  //
                 << "\n was       =" << submap.global_pose << "\n se3Stds   =" << se3Stds.transpose()
                 << "\n final_rmse=" << geoResult.final_rmse);
@@ -863,7 +892,8 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
             MRPT_LOG_INFO_STREAM(
                 "[build_submap_from_kfs_into] DISCARDING GNSS solution for "
                 "submap #"
-                << submap.id << "\n GNSS T_enu_to_map=" << geoResult.geo_ref.T_enu_to_map.mean
+                << submap.id
+                << "\n GNSS T_enu_to_map=" << deref(geoResult.geo_ref).T_enu_to_map.mean
                 << "\n se3Stds=" << se3Stds.transpose()
                 << "\n final_rmse=" << geoResult.final_rmse);
         }
@@ -1366,8 +1396,10 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         mrpt::system::createDirectory(sDir);
         std::cout << "[LC] Saving loop closure files to: " << sDir << "\n";
 
-        pcs_global.save_to_file(mrpt::system::pathJoin({sDir, "global.mm"}));
-        pcs_local.save_to_file(mrpt::system::pathJoin({sDir, "local.mm"}));
+        const bool ok1 = pcs_global.save_to_file(mrpt::system::pathJoin({sDir, "global.mm"}));
+        const bool ok2 = pcs_local.save_to_file(mrpt::system::pathJoin({sDir, "local.mm"}));
+        ASSERT_(ok1);
+        ASSERT_(ok2);
 
         std::ofstream f(mrpt::system::pathJoin({sDir, "init_pose_local_wrt_global.txt"}));
         f << lc.relative_pose_largest_wrt_smallest;
