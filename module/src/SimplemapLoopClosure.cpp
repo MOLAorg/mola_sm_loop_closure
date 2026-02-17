@@ -1836,6 +1836,7 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(cons
 
     auto& pts = state_.perThreadState_.at(threadIdx);
 
+    MRPT_TODO("Use mp2p_icp::update_velocity_buffer_from_obs() once mp2p_icp 2.5.0 is available");
     const auto lambdaProcessLocalVelocityBuffer = [&](const mrpt::obs::CObservation::Ptr& obs)
     {
         auto obsComment = std::dynamic_pointer_cast<mrpt::obs::CObservationComment>(obs);

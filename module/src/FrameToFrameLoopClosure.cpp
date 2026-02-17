@@ -839,7 +839,7 @@ bool FrameToFrameLoopClosure::process_loop_candidate(const LoopCandidate& lc)
     return true;
 }
 
-// TODO: Move to mp2p_icp module
+MRPT_TODO("Use mp2p_icp::update_velocity_buffer_from_obs() once mp2p_icp 2.5.0 is available");
 namespace
 {
 void processLocalVelocityBuffer(
