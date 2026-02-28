@@ -14,6 +14,7 @@
 
 // MRPT:
 #include <mola_georeferencing/simplemap_georeference.h>
+#include <mola_gtsam_factors/gtsam_detect_version.h>
 #include <mrpt/core/get_env.h>
 #include <mrpt/obs/CObservation2DRangeScan.h>
 #include <mrpt/obs/CObservation3DRangeScan.h>
@@ -390,7 +391,11 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             // anchor for first KF: only if we don't have GNSS
             if (!x0prior)
             {
+#if GTSAM_USES_BOOST
                 x0prior = boost::make_shared<gtsam::PriorFactor<gtsam::Pose3>>(X(id), p);
+#else
+                x0prior = std::make_shared<gtsam::PriorFactor<gtsam::Pose3>>(X(id), p);
+#endif
             }
         }
     }
@@ -446,8 +451,13 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
         auto edgeNoise = gtsam::noiseModel::Diagonal::Sigmas(sigmas);
 
+#if GTSAM_USES_BOOST
         auto f = boost::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             X(i - 1), X(i), deltaPose, edgeNoise);
+#else
+        auto f = std::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+            X(i - 1), X(i), deltaPose, edgeNoise);
+#endif
 
         state_.kfGraphFG += f;
         state_.kfGraphFGRobust += f;

@@ -18,6 +18,7 @@
 #include <gtsam/slam/BetweenFactor.h>
 #include <mola_georeferencing/simplemap_georeference.h>
 #include <mola_gtsam_factors/FactorGnssEnu.h>
+#include <mola_gtsam_factors/gtsam_detect_version.h>
 #include <mola_sm_loop_closure/FrameToFrameLoopClosure.h>
 #include <mola_yaml/yaml_helpers.h>
 #include <mrpt/core/get_env.h>
@@ -467,9 +468,13 @@ void FrameToFrameLoopClosure::build_initial_graph()
 
         auto edgeNoise = gtsam::noiseModel::Diagonal::Sigmas(sigmas);
 
+#if GTSAM_USES_BOOST
         auto factor = boost::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             X(i - 1), X(i), deltaPose, edgeNoise);
-
+#else
+        auto factor = std::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+            X(i - 1), X(i), deltaPose, edgeNoise);
+#endif
         state_.graphFG += factor;
     }
 
