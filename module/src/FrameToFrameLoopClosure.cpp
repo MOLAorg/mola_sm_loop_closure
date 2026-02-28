@@ -27,6 +27,9 @@
 #include <mrpt/obs/CObservationGPS.h>
 #include <mrpt/obs/CObservationPointCloud.h>
 #include <mrpt/obs/CObservationVelodyneScan.h>
+#include <mrpt/opengl/CPointCloud.h>
+#include <mrpt/opengl/CSetOfLines.h>
+#include <mrpt/opengl/Scene.h>
 #include <mrpt/poses/CPose3DInterpolator.h>
 #include <mrpt/poses/Lie/SO.h>
 #include <mrpt/poses/gtsam_wrappers.h>
@@ -235,6 +238,19 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, save_trajectory_files_with_cov, bool);
     YAML_LOAD_OPT(params_, debug_files_prefix, std::string);
 
+    YAML_LOAD_OPT(params_, save_3d_scene_files, bool);
+    YAML_LOAD_OPT(params_, scene_path_line_width, float);
+    YAML_LOAD_OPT(params_, scene_lc_line_width, float);
+    YAML_LOAD_OPT(params_, scene_path_color_r, float);
+    YAML_LOAD_OPT(params_, scene_path_color_g, float);
+    YAML_LOAD_OPT(params_, scene_path_color_b, float);
+    YAML_LOAD_OPT(params_, scene_path_color_a, float);
+    YAML_LOAD_OPT(params_, scene_lc_color_r, float);
+    YAML_LOAD_OPT(params_, scene_lc_color_g, float);
+    YAML_LOAD_OPT(params_, scene_lc_color_b, float);
+    YAML_LOAD_OPT(params_, scene_lc_color_a, float);
+    YAML_LOAD_OPT(params_, scene_keyframe_point_size, float);
+
     profiler_.enable(params_.profiler_enabled);
 
     // Initialize ICP pipelines for each thread
@@ -281,6 +297,7 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
     ASSERT_(state_.initialized);
     state_.sm = &sm;
+    accepted_lc_edges_.clear();
 
     MRPT_LOG_INFO_STREAM("Processing simplemap with " << sm.size() << " frames");
 
@@ -311,6 +328,11 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)
                 params_.debug_files_prefix + "after_gnss.tum"s,
                 params_.save_trajectory_files_with_cov);
         }
+    }
+
+    if (params_.save_3d_scene_files)
+    {
+        save_3d_scene_initial_files();
     }
 
     // Loop closure detection and optimization
@@ -379,6 +401,11 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     if (params_.save_trajectory_files)
     {
         save_trajectory_as_tum(params_.debug_files_prefix + "final.tum"s);
+    }
+
+    if (params_.save_3d_scene_files)
+    {
+        save_3d_scene_files();
     }
 
     // Update simplemap with optimized poses
@@ -836,6 +863,8 @@ bool FrameToFrameLoopClosure::process_loop_candidate(const LoopCandidate& lc)
     state_.graphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
         X(lc.frame_i), X(lc.frame_j), deltaPose, robustNoise);
 
+    accepted_lc_edges_.emplace_back(lc.frame_i, lc.frame_j);
+
     return true;
 }
 
@@ -1061,6 +1090,162 @@ void FrameToFrameLoopClosure::update_dynamic_variables(frame_id_t frameId, size_
     ps.updateVariable("ICP_ITERATION", 0);
 
     ps.realize();
+}
+
+void FrameToFrameLoopClosure::save_3d_scene_initial_files() const
+{
+    ASSERT_(state_.sm);
+    const auto& sm     = *state_.sm;
+    const auto& prefix = params_.debug_files_prefix;
+
+    const auto pathColor = mrpt::img::TColorf(
+                               params_.scene_path_color_r, params_.scene_path_color_g,
+                               params_.scene_path_color_b, params_.scene_path_color_a)
+                               .asTColor();
+
+    // 1) Initial path edges
+    {
+        auto lines = mrpt::opengl::CSetOfLines::Create();
+        lines->setLineWidth(params_.scene_path_line_width);
+        lines->setColor_u8(pathColor);
+
+        for (size_t i = 1; i < sm.size(); i++)
+        {
+            const auto p0 = frame_pose_in_simplemap(i - 1).translation();
+            const auto p1 = frame_pose_in_simplemap(i).translation();
+            lines->appendLine(p0, p1);
+        }
+
+        mrpt::opengl::Scene scene;
+        scene.insert(lines);
+        const auto fn = prefix + "initial_path_edges.3Dscene";
+        if (scene.saveToFile(fn))
+        {
+            MRPT_LOG_INFO_STREAM("Saved 3D scene: " << fn);
+        }
+        else
+        {
+            MRPT_LOG_WARN_STREAM("Failed to save 3D scene: " << fn);
+        }
+    }
+
+    // 2) Initial keyframe points
+    {
+        auto pts = mrpt::opengl::CPointCloud::Create();
+        pts->setPointSize(params_.scene_keyframe_point_size);
+        pts->setColor_u8(pathColor);
+
+        for (size_t i = 0; i < sm.size(); i++)
+        {
+            const auto p = frame_pose_in_simplemap(i).translation();
+            pts->insertPoint(p);
+        }
+
+        mrpt::opengl::Scene scene;
+        scene.insert(pts);
+        const auto fn = prefix + "initial_keyframe_points.3Dscene";
+        if (scene.saveToFile(fn))
+        {
+            MRPT_LOG_INFO_STREAM("Saved 3D scene: " << fn);
+        }
+        else
+        {
+            MRPT_LOG_WARN_STREAM("Failed to save 3D scene: " << fn);
+        }
+    }
+}
+
+void FrameToFrameLoopClosure::save_3d_scene_files() const
+{
+    ASSERT_(state_.sm);
+    const auto& sm     = *state_.sm;
+    const auto& prefix = params_.debug_files_prefix;
+
+    // 1) Path edges: lines connecting consecutive keyframes
+    {
+        auto lines = mrpt::opengl::CSetOfLines::Create();
+        lines->setLineWidth(params_.scene_path_line_width);
+        lines->setColor_u8(mrpt::img::TColorf(
+                               params_.scene_path_color_r, params_.scene_path_color_g,
+                               params_.scene_path_color_b, params_.scene_path_color_a * 255)
+                               .asTColor());
+
+        for (size_t i = 1; i < sm.size(); i++)
+        {
+            const auto p0 = state_.get_pose(i - 1).translation();
+            const auto p1 = state_.get_pose(i).translation();
+            lines->appendLine(p0, p1);
+        }
+
+        mrpt::opengl::Scene scene;
+        scene.insert(lines);
+        const auto fn = prefix + "path_edges.3Dscene";
+        if (scene.saveToFile(fn))
+        {
+            MRPT_LOG_INFO_STREAM("Saved 3D scene: " << fn);
+        }
+        else
+        {
+            MRPT_LOG_WARN_STREAM("Failed to save 3D scene: " << fn);
+        }
+    }
+
+    // 2) Keyframe points
+    {
+        auto pts = mrpt::opengl::CPointCloud::Create();
+        pts->setPointSize(params_.scene_keyframe_point_size);
+        pts->setColor_u8(mrpt::img::TColorf(
+                             params_.scene_path_color_r, params_.scene_path_color_g,
+                             params_.scene_path_color_b, params_.scene_path_color_a)
+                             .asTColor());
+
+        for (size_t i = 0; i < sm.size(); i++)
+        {
+            const auto p = state_.get_pose(i).translation();
+            pts->insertPoint(p);
+        }
+
+        mrpt::opengl::Scene scene;
+        scene.insert(pts);
+        const auto fn = prefix + "keyframe_points.3Dscene";
+        if (scene.saveToFile(fn))
+        {
+            MRPT_LOG_INFO_STREAM("Saved 3D scene: " << fn);
+        }
+        else
+        {
+            MRPT_LOG_WARN_STREAM("Failed to save 3D scene: " << fn);
+        }
+    }
+
+    // 3) Loop closure edges
+    {
+        auto lines = mrpt::opengl::CSetOfLines::Create();
+        lines->setLineWidth(params_.scene_lc_line_width);
+        lines->setColor_u8(mrpt::img::TColorf(
+                               params_.scene_lc_color_r, params_.scene_lc_color_g,
+                               params_.scene_lc_color_b, params_.scene_lc_color_a)
+                               .asTColor());
+
+        for (const auto& [fi, fj] : accepted_lc_edges_)
+        {
+            const auto p0 = state_.get_pose(fi).translation();
+            const auto p1 = state_.get_pose(fj).translation();
+            lines->appendLine(p0, p1);
+        }
+
+        mrpt::opengl::Scene scene;
+        scene.insert(lines);
+        const auto fn = prefix + "lc_edges.3Dscene";
+        if (scene.saveToFile(fn))
+        {
+            MRPT_LOG_INFO_STREAM("Saved 3D scene: " << fn);
+        }
+        else
+        {
+            MRPT_LOG_WARN_STREAM("Failed to save 3D scene: " << fn);
+        }
+    }
 }
 
 void FrameToFrameLoopClosure::save_trajectory_as_tum(

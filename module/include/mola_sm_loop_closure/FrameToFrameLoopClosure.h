@@ -150,6 +150,20 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         bool        save_trajectory_files          = true;
         bool        save_trajectory_files_with_cov = false;
         std::string debug_files_prefix             = "f2f_lc_";
+
+        // 3D scene visualization output
+        bool  save_3d_scene_files       = false;
+        float scene_path_line_width     = 2.0f;
+        float scene_lc_line_width       = 4.0f;
+        float scene_path_color_r        = 0.0f;
+        float scene_path_color_g        = 0.0f;
+        float scene_path_color_b        = 1.0f;  // blue
+        float scene_path_color_a        = 0.7f;
+        float scene_lc_color_r          = 1.0f;  // red
+        float scene_lc_color_g          = 0.0f;
+        float scene_lc_color_b          = 0.0f;
+        float scene_lc_color_a          = 0.8f;
+        float scene_keyframe_point_size = 7.0f;
     };
 
     Parameters params_;
@@ -234,8 +248,17 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
     /** Save trajectory to TUM format file */
     void save_trajectory_as_tum(const std::string& filename, bool saveCovariancesToo = false) const;
 
+    /** Save 3D scene visualization files (final optimized poses) */
+    void save_3d_scene_files() const;
+
+    /** Save 3D scene visualization files (original poses before LC) */
+    void save_3d_scene_initial_files() const;
+
     /** Update dynamic variables for ICP pipeline */
     void update_dynamic_variables(frame_id_t frameId, size_t threadIdx);
+
+    /** Accepted loop closure edges (for 3D scene output) */
+    std::vector<std::pair<frame_id_t, frame_id_t>> accepted_lc_edges_;
 };
 
 }  // namespace mola
