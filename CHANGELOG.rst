@@ -2,8 +2,8 @@
 Changelog for package mola_sm_loop_closure
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+0.2.0 (2026-03-03)
+------------------
 * Fix build against different gtsam versions
 * Add optional generation of .3Dscene files with loop-closure visualizations
 * Tolerate missing external files without throwing
