@@ -22,6 +22,7 @@
 #include <mola_sm_loop_closure/FrameToFrameLoopClosure.h>
 #include <mola_yaml/yaml_helpers.h>
 #include <mrpt/core/get_env.h>
+#include <mrpt/maps/CPointsMap.h>
 #include <mrpt/obs/CObservation2DRangeScan.h>
 #include <mrpt/obs/CObservation3DRangeScan.h>
 #include <mrpt/obs/CObservationComment.h>
@@ -231,6 +232,9 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, input_odometry_noise_xyz, double);
     YAML_LOAD_OPT(params_, input_odometry_noise_ang, double);
 
+    YAML_LOAD_OPT(params_, pc_cache_max_bytes, size_t);
+    YAML_LOAD_OPT(params_, unload_observations_after_use, bool);
+
     YAML_LOAD_OPT(params_, largest_delta_for_reconsider, double);
     YAML_LOAD_OPT(params_, max_sensor_range, double);
 
@@ -298,6 +302,7 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
     ASSERT_(state_.initialized);
     state_.sm = &sm;
+    state_.pcCacheClear();
     accepted_lc_edges_.clear();
 
     MRPT_LOG_INFO_STREAM("Processing simplemap with " << sm.size() << " frames");
@@ -348,6 +353,20 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         auto candidates = find_loop_candidates(alreadyChecked);
 
         MRPT_LOG_INFO_STREAM("Found " << candidates.size() << " loop closure candidates");
+
+        // Sort candidates by frame locality to maximize point cloud cache hits:
+        std::sort(
+            candidates.begin(), candidates.end(),
+            [](const LoopCandidate& a, const LoopCandidate& b)
+            {
+                const auto minA = std::min(a.frame_i, a.frame_j);
+                const auto minB = std::min(b.frame_i, b.frame_j);
+                if (minA != minB)
+                {
+                    return minA < minB;
+                }
+                return std::max(a.frame_i, a.frame_j) < std::max(b.frame_i, b.frame_j);
+            });
 
         const auto frameGroup = static_cast<double>(params_.min_frames_between_lc);
 
@@ -806,9 +825,9 @@ bool FrameToFrameLoopClosure::process_loop_candidate(const LoopCandidate& lc)
 
     const size_t threadIdx = 0;  // Use first thread for now
 
-    // Generate point clouds for both frames
-    auto pc_i = generate_frame_pointcloud(lc.frame_i, threadIdx);
-    auto pc_j = generate_frame_pointcloud(lc.frame_j, threadIdx);
+    // Get point clouds for both frames (using LRU cache)
+    auto pc_i = get_cached_pointcloud(lc.frame_i, threadIdx);
+    auto pc_j = get_cached_pointcloud(lc.frame_j, threadIdx);
 
     if (!pc_i || !pc_j)
     {
@@ -976,7 +995,88 @@ mp2p_icp::metric_map_t::Ptr FrameToFrameLoopClosure::generate_frame_pointcloud(
     // Apply filters
     mp2p_icp_filters::apply_filter_pipeline(pts.pc_filter, *observation, profiler_);
 
+    // Unload raw observation data to free RAM (only effective for externally-stored data)
+    if (params_.unload_observations_after_use)
+    {
+        for (const auto& obs : *sf)
+        {
+            obs->unload();
+        }
+    }
+
     return observation;
+}
+
+mp2p_icp::metric_map_t::Ptr FrameToFrameLoopClosure::get_cached_pointcloud(
+    frame_id_t frameId, size_t threadIdx)
+{
+    // Cache disabled?
+    if (params_.pc_cache_max_bytes == 0)
+    {
+        return generate_frame_pointcloud(frameId, threadIdx);
+    }
+
+    // Cache hit?
+    auto it = state_.pcCache.find(frameId);
+    if (it != state_.pcCache.end())
+    {
+        // Move to front of LRU list
+        state_.pcLruOrder.remove(frameId);
+        state_.pcLruOrder.push_front(frameId);
+        return it->second.pc;
+    }
+
+    // Cache miss: generate the point cloud
+    auto pc = generate_frame_pointcloud(frameId, threadIdx);
+    if (!pc)
+    {
+        return {};
+    }
+
+    // Estimate memory usage (sum of all point cloud layer sizes)
+    size_t approxBytes = 0;
+    for (const auto& [layerName, map] : pc->layers)
+    {
+        if (map)
+        {
+            // Use the number of points * approximate bytes per point
+            auto pts = std::dynamic_pointer_cast<mrpt::maps::CPointsMap>(map);
+            if (pts)
+            {
+                approxBytes += pts->size() * (3 * sizeof(float) + 16);  // xyz + overhead
+            }
+        }
+    }
+    if (approxBytes == 0)
+    {
+        approxBytes = 1024;  // minimum estimate
+    }
+
+    // Insert into cache
+    state_.pcCache[frameId] = {pc, approxBytes};
+    state_.pcLruOrder.push_front(frameId);
+    state_.pcCacheTotalBytes += approxBytes;
+
+    // Evict if over budget
+    evict_pc_cache();
+
+    return pc;
+}
+
+void FrameToFrameLoopClosure::evict_pc_cache()
+{
+    while (state_.pcCacheTotalBytes > params_.pc_cache_max_bytes && !state_.pcLruOrder.empty())
+    {
+        const auto oldestId = state_.pcLruOrder.back();
+        state_.pcLruOrder.pop_back();
+
+        auto it = state_.pcCache.find(oldestId);
+        if (it != state_.pcCache.end())
+        {
+            state_.pcCacheTotalBytes -= it->second.approxBytes;
+            state_.pcCache.erase(it);
+        }
+    }
 }
 
 double FrameToFrameLoopClosure::optimize_graph()
