@@ -30,7 +30,9 @@
 #include <mrpt/topography/data_types.h>
 #include <mrpt/typemeta/TEnumType.h>
 
+#include <list>
 #include <set>
+#include <unordered_map>
 #include <vector>
 
 namespace mola
@@ -142,6 +144,18 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         // Optimization parameters
         double largest_delta_for_reconsider = 15.0;  // [m] re-check LCs if change > this
 
+        // Point cloud cache parameters
+        /** Maximum memory (in bytes) for the LRU point cloud cache.
+         *  Set to 0 to disable caching. Default: 500 MB.
+         */
+        size_t pc_cache_max_bytes = 500'000'000;
+
+        /** If true, call unload() on raw observations after generating
+         *  a point cloud, freeing externally-stored data from RAM.
+         *  Disable this for live SLAM where observations may be needed again.
+         */
+        bool unload_observations_after_use = true;
+
         // Sensor parameters
         double max_sensor_range = 100.0;  // [m]
 
@@ -208,6 +222,24 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
 
         /// Cov in MRPT order: xyz yaw pitch roll
         [[nodiscard]] mrpt::math::CMatrixDouble66 get_pose_cov(frame_id_t id) const;
+
+        // LRU point cloud cache
+        struct CachedPC
+        {
+            mp2p_icp::metric_map_t::Ptr pc;
+            size_t                      approxBytes = 0;
+        };
+
+        std::unordered_map<frame_id_t, CachedPC> pcCache;
+        std::list<frame_id_t>                    pcLruOrder;  // front = most recent
+        size_t                                   pcCacheTotalBytes = 0;
+
+        void pcCacheClear()
+        {
+            pcCache.clear();
+            pcLruOrder.clear();
+            pcCacheTotalBytes = 0;
+        }
     };
 
     State state_;
@@ -218,8 +250,14 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
     // Private methods
     mrpt::poses::CPose3D frame_pose_in_simplemap(frame_id_t frameId) const;
 
-    /** Generate point cloud from a frame's observations */
+    /** Generate point cloud from a frame's observations (no caching) */
     mp2p_icp::metric_map_t::Ptr generate_frame_pointcloud(frame_id_t frameId, size_t threadIdx);
+
+    /** Get point cloud for a frame, using the LRU cache */
+    mp2p_icp::metric_map_t::Ptr get_cached_pointcloud(frame_id_t frameId, size_t threadIdx);
+
+    /** Evict oldest entries from the PC cache until under the size limit */
+    void evict_pc_cache();
 
     /** Build initial graph with odometry and GNSS factors */
     void build_initial_graph();
