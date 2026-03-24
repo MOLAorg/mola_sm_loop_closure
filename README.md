@@ -44,3 +44,5 @@ Copyright (C) 2018-2026 Jose Luis Blanco <jlblanco@ual.es>, University of Almeri
 This package is released under the GNU GPL v3 license as open source, with the main 
 intention of being useful for research and evaluation purposes.
 Commercial licenses [available upon request](https://docs.mola-slam.org/latest/solutions.html).
+
+Contributions require acceptance of the Contributor License Agreement (CLA).
