@@ -138,8 +138,11 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         std::string threshold_sigma_final         = "0.05";
 
         // Odometry edge parameters
-        double input_odometry_noise_xyz = 0.01;  // [m]
-        double input_odometry_noise_ang = 0.1;  // [deg]
+        double input_odometry_noise_xyz = 0.10;  // [m] per meter of travel
+        double input_odometry_noise_ang = 1.0;  // [deg] per meter of travel
+
+        /** If true, scale odometry noise proportionally to inter-frame distance */
+        bool scale_odometry_noise_by_distance = true;
 
         // Optimization parameters
         double largest_delta_for_reconsider = 15.0;  // [m] re-check LCs if change > this
@@ -222,6 +225,10 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
 
         /// Cov in MRPT order: xyz yaw pitch roll
         [[nodiscard]] mrpt::math::CMatrixDouble66 get_pose_cov(frame_id_t id) const;
+
+        // Indices of factors known to be inliers (prior, odometry, GNSS)
+        // for use with GNC optimizer
+        std::vector<uint64_t> knownInlierFactorIndices;
 
         // LRU point cloud cache
         struct CachedPC

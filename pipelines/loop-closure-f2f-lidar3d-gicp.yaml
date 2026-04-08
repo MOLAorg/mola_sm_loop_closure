@@ -44,8 +44,9 @@ params:
   threshold_sigma_final: "${LC_ICP_FINAL_SIGMA|0.05}"
 
   # ===== Odometry Edge Parameters =====
-  input_odometry_noise_xyz: 0.005 # [m] Odometry translational noise
-  input_odometry_noise_ang: 0.01 # [deg] Odometry angular noise
+  input_odometry_noise_xyz: 0.04 # [m] Odometry translational noise (per meter of travel if scaled)
+  input_odometry_noise_ang: 0.10 # [deg] Odometry angular noise (per meter of travel if scaled)
+  scale_odometry_noise_by_distance: true # Scale noise proportionally to inter-frame distance
 
   # ===== Optimization Control =====
   largest_delta_for_reconsider: "${RECONSIDER_THRESHOLD|5.0}" # [m] Re-check all if change > this

@@ -14,6 +14,7 @@
 
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/inference/Symbol.h>
+#include <gtsam/nonlinear/GncOptimizer.h>
 #include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
 #include <gtsam/slam/BetweenFactor.h>
 #include <mola_georeferencing/simplemap_georeference.h>
@@ -231,6 +232,7 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
 
     YAML_LOAD_OPT(params_, input_odometry_noise_xyz, double);
     YAML_LOAD_OPT(params_, input_odometry_noise_ang, double);
+    YAML_LOAD_OPT(params_, scale_odometry_noise_by_distance, bool);
 
     YAML_LOAD_OPT(params_, pc_cache_max_bytes, size_t);
     YAML_LOAD_OPT(params_, unload_observations_after_use, bool);
@@ -460,6 +462,9 @@ void FrameToFrameLoopClosure::build_initial_graph()
         state_.graphValues.insert(X(i), mrpt::gtsam_wrappers::toPose3(pose_i));
     }
 
+    // Track known inlier factor indices for GNC optimizer
+    state_.knownInlierFactorIndices.clear();
+
     // Add prior on first frame: very weak, so GNSS can override it as needed.
     // if not using GNSS, let X(0) be anchored.
     const double priorSigma = params_.use_gnss ? 1e+2 : 1e-2;
@@ -467,6 +472,7 @@ void FrameToFrameLoopClosure::build_initial_graph()
     const auto pose0      = frame_pose_in_simplemap(0);
     auto       priorNoise = gtsam::noiseModel::Isotropic::Sigma(6, priorSigma);
 
+    state_.knownInlierFactorIndices.push_back(state_.graphFG.size());
     state_.graphFG.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
         X(0), mrpt::gtsam_wrappers::toPose3(pose0), priorNoise);
 
@@ -479,13 +485,21 @@ void FrameToFrameLoopClosure::build_initial_graph()
         const auto relPose   = pose_i - pose_im1;
         const auto deltaPose = mrpt::gtsam_wrappers::toPose3(relPose);
 
+        // Scale noise by inter-frame distance
+        const double dist = relPose.translation().norm();
+        const double distScale =
+            params_.scale_odometry_noise_by_distance ? std::max(1.0, dist) : 1.0;
+
+        const double noiseXyz = params_.input_odometry_noise_xyz * distScale;
+        const double noiseAng = params_.input_odometry_noise_ang * distScale;
+
         gtsam::Vector6 sigmas;
-        sigmas << mrpt::DEG2RAD(params_.input_odometry_noise_ang),
-            mrpt::DEG2RAD(params_.input_odometry_noise_ang),
-            mrpt::DEG2RAD(params_.input_odometry_noise_ang), params_.input_odometry_noise_xyz,
-            params_.input_odometry_noise_xyz, params_.input_odometry_noise_xyz;
+        sigmas << mrpt::DEG2RAD(noiseAng), mrpt::DEG2RAD(noiseAng), mrpt::DEG2RAD(noiseAng),
+            noiseXyz, noiseXyz, noiseXyz;
 
         auto edgeNoise = gtsam::noiseModel::Diagonal::Sigmas(sigmas);
+
+        state_.knownInlierFactorIndices.push_back(state_.graphFG.size());
 
 #if GTSAM_USES_BOOST
         auto factor = boost::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
@@ -574,6 +588,7 @@ void FrameToFrameLoopClosure::add_gnss_factors()
         const auto sensorPointOnVeh =
             mrpt::gtsam_wrappers::toPoint3(gf.obs->sensorPose.translation());
 
+        state_.knownInlierFactorIndices.push_back(state_.graphFG.size());
         state_.graphFG.emplace_shared<mola::factors::FactorGnssEnu>(
             X(frameId), sensorPointOnVeh, observedENU, robustNoise);
     }
@@ -879,13 +894,10 @@ bool FrameToFrameLoopClosure::process_loop_candidate(const LoopCandidate& lc)
 
     auto edgeNoise = gtsam::noiseModel::Diagonal::Sigmas(sigmas);
 
-    // Robust kernel:
-    auto robustNoise = gtsam::noiseModel::Robust::Create(
-        gtsam::noiseModel::mEstimator::GemanMcClure::Create(params_.icp_edge_robust_param),
-        edgeNoise);
-
+    // LC edges use plain Gaussian noise (no robust kernel here).
+    // The GNC optimizer handles outlier rejection for these edges.
     state_.graphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-        X(lc.frame_i), X(lc.frame_j), deltaPose, robustNoise);
+        X(lc.frame_i), X(lc.frame_j), deltaPose, edgeNoise);
 
     accepted_lc_edges_.emplace_back(lc.frame_i, lc.frame_j);
 
@@ -1083,8 +1095,6 @@ double FrameToFrameLoopClosure::optimize_graph()
 {
     mrpt::system::CTimeLoggerEntry tle(profiler_, "optimize_graph");
 
-    auto lmParams = gtsam::LevenbergMarquardtParams::CeresDefaults();
-
     ASSERT_(!state_.graphFG.empty());
 
     const auto N_1 = 1.0 / static_cast<double>(state_.graphFG.size());
@@ -1092,11 +1102,43 @@ double FrameToFrameLoopClosure::optimize_graph()
     const double errInit1  = state_.graphFG.error(state_.graphValues);
     const double rmseInit1 = std::sqrt(errInit1 * N_1);
 
-    gtsam::LevenbergMarquardtOptimizer lm1(state_.graphFG, state_.graphValues, lmParams);
-    const auto                         optimalValues = lm1.optimize();
+    // Use Graduated Non-Convexity (GNC) optimizer with Geman-McClure loss.
+    // This handles large loop closure corrections that would otherwise be
+    // suppressed by a fixed robust kernel, while still rejecting outliers.
+    using GncParams = gtsam::GncParams<gtsam::LevenbergMarquardtParams>;
+
+    auto lmParams = gtsam::LevenbergMarquardtParams::CeresDefaults();
+
+    GncParams gncParams(lmParams);
+    gncParams.setLossType(gtsam::GncLossType::GM);
+    GncParams::IndexVector knownInliers(
+        state_.knownInlierFactorIndices.begin(), state_.knownInlierFactorIndices.end());
+    gncParams.setKnownInliers(knownInliers);
+
+    gtsam::GncOptimizer<GncParams> gnc(state_.graphFG, state_.graphValues, gncParams);
+
+    const auto optimalValues = gnc.optimize();
 
     const double errEnd1  = state_.graphFG.error(optimalValues);
     const double rmseEnd1 = std::sqrt(errEnd1 * N_1);
+
+    // Log GNC weights for LC edges (for diagnostics)
+    const auto& gncWeights    = gnc.getWeights();
+    size_t      numLcOutliers = 0;
+    for (size_t k = 0; k < static_cast<size_t>(gncWeights.size()); k++)
+    {
+        // Check if this factor is NOT a known inlier (i.e., it's an LC edge)
+        const bool isKnownInlier = std::binary_search(
+            state_.knownInlierFactorIndices.begin(), state_.knownInlierFactorIndices.end(), k);
+        if (!isKnownInlier && gncWeights[k] < 0.5)
+        {
+            numLcOutliers++;
+        }
+    }
+    if (numLcOutliers > 0)
+    {
+        MRPT_LOG_INFO_STREAM("GNC rejected " << numLcOutliers << " LC edge(s) as outliers");
+    }
 
     // Compute largest pose change
     double largestDelta = 0.0;
@@ -1125,8 +1167,8 @@ double FrameToFrameLoopClosure::optimize_graph()
         mrpt::system::ConsoleForegroundColor::BRIGHT_GREEN;
 
     MRPT_LOG_INFO_STREAM(
-        "Graph optimized: " << lm1.iterations() << " iters, RMSE " << rmseInit1 << " -> "
-                            << rmseEnd1 << ", largest delta: " << largestDelta << " m");
+        "Graph optimized (GNC): RMSE " << rmseInit1 << " -> " << rmseEnd1
+                                       << ", largest delta: " << largestDelta << " m");
 
     mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO) = bckCol;
 
