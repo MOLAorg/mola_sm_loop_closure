@@ -169,7 +169,8 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         std::string debug_files_prefix             = "f2f_lc_";
 
         // 3D scene visualization output
-        bool  save_3d_scene_files       = false;
+        bool  save_3d_scene_files                = false;
+        bool  save_3d_scene_files_per_iteration  = false;
         float scene_path_line_width     = 2.0f;
         float scene_lc_line_width       = 4.0f;
         float scene_path_color_r        = 0.0f;
@@ -293,8 +294,9 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
     /** Save trajectory to TUM format file */
     void save_trajectory_as_tum(const std::string& filename, bool saveCovariancesToo = false) const;
 
-    /** Save 3D scene visualization files (final optimized poses) */
-    void save_3d_scene_files() const;
+    /** Save 3D scene visualization files (final optimized poses).
+     *  \param suffix Optional suffix appended before the file extension (e.g. "_iter02"). */
+    void save_3d_scene_files(const std::string& suffix = {}) const;
 
     /** Save 3D scene visualization files (original poses before LC) */
     void save_3d_scene_initial_files() const;

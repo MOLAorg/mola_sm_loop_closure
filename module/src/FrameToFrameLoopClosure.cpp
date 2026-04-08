@@ -246,6 +246,7 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, debug_files_prefix, std::string);
 
     YAML_LOAD_OPT(params_, save_3d_scene_files, bool);
+    YAML_LOAD_OPT(params_, save_3d_scene_files_per_iteration, bool);
     YAML_LOAD_OPT(params_, scene_path_line_width, float);
     YAML_LOAD_OPT(params_, scene_lc_line_width, float);
     YAML_LOAD_OPT(params_, scene_path_color_r, float);
@@ -298,7 +299,7 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     MRPT_TRY_END
 }
 
-void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)
+void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
 {
     using namespace std::string_literals;
 
@@ -407,6 +408,11 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         if (anyGraphChange)
         {
             const double largestDelta = optimize_graph();
+
+            if (params_.save_3d_scene_files && params_.save_3d_scene_files_per_iteration)
+            {
+                save_3d_scene_files(mrpt::format("_iter%02zu", lcRound));
+            }
 
             if (largestDelta > params_.largest_delta_for_reconsider)
             {
@@ -1302,20 +1308,21 @@ void FrameToFrameLoopClosure::save_3d_scene_initial_files() const
     }
 }
 
-void FrameToFrameLoopClosure::save_3d_scene_files() const
+void FrameToFrameLoopClosure::save_3d_scene_files(const std::string& suffix) const
 {
     ASSERT_(state_.sm);
     const auto& sm     = *state_.sm;
-    const auto& prefix = params_.debug_files_prefix;
+    const auto  prefix = params_.debug_files_prefix + (suffix.empty() ? "" : suffix + "_");
 
     // 1) Path edges: lines connecting consecutive keyframes
     {
         auto lines = mrpt::opengl::CSetOfLines::Create();
         lines->setLineWidth(params_.scene_path_line_width);
-        lines->setColor_u8(mrpt::img::TColorf(
-                               params_.scene_path_color_r, params_.scene_path_color_g,
-                               params_.scene_path_color_b, params_.scene_path_color_a * 255)
-                               .asTColor());
+        lines->setColor_u8(
+            mrpt::img::TColorf(
+                params_.scene_path_color_r, params_.scene_path_color_g, params_.scene_path_color_b,
+                params_.scene_path_color_a * 255)
+                .asTColor());
 
         for (size_t i = 1; i < sm.size(); i++)
         {
@@ -1341,10 +1348,11 @@ void FrameToFrameLoopClosure::save_3d_scene_files() const
     {
         auto pts = mrpt::opengl::CPointCloud::Create();
         pts->setPointSize(params_.scene_keyframe_point_size);
-        pts->setColor_u8(mrpt::img::TColorf(
-                             params_.scene_path_color_r, params_.scene_path_color_g,
-                             params_.scene_path_color_b, params_.scene_path_color_a)
-                             .asTColor());
+        pts->setColor_u8(
+            mrpt::img::TColorf(
+                params_.scene_path_color_r, params_.scene_path_color_g, params_.scene_path_color_b,
+                params_.scene_path_color_a)
+                .asTColor());
 
         for (size_t i = 0; i < sm.size(); i++)
         {
@@ -1369,10 +1377,11 @@ void FrameToFrameLoopClosure::save_3d_scene_files() const
     {
         auto lines = mrpt::opengl::CSetOfLines::Create();
         lines->setLineWidth(params_.scene_lc_line_width);
-        lines->setColor_u8(mrpt::img::TColorf(
-                               params_.scene_lc_color_r, params_.scene_lc_color_g,
-                               params_.scene_lc_color_b, params_.scene_lc_color_a)
-                               .asTColor());
+        lines->setColor_u8(
+            mrpt::img::TColorf(
+                params_.scene_lc_color_r, params_.scene_lc_color_g, params_.scene_lc_color_b,
+                params_.scene_lc_color_a)
+                .asTColor());
 
         for (const auto& [fi, fj] : accepted_lc_edges_)
         {

@@ -59,6 +59,7 @@ params:
 
   # ===== 3D Scene Visualization Output =====
   save_3d_scene_files: "${SAVE_3D_SCENES|false}"
+  save_3d_scene_files_per_iteration: "${SAVE_3D_SCENES_PER_ITER|false}"
   scene_path_line_width: 2.0
   scene_lc_line_width: 4.0
   scene_path_color_r: 0.0 # blue path
