@@ -170,7 +170,11 @@ class SimplemapLoopClosure : public mola::LoopClosureInterface
         submap_id_t                                      globalGeoRefSubmapId{};
 
         gtsam::Values               kfGraphValues;
-        gtsam::NonlinearFactorGraph kfGraphFG, kfGraphFGRobust;
+        gtsam::NonlinearFactorGraph kfGraphFG;
+
+        /// Indices of factors known to be inliers (prior, odometry, GNSS)
+        /// for use with the GNC optimizer
+        std::vector<uint64_t> knownInlierFactorIndices;
 
         mrpt::poses::CPose3D kfGraph_get_pose(keyframe_id_t id) const;
     };

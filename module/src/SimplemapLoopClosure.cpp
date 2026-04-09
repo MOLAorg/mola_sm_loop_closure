@@ -49,6 +49,7 @@
 #include <gtsam/inference/Symbol.h>
 #include <gtsam/nonlinear/ExpressionFactor.h>
 // #include <gtsam/nonlinear/GaussNewtonOptimizer.h>
+#include <gtsam/nonlinear/GncOptimizer.h>
 #include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
 #include <gtsam/nonlinear/Values.h>
 #include <gtsam/nonlinear/expressions.h>
@@ -66,7 +67,6 @@ const bool SAVE_LCS         = mrpt::get_env<bool>("SAVE_LCS", false);
 const bool SAVE_TREES       = mrpt::get_env<bool>("SAVE_TREES", false);
 const bool PRINT_FG_ERRORS  = mrpt::get_env<bool>("PRINT_FG_ERRORS", false);
 
-const bool ADD_GNSS_FACTORS_2ND_STAGE = mrpt::get_env<bool>("ADD_GNSS_FACTORS_2ND_STAGE", true);
 
 const bool DEBUG_PRINT_BETWEEN_EDGES = mrpt::get_env<bool>("DEBUG_PRINT_BETWEEN_EDGES", false);
 
@@ -401,8 +401,9 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     }
 
     // anchor for X(0):
+    state_.knownInlierFactorIndices.clear();
+    state_.knownInlierFactorIndices.push_back(state_.kfGraphFG.size());
     state_.kfGraphFG.push_back(x0prior);
-    state_.kfGraphFGRobust.push_back(x0prior);
 
     // create edges: i -> i-1
     for (size_t i = 1; i < sm.size(); i++)
@@ -459,8 +460,8 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             X(i - 1), X(i), deltaPose, edgeNoise);
 #endif
 
+        state_.knownInlierFactorIndices.push_back(state_.kfGraphFG.size());
         state_.kfGraphFG += f;
-        state_.kfGraphFGRobust += f;
     }
 
     // GNSS Edges: additional edges in both graphs:
@@ -533,14 +534,9 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
                     << relPose.getPoseMean().asTPose());
             }
 
+            state_.knownInlierFactorIndices.push_back(state_.kfGraphFG.size());
             state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
                 X(refKfId), X(curKfId), deltaPose, edgeNoise);
-
-            if (ADD_GNSS_FACTORS_2ND_STAGE)
-            {
-                state_.kfGraphFGRobust.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-                    X(refKfId), X(curKfId), deltaPose, edgeRobNoise);
-            }
         }
 
         if (params_.save_submaps_viz_files)
@@ -1435,41 +1431,7 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
 
         using gtsam::symbol_shorthand::X;
 
-        // (1/2) Non-Robust edge for 1st PASS optimization, with "fake" cov
-        double edge_std_xyz = 0.5;  // [m]
-        double edge_std_ang = mrpt::DEG2RAD(0.5);
-
-        // Use a variable variance depending on the ICP quality:
-        ASSERT_(params_.icp_edge_worst_multiplier > 1.0);
-
-        double std_multiplier =
-            params_.icp_edge_worst_multiplier - (params_.icp_edge_worst_multiplier - 1.0) *
-                                                    (icpQuality - params_.min_icp_goodness) /
-                                                    params_.min_icp_goodness;
-
-        edge_std_xyz *= std_multiplier;
-        edge_std_ang *= std_multiplier;
-
-        const double icp_edge_robust_param = params_.icp_edge_robust_param;
-
-        gtsam::Vector6 sigmasNoRobust;
-        sigmasNoRobust << edge_std_ang, edge_std_ang, edge_std_ang,  //
-            edge_std_xyz, edge_std_xyz, edge_std_xyz;
-
-        auto icpNoiseNoRubust = gtsam::noiseModel::Diagonal::Sigmas(sigmasNoRobust);
-
-        // Non-robust graph:
-        state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-            X(*submapGlobal.kf_ids.begin()), X(*submapLocal.kf_ids.begin()), deltaPose,
-            icpNoiseNoRubust);
-
-        if (DEBUG_PRINT_BETWEEN_EDGES)
-        {
-            state_.kfGraphFG.back()->print("1/2 ICP edge factor: ");
-        }
-
-        // (2/2) Robust edge for 2nd PASS optimization, with real cov
-
+        // LC edge noise: use real ICP covariance with additional noise floor
         gtsam::Vector6 realSigmasXYZYPR = icpRelPose.cov.asEigen().diagonal().array().sqrt().eval();
 
         for (int i = 0; i < 3; i++)
@@ -1482,18 +1444,16 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         realSigmasGtsam << realSigmasXYZYPR[5], realSigmasXYZYPR[4], realSigmasXYZYPR[3],
             realSigmasXYZYPR[0], realSigmasXYZYPR[1], realSigmasXYZYPR[2];
 
-        gtsam::noiseModel::Base::shared_ptr icpRobNoise = gtsam::noiseModel::Robust::Create(
-            gtsam::noiseModel::mEstimator::GemanMcClure::Create(icp_edge_robust_param),
-            gtsam::noiseModel::Diagonal::Sigmas(realSigmasGtsam));
+        auto icpNoise = gtsam::noiseModel::Diagonal::Sigmas(realSigmasGtsam);
 
-        // Robust graph:
-        state_.kfGraphFGRobust.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+        // Add LC edge (no robust kernel here — GNC optimizer handles outlier rejection)
+        state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             X(*submapGlobal.kf_ids.begin()), X(*submapLocal.kf_ids.begin()), deltaPose,
-            icpRobNoise);
+            icpNoise);
 
         if (DEBUG_PRINT_BETWEEN_EDGES)
         {
-            state_.kfGraphFGRobust.back()->print("2/2 ICP edge factor: ");
+            state_.kfGraphFG.back()->print("ICP edge factor: ");
         }
 
         atLeastOneGoodIcp = true;
@@ -2054,34 +2014,56 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(cons
 
 double SimplemapLoopClosure::optimize_graph()
 {
-    // low-level KF graph:
-    auto lmParams = gtsam::LevenbergMarquardtParams::CeresDefaults();
-    // auto lmParams = gtsam::GaussNewtonParams();
+    const double N_1 = 1.0 / static_cast<double>(state_.kfGraphFG.size());
 
-    // Pass 1
-    const double errorInit1 = state_.kfGraphFG.error(state_.kfGraphValues);
-    const double rmseInit1  = std::sqrt(errorInit1 / static_cast<double>(state_.kfGraphFG.size()));
+    const double errorInit = state_.kfGraphFG.error(state_.kfGraphValues);
+    const double rmseInit  = std::sqrt(errorInit * N_1);
 
-    gtsam::LevenbergMarquardtOptimizer lm1(state_.kfGraphFG, state_.kfGraphValues, lmParams);
+    // Use GNC (Graduated Non-Convexity) optimizer for robust outlier rejection.
+    // Known inliers (prior, odometry, GNSS) are protected; only LC edges can be
+    // classified as outliers.
+    using GncParams = gtsam::GncParams<gtsam::LevenbergMarquardtParams>;
 
-    const auto& optimalValues1 = lm1.optimize();
+    auto     lmParams = gtsam::LevenbergMarquardtParams::CeresDefaults();
+    GncParams gncParams(lmParams);
+    gncParams.setLossType(gtsam::GncLossType::GM);
 
-    const double errorEnd1 = state_.kfGraphFG.error(optimalValues1);
-    const double rmseEnd1  = std::sqrt(errorEnd1 / static_cast<double>(state_.kfGraphFG.size()));
+    GncParams::IndexVector knownInliers(
+        state_.knownInlierFactorIndices.begin(), state_.knownInlierFactorIndices.end());
+    gncParams.setKnownInliers(knownInliers);
 
-    // Pass 2
-    const double errorInit2 = state_.kfGraphFGRobust.error(optimalValues1);
-    const double rmseInit2 =
-        std::sqrt(errorInit2 / static_cast<double>(state_.kfGraphFGRobust.size()));
+    gtsam::GncOptimizer<GncParams> gnc(state_.kfGraphFG, state_.kfGraphValues, gncParams);
 
-    gtsam::LevenbergMarquardtOptimizer lm2(state_.kfGraphFGRobust, optimalValues1, lmParams);
-    const auto&                        optimalValues2 = lm2.optimize();
+    const auto optimalValues = gnc.optimize();
 
-    state_.kfGraphValues = optimalValues2;
+    state_.kfGraphValues = optimalValues;
 
-    const double errorEnd2 = state_.kfGraphFGRobust.error(optimalValues2);
-    const double rmseEnd2 =
-        std::sqrt(errorEnd2 / static_cast<double>(state_.kfGraphFGRobust.size()));
+    const double errorEnd = state_.kfGraphFG.error(optimalValues);
+    const double rmseEnd  = std::sqrt(errorEnd * N_1);
+
+    // Log GNC weights for LC edges (for diagnostics)
+    const auto& gncWeights   = gnc.getWeights();
+    size_t      numLcOutliers = 0;
+    size_t      numLcInliers  = 0;
+    for (size_t k = 0; k < static_cast<size_t>(gncWeights.size()); k++)
+    {
+        const bool isKnownInlier = std::binary_search(
+            state_.knownInlierFactorIndices.begin(), state_.knownInlierFactorIndices.end(), k);
+        if (!isKnownInlier)
+        {
+            if (gncWeights[k] < 0.5)
+            {
+                numLcOutliers++;
+            }
+            else
+            {
+                numLcInliers++;
+            }
+        }
+    }
+    MRPT_LOG_INFO_STREAM(
+        "GNC result: " << numLcInliers << " LC inlier(s), " << numLcOutliers
+                        << " LC outlier(s) rejected");
 
     // Update submaps global pose:
     double largestDelta = 0;
@@ -2110,10 +2092,8 @@ double SimplemapLoopClosure::optimize_graph()
     mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO) =
         mrpt::system::ConsoleForegroundColor::BRIGHT_GREEN;
     MRPT_LOG_INFO_STREAM(
-        "***** Graph re-optimized in "
-        << lm1.iterations() << "/" << lm2.iterations() << " iters, RMSE: 1st PASS:" << rmseInit1
-        << " ==> " << rmseEnd1 << " / 2nd PASS: " << rmseInit2 << " ==> " << rmseEnd2
-        << " largestDelta=" << largestDelta << " [m]");
+        "***** Graph re-optimized (GNC), RMSE: " << rmseInit << " ==> " << rmseEnd
+                                                   << " largestDelta=" << largestDelta << " [m]");
     mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO) = bckCol;
 
     if (PRINT_FG_ERRORS)
@@ -2121,14 +2101,7 @@ double SimplemapLoopClosure::optimize_graph()
         const double errorPrintThres = 10.0;
 
         state_.kfGraphFG.printErrors(
-            optimalValues1, "================ 1ST PASS Factor errors ============\n",
-            gtsam::DefaultKeyFormatter,
-            std::function<bool(const gtsam::Factor*, double whitenedError, size_t)>(
-                [&](const gtsam::Factor* /*f*/, double error, size_t /*index*/)
-                { return error > errorPrintThres; }));
-
-        state_.kfGraphFGRobust.printErrors(
-            optimalValues2, "================ 2ND PASS Factor errors ============\n",
+            optimalValues, "================ Factor errors ============\n",
             gtsam::DefaultKeyFormatter,
             std::function<bool(const gtsam::Factor*, double whitenedError, size_t)>(
                 [&](const gtsam::Factor* /*f*/, double error, size_t /*index*/)
