@@ -47,8 +47,8 @@ params:
   icp_edge_additional_noise_xyz: 0.01 # [m]
   icp_edge_additional_noise_ang_deg: 0.05 # [deg]
 
-  input_odometry_edge_additional_noise_xyz: 0.001 # [m]
-  input_odometry_edge_additional_noise_ang_deg: 0.001 # [deg]
+  input_odometry_edge_additional_noise_xyz: "${INPUT_ODOMETRY_NOISE_XYZ|0.01}" # [m] Odometry translational noise
+  input_odometry_edge_additional_noise_ang_deg: "${INPUT_ODOMETRY_NOISE_ANG_DEG|0.01}" # [deg] Odometry angular noise
 
   input_edges_uncertainty_multiplier: 1.0
 
@@ -60,8 +60,8 @@ params:
   # Profiler:
   profiler_enabled: true
 
-  threshold_sigma_initial: 1.0 # "min(10.0, max(0.50, REL_POSE_SIGMA_XY))"
-  threshold_sigma_final: 0.2 # "max(0.50, min(0.50, REL_POSE_SIGMA_XY))"
+  threshold_sigma_initial: "${LC_ICP_INITIAL_SIGMA|1.0}"
+  threshold_sigma_final: "${LC_ICP_FINAL_SIGMA|0.2}"
 
   max_sensor_range: 100
 
