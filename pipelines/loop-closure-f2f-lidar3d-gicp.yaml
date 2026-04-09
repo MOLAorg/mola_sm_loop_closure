@@ -5,8 +5,7 @@
 # Licensed under the GNU GPL v3.
 # -----------------------------------------------------------------------------
 
-# Configuration file for Frame-to-Frame Loop Closure
-# This implements a simpler alternative to submap-based loop closure:
+# Configuration file for Frame-to-Frame Loop Closure (mola::FrameToFrameLoopClosure)
 
 params:
   # ===== GNSS Optimization Parameters =====
@@ -22,6 +21,7 @@ params:
   max_lc_candidates: "${MAX_LC_CANDIDATES|20}" # Maximum candidates per iteration
   min_frames_between_lc: "${MIN_FRAMES_BETWEEN_LC|20}" # Minimum frame index separation
   max_lc_optimization_rounds: "${MAX_LC_OPTIMIZATION_ROUNDS|5}" # Maximum LC+optimization rounds to run
+  lc_optimize_every_n: "${LC_OPTIMIZE_EVERY_N|5}" # Re-optimize after N accepted LCs (0=disable, closes inner loops first)
 
   lc_candidate_strategy: "${LC_SELECTION_METHOD|DISTANCE_STRATIFIED}" # or PROXIMITY_ONLY, MULTI_OBJECTIVE
   lc_verbose_candidate_selection: "${LC_SELECTION_VERBOSE|0}"
@@ -44,8 +44,8 @@ params:
   threshold_sigma_final: "${LC_ICP_FINAL_SIGMA|0.05}"
 
   # ===== Odometry Edge Parameters =====
-  input_odometry_noise_xyz: 0.04 # [m] Odometry translational noise (per meter of travel if scaled)
-  input_odometry_noise_ang: 0.10 # [deg] Odometry angular noise (per meter of travel if scaled)
+  input_odometry_noise_xyz: "${INPUT_ODOMETRY_NOISE_XYZ_PER_M|0.04}" # [m] Odometry translational noise (per meter of travel if scaled)
+  input_odometry_noise_ang: "${INPUT_ODOMETRY_NOISE_ANG_DEG_PER_M|0.05}" # [deg] Odometry angular noise (per meter of travel if scaled)
   scale_odometry_noise_by_distance: true # Scale noise proportionally to inter-frame distance
 
   # ===== Optimization Control =====

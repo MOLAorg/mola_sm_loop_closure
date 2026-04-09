@@ -194,6 +194,7 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, max_lc_candidates, size_t);
     YAML_LOAD_OPT(params_, min_frames_between_lc, size_t);
     YAML_LOAD_OPT(params_, max_lc_optimization_rounds, size_t);
+    YAML_LOAD_OPT(params_, lc_optimize_every_n, size_t);
 
     if (params_.min_frames_between_lc == 0)
     {
@@ -357,21 +358,25 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
 
         MRPT_LOG_INFO_STREAM("Found " << candidates.size() << " loop closure candidates");
 
-        // Sort candidates by frame locality to maximize point cloud cache hits:
+        // Sort candidates by ascending topological gap (frame index separation)
+        // so that inner (smaller) loops are closed first, improving the graph
+        // before attempting larger loops:
         std::sort(
             candidates.begin(), candidates.end(),
             [](const LoopCandidate& a, const LoopCandidate& b)
             {
-                const auto minA = std::min(a.frame_i, a.frame_j);
-                const auto minB = std::min(b.frame_i, b.frame_j);
-                if (minA != minB)
+                const auto gapA = a.frame_j - a.frame_i;
+                const auto gapB = b.frame_j - b.frame_i;
+                if (gapA != gapB)
                 {
-                    return minA < minB;
+                    return gapA < gapB;
                 }
-                return std::max(a.frame_i, a.frame_j) < std::max(b.frame_i, b.frame_j);
+                // Tie-break: earlier frame first (cache locality)
+                return std::min(a.frame_i, a.frame_j) < std::min(b.frame_i, b.frame_j);
             });
 
-        const auto frameGroup = static_cast<double>(params_.min_frames_between_lc);
+        const auto frameGroup           = static_cast<double>(params_.min_frames_between_lc);
+        size_t     acceptedSinceLastOpt = 0;
 
         for (const auto& lc : candidates)
         {
@@ -397,6 +402,19 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
             {
                 anyGraphChange = true;
                 accepted_lcs++;
+                acceptedSinceLastOpt++;
+
+                // Intermediate optimization: re-optimize after every N accepted LCs
+                // so that later (larger-gap) candidates benefit from corrected poses.
+                if (params_.lc_optimize_every_n > 0 &&
+                    acceptedSinceLastOpt >= params_.lc_optimize_every_n)
+                {
+                    MRPT_LOG_INFO_STREAM(
+                        "Intermediate optimization after " << acceptedSinceLastOpt
+                                                           << " accepted LCs");
+                    optimize_graph();
+                    acceptedSinceLastOpt = 0;
+                }
             }
         }
 
@@ -405,8 +423,9 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
             break;  // No new candidates
         }
 
-        if (anyGraphChange)
+        if (anyGraphChange && acceptedSinceLastOpt > 0)
         {
+            // Final optimization for remaining accepted LCs in this round
             const double largestDelta = optimize_graph();
 
             if (params_.save_3d_scene_files && params_.save_3d_scene_files_per_iteration)
@@ -1130,21 +1149,28 @@ double FrameToFrameLoopClosure::optimize_graph()
 
     // Log GNC weights for LC edges (for diagnostics)
     const auto& gncWeights    = gnc.getWeights();
-    size_t      numLcOutliers = 0;
+    size_t numLcOutliers = 0;
+    size_t numLcInliers  = 0;
     for (size_t k = 0; k < static_cast<size_t>(gncWeights.size()); k++)
     {
         // Check if this factor is NOT a known inlier (i.e., it's an LC edge)
         const bool isKnownInlier = std::binary_search(
             state_.knownInlierFactorIndices.begin(), state_.knownInlierFactorIndices.end(), k);
-        if (!isKnownInlier && gncWeights[k] < 0.5)
+        if (!isKnownInlier)
         {
-            numLcOutliers++;
+            if (gncWeights[k] < 0.5)
+            {
+                numLcOutliers++;
+            }
+            else
+            {
+                numLcInliers++;
+            }
         }
     }
-    if (numLcOutliers > 0)
-    {
-        MRPT_LOG_INFO_STREAM("GNC rejected " << numLcOutliers << " LC edge(s) as outliers");
-    }
+    MRPT_LOG_INFO_STREAM(
+        "GNC result: " << numLcInliers << " LC inlier(s), " << numLcOutliers
+                        << " LC outlier(s) rejected");
 
     // Compute largest pose change
     double largestDelta = 0.0;
@@ -1318,11 +1344,10 @@ void FrameToFrameLoopClosure::save_3d_scene_files(const std::string& suffix) con
     {
         auto lines = mrpt::opengl::CSetOfLines::Create();
         lines->setLineWidth(params_.scene_path_line_width);
-        lines->setColor_u8(
-            mrpt::img::TColorf(
-                params_.scene_path_color_r, params_.scene_path_color_g, params_.scene_path_color_b,
-                params_.scene_path_color_a * 255)
-                .asTColor());
+        lines->setColor_u8(mrpt::img::TColorf(
+                               params_.scene_path_color_r, params_.scene_path_color_g,
+                               params_.scene_path_color_b, params_.scene_path_color_a * 255)
+                               .asTColor());
 
         for (size_t i = 1; i < sm.size(); i++)
         {
@@ -1348,11 +1373,10 @@ void FrameToFrameLoopClosure::save_3d_scene_files(const std::string& suffix) con
     {
         auto pts = mrpt::opengl::CPointCloud::Create();
         pts->setPointSize(params_.scene_keyframe_point_size);
-        pts->setColor_u8(
-            mrpt::img::TColorf(
-                params_.scene_path_color_r, params_.scene_path_color_g, params_.scene_path_color_b,
-                params_.scene_path_color_a)
-                .asTColor());
+        pts->setColor_u8(mrpt::img::TColorf(
+                             params_.scene_path_color_r, params_.scene_path_color_g,
+                             params_.scene_path_color_b, params_.scene_path_color_a)
+                             .asTColor());
 
         for (size_t i = 0; i < sm.size(); i++)
         {
@@ -1377,11 +1401,10 @@ void FrameToFrameLoopClosure::save_3d_scene_files(const std::string& suffix) con
     {
         auto lines = mrpt::opengl::CSetOfLines::Create();
         lines->setLineWidth(params_.scene_lc_line_width);
-        lines->setColor_u8(
-            mrpt::img::TColorf(
-                params_.scene_lc_color_r, params_.scene_lc_color_g, params_.scene_lc_color_b,
-                params_.scene_lc_color_a)
-                .asTColor());
+        lines->setColor_u8(mrpt::img::TColorf(
+                               params_.scene_lc_color_r, params_.scene_lc_color_g,
+                               params_.scene_lc_color_b, params_.scene_lc_color_a)
+                               .asTColor());
 
         for (const auto& [fi, fj] : accepted_lc_edges_)
         {
