@@ -1149,8 +1149,8 @@ double FrameToFrameLoopClosure::optimize_graph()
 
     // Log GNC weights for LC edges (for diagnostics)
     const auto& gncWeights    = gnc.getWeights();
-    size_t numLcOutliers = 0;
-    size_t numLcInliers  = 0;
+    size_t      numLcOutliers = 0;
+    size_t      numLcInliers  = 0;
     for (size_t k = 0; k < static_cast<size_t>(gncWeights.size()); k++)
     {
         // Check if this factor is NOT a known inlier (i.e., it's an LC edge)
@@ -1170,7 +1170,7 @@ double FrameToFrameLoopClosure::optimize_graph()
     }
     MRPT_LOG_INFO_STREAM(
         "GNC result: " << numLcInliers << " LC inlier(s), " << numLcOutliers
-                        << " LC outlier(s) rejected");
+                       << " LC outlier(s) rejected");
 
     // Compute largest pose change
     double largestDelta = 0.0;
