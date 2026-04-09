@@ -79,6 +79,15 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         size_t min_frames_between_lc         = 50;  // minimum frame separation
         size_t max_lc_optimization_rounds    = 5;  // maximum LC+optimization rounds to run
 
+        /** Number of accepted LCs between intermediate graph optimizations.
+         *  Within each round, after this many accepted loop closures the graph
+         *  is re-optimized so that later (larger-gap) candidates benefit from
+         *  the corrections of earlier (smaller-gap) ones.
+         *  Set to 0 to disable intermediate optimizations (optimize only at
+         *  end of each round, original behavior).
+         */
+        size_t lc_optimize_every_n = 5;
+
         /** Loop closure candidate selection strategy */
         enum class CandidateSelectionStrategy : uint8_t
         {
@@ -169,19 +178,19 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         std::string debug_files_prefix             = "f2f_lc_";
 
         // 3D scene visualization output
-        bool  save_3d_scene_files                = false;
-        bool  save_3d_scene_files_per_iteration  = false;
-        float scene_path_line_width     = 2.0f;
-        float scene_lc_line_width       = 4.0f;
-        float scene_path_color_r        = 0.0f;
-        float scene_path_color_g        = 0.0f;
-        float scene_path_color_b        = 1.0f;  // blue
-        float scene_path_color_a        = 0.7f;
-        float scene_lc_color_r          = 1.0f;  // red
-        float scene_lc_color_g          = 0.0f;
-        float scene_lc_color_b          = 0.0f;
-        float scene_lc_color_a          = 0.8f;
-        float scene_keyframe_point_size = 7.0f;
+        bool  save_3d_scene_files               = false;
+        bool  save_3d_scene_files_per_iteration = false;
+        float scene_path_line_width             = 2.0f;
+        float scene_lc_line_width               = 4.0f;
+        float scene_path_color_r                = 0.0f;
+        float scene_path_color_g                = 0.0f;
+        float scene_path_color_b                = 1.0f;  // blue
+        float scene_path_color_a                = 0.7f;
+        float scene_lc_color_r                  = 1.0f;  // red
+        float scene_lc_color_g                  = 0.0f;
+        float scene_lc_color_b                  = 0.0f;
+        float scene_lc_color_a                  = 0.8f;
+        float scene_keyframe_point_size         = 7.0f;
     };
 
     Parameters params_;
