@@ -271,6 +271,14 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
         pts.icp                     = icp;
         params_.icp_parameters      = icpParams;
 
+        // Only generate log files for good ICP edges:
+        params_.icp_parameters.functor_should_generate_debug_file =
+            [this](const mp2p_icp::LogRecord& log) -> bool
+        {
+            return params_.icp_parameters.generateDebugFiles &&
+                   log.icpResult.quality >= params_.min_icp_goodness;
+        };
+
         pts.icp->attachToParameterSource(pts.parameter_source);
 
         // Observation generators
