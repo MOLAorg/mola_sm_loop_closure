@@ -311,6 +311,33 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
 
     MRPT_LOG_INFO_STREAM("Processing simplemap with " << sm.size() << " frames");
 
+    // Precompute which frames have mapping-capable observations, so that
+    // find_loop_candidates() does not need to access (and lazy-load) the
+    // raw sensory frames on every O(N^2) candidate pair check.
+    {
+        state_.frameHasMappingObs.resize(sm.size());
+        for (size_t i = 0; i < sm.size(); i++)
+        {
+            const auto& kf               = sm.get(i);
+            state_.frameHasMappingObs[i] = kf.sf && frame_has_mapping_observations(*kf.sf);
+        }
+        // Unload observations that were just lazy-loaded for this check
+        if (params_.unload_observations_after_use)
+        {
+            for (size_t i = 0; i < sm.size(); i++)
+            {
+                const auto& kf = sm.get(i);
+                if (kf.sf)
+                {
+                    for (const auto& obs : *kf.sf)
+                    {
+                        obs->unload();
+                    }
+                }
+            }
+        }
+    }
+
     // Build initial graph with odometry edges
     build_initial_graph();
 
@@ -686,11 +713,9 @@ auto FrameToFrameLoopClosure::
                 continue;
             }
 
-            // Verify valid observations
-            const auto& [_, sf_i, __]     = sm.get(i);  // NOLINT(bugprone-reserved-identifier)
-            const auto& [___, sf_j, ____] = sm.get(j);  // NOLINT(bugprone-reserved-identifier)
-
-            if (!frame_has_mapping_observations(*sf_i) || !frame_has_mapping_observations(*sf_j))
+            // Verify valid observations (using precomputed flags to avoid
+            // lazy-loading externally-stored observation data)
+            if (!state_.frameHasMappingObs[i] || !state_.frameHasMappingObs[j])
             {
                 continue;
             }
@@ -1041,6 +1066,9 @@ mp2p_icp::metric_map_t::Ptr FrameToFrameLoopClosure::generate_frame_pointcloud(
         }
     }
 
+    // Save local map ID, useful if generating debug ICP log files is enabled:
+    observation->id = frameId;
+
     return observation;
 }
 
@@ -1158,7 +1186,7 @@ double FrameToFrameLoopClosure::optimize_graph()
             state_.knownInlierFactorIndices.begin(), state_.knownInlierFactorIndices.end(), k);
         if (!isKnownInlier)
         {
-            if (gncWeights[k] < 0.5)
+            if (gncWeights[static_cast<Eigen::Index>(k)] < 0.5)
             {
                 numLcOutliers++;
             }
