@@ -43,6 +43,10 @@
   <test_depend>ament_cmake_uncrustify</test_depend>
   <test_depend>ament_cmake_xmllint</test_depend>
 
+  <!-- Test datasets to run on them: -->
+  <test_depend>mola_test_datasets</test_depend>
+
+
   <export>
     <build_type>ament_cmake</build_type>
   </export>

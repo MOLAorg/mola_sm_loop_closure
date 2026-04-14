@@ -98,8 +98,13 @@ mola_add_executable(
 
 # -----------------------
 # define tests:
-#enable_testing()
-#add_subdirectory(module/tests)
+if(BUILD_TESTING)
+  enable_testing()
+  if (DETECTED_ROS2)
+    find_package(ament_cmake REQUIRED)
+  endif()
+  add_subdirectory(test)
+endif()
 
 # Install files:
 install(DIRECTORY
@@ -112,8 +117,6 @@ install(DIRECTORY
 #  ROS2
 # -----------------------------------------------------------------------------
 if (DETECTED_ROS2)
-  # find dependencies
-  find_package(ament_cmake REQUIRED)
-
+  find_package(ament_cmake REQUIRED)  # no-op if already found above
   ament_package()
 endif()

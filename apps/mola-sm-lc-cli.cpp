@@ -29,8 +29,10 @@
 #include <mrpt/system/filesystem.h>
 #include <mrpt/system/os.h>
 
-// CLI flags:
+namespace
+{
 
+// CLI flags:
 struct Cli
 {
     TCLAP::CmdLine cmd{"mola-sm-lc-cli"};
@@ -88,8 +90,6 @@ struct Cli
         cmd};
 };
 
-namespace
-{
 void run_sm_to_mm(Cli& cli)
 {
     if (cli.argPlugins.isSet())
