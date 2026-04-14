@@ -2,8 +2,8 @@
 Changelog for package mola_sm_loop_closure
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+1.0.0 (2026-04-14)
+------------------
 * package.xml: add missing test-dep
 * add unit tests
 * cli: use output directory as default for debug output files, not input
