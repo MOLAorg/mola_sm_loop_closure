@@ -15,6 +15,7 @@
 // MRPT:
 #include <mola_georeferencing/simplemap_georeference.h>
 #include <mola_gtsam_factors/gtsam_detect_version.h>
+#include <mp2p_icp/update_velocity_buffer_from_obs.h>
 #include <mrpt/core/get_env.h>
 #include <mrpt/obs/CObservation2DRangeScan.h>
 #include <mrpt/obs/CObservation3DRangeScan.h>
@@ -1846,51 +1847,6 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(cons
 
     auto& pts = state_.perThreadState_.at(threadIdx);
 
-    MRPT_TODO("Use mp2p_icp::update_velocity_buffer_from_obs() once mp2p_icp 2.5.0 is available");
-    const auto lambdaProcessLocalVelocityBuffer = [&](const mrpt::obs::CObservation::Ptr& obs)
-    {
-        auto obsComment = std::dynamic_pointer_cast<mrpt::obs::CObservationComment>(obs);
-        if (!obsComment)
-        {
-            return;
-        }
-
-        const auto commentYaml = [&]()
-        {
-            try
-            {
-                return mrpt::containers::yaml::FromText(obsComment->text);
-            }
-            catch (const std::exception& e)
-            {
-                std::cerr << "Error parsing YAML in comment: " << e.what() << "\n";
-                return mrpt::containers::yaml();
-            }
-        }();
-
-        if (!commentYaml.isMap() || !commentYaml.has("local_velocity_buffer"))
-        {
-            return;
-        }
-
-        const auto lvb = commentYaml["local_velocity_buffer"];
-        if (!lvb.isMap())
-        {
-            std::cerr << "Error: 'local_velocity_buffer' field is not a map!\n";
-            return;
-        }
-
-        try
-        {
-            pts.parameter_source.localVelocityBuffer.fromYAML(lvb);
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "Error parsing 'local_velocity_buffer': " << e.what() << "\n";
-            return;
-        }
-    };
-
     // Insert all observations in this submap:
     for (const auto& id : submap.kf_ids)
     {
@@ -1940,7 +1896,8 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(cons
         for (const auto& obs : *sf)
         {
             ASSERT_(obs);
-            lambdaProcessLocalVelocityBuffer(obs);
+            mp2p_icp::update_velocity_buffer_from_obs(
+                pts.parameter_source.localVelocityBuffer, obs);
         }
 
         // Next, do the actual sensor data processing:

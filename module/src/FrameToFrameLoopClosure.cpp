@@ -22,6 +22,7 @@
 #include <mola_gtsam_factors/gtsam_detect_version.h>
 #include <mola_sm_loop_closure/FrameToFrameLoopClosure.h>
 #include <mola_yaml/yaml_helpers.h>
+#include <mp2p_icp/update_velocity_buffer_from_obs.h>
 #include <mrpt/core/get_env.h>
 #include <mrpt/maps/CPointsMap.h>
 #include <mrpt/obs/CObservation2DRangeScan.h>
@@ -963,55 +964,6 @@ bool FrameToFrameLoopClosure::process_loop_candidate(const LoopCandidate& lc)
     return true;
 }
 
-MRPT_TODO("Use mp2p_icp::update_velocity_buffer_from_obs() once mp2p_icp 2.5.0 is available");
-namespace
-{
-void processLocalVelocityBuffer(
-    const mrpt::obs::CObservation::Ptr& obs, mp2p_icp::ParameterSource& ps)
-{
-    auto obsComment = std::dynamic_pointer_cast<mrpt::obs::CObservationComment>(obs);
-    if (!obsComment)
-    {
-        return;
-    }
-
-    const auto commentYaml = [&]()
-    {
-        try
-        {
-            return mrpt::containers::yaml::FromText(obsComment->text);
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "Error parsing YAML in comment: " << e.what() << "\n";
-            return mrpt::containers::yaml();
-        }
-    }();
-
-    if (!commentYaml.isMap() || !commentYaml.has("local_velocity_buffer"))
-    {
-        return;
-    }
-
-    const auto lvb = commentYaml["local_velocity_buffer"];
-    if (!lvb.isMap())
-    {
-        std::cerr << "Error: 'local_velocity_buffer' field is not a map!\n";
-        return;
-    }
-
-    try
-    {
-        ps.localVelocityBuffer.fromYAML(lvb);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error parsing 'local_velocity_buffer': " << e.what() << "\n";
-        return;
-    }
-};
-}  // namespace
-
 mp2p_icp::metric_map_t::Ptr FrameToFrameLoopClosure::generate_frame_pointcloud(
     frame_id_t frameId, size_t threadIdx)
 {
@@ -1032,7 +984,7 @@ mp2p_icp::metric_map_t::Ptr FrameToFrameLoopClosure::generate_frame_pointcloud(
     for (const auto& obs : *sf)
     {
         ASSERT_(obs);
-        processLocalVelocityBuffer(obs, pts.parameter_source);
+        mp2p_icp::update_velocity_buffer_from_obs(pts.parameter_source.localVelocityBuffer, obs);
     }
 
     update_dynamic_variables(frameId, threadIdx);
