@@ -240,6 +240,11 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         // for use with GNC optimizer
         std::vector<uint64_t> knownInlierFactorIndices;
 
+        /// Precomputed flag per frame: true if the frame has mapping-capable
+        /// observations.  Computed once at the start of process() to avoid
+        /// repeated lazy-loading of externally-stored observations.
+        std::vector<bool> frameHasMappingObs;
+
         // LRU point cloud cache
         struct CachedPC
         {

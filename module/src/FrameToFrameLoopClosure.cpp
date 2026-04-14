@@ -22,6 +22,7 @@
 #include <mola_gtsam_factors/gtsam_detect_version.h>
 #include <mola_sm_loop_closure/FrameToFrameLoopClosure.h>
 #include <mola_yaml/yaml_helpers.h>
+#include <mp2p_icp/update_velocity_buffer_from_obs.h>
 #include <mrpt/core/get_env.h>
 #include <mrpt/maps/CPointsMap.h>
 #include <mrpt/obs/CObservation2DRangeScan.h>
@@ -39,7 +40,6 @@
 #include <mrpt/system/filesystem.h>
 
 #include <cmath>
-#include <numeric>
 
 using namespace mola;
 
@@ -295,6 +295,16 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
         }
     }
 
+#if MP2P_ICP_HAS_LOG_FUNCTOR  // MP2P_ICP>=2.6.0
+    //  Only generate log files for good ICP edges:
+    params_.icp_parameters.functor_should_generate_debug_file =
+        [this](const mp2p_icp::LogRecord& log) -> bool
+    {
+        return params_.icp_parameters.generateDebugFiles &&
+               log.icpResult.quality >= params_.min_icp_goodness;
+    };
+#endif
+
     state_.initialized = true;
 
     MRPT_TRY_END
@@ -310,6 +320,25 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
     accepted_lc_edges_.clear();
 
     MRPT_LOG_INFO_STREAM("Processing simplemap with " << sm.size() << " frames");
+
+    // Precompute which frames have mapping-capable observations, so that
+    // find_loop_candidates() does not need to access (and lazy-load) the
+    // raw sensory frames on every O(N^2) candidate pair check.
+    {
+        state_.frameHasMappingObs.assign(sm.size(), false);
+        for (size_t i = 0; i < sm.size(); i++)
+        {
+            const auto& kf               = sm.get(i);
+            state_.frameHasMappingObs[i] = kf.sf && frame_has_mapping_observations(*kf.sf);
+            if (params_.unload_observations_after_use && kf.sf)
+            {
+                for (const auto& obs : *kf.sf)
+                {
+                    obs->unload();
+                }
+            }
+        }
+    }
 
     // Build initial graph with odometry edges
     build_initial_graph();
@@ -686,11 +715,9 @@ auto FrameToFrameLoopClosure::
                 continue;
             }
 
-            // Verify valid observations
-            const auto& [_, sf_i, __]     = sm.get(i);  // NOLINT(bugprone-reserved-identifier)
-            const auto& [___, sf_j, ____] = sm.get(j);  // NOLINT(bugprone-reserved-identifier)
-
-            if (!frame_has_mapping_observations(*sf_i) || !frame_has_mapping_observations(*sf_j))
+            // Verify valid observations (using precomputed flags to avoid
+            // lazy-loading externally-stored observation data)
+            if (!state_.frameHasMappingObs[i] || !state_.frameHasMappingObs[j])
             {
                 continue;
             }
@@ -929,55 +956,6 @@ bool FrameToFrameLoopClosure::process_loop_candidate(const LoopCandidate& lc)
     return true;
 }
 
-MRPT_TODO("Use mp2p_icp::update_velocity_buffer_from_obs() once mp2p_icp 2.5.0 is available");
-namespace
-{
-void processLocalVelocityBuffer(
-    const mrpt::obs::CObservation::Ptr& obs, mp2p_icp::ParameterSource& ps)
-{
-    auto obsComment = std::dynamic_pointer_cast<mrpt::obs::CObservationComment>(obs);
-    if (!obsComment)
-    {
-        return;
-    }
-
-    const auto commentYaml = [&]()
-    {
-        try
-        {
-            return mrpt::containers::yaml::FromText(obsComment->text);
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "Error parsing YAML in comment: " << e.what() << "\n";
-            return mrpt::containers::yaml();
-        }
-    }();
-
-    if (!commentYaml.isMap() || !commentYaml.has("local_velocity_buffer"))
-    {
-        return;
-    }
-
-    const auto lvb = commentYaml["local_velocity_buffer"];
-    if (!lvb.isMap())
-    {
-        std::cerr << "Error: 'local_velocity_buffer' field is not a map!\n";
-        return;
-    }
-
-    try
-    {
-        ps.localVelocityBuffer.fromYAML(lvb);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error parsing 'local_velocity_buffer': " << e.what() << "\n";
-        return;
-    }
-};
-}  // namespace
-
 mp2p_icp::metric_map_t::Ptr FrameToFrameLoopClosure::generate_frame_pointcloud(
     frame_id_t frameId, size_t threadIdx)
 {
@@ -998,7 +976,7 @@ mp2p_icp::metric_map_t::Ptr FrameToFrameLoopClosure::generate_frame_pointcloud(
     for (const auto& obs : *sf)
     {
         ASSERT_(obs);
-        processLocalVelocityBuffer(obs, pts.parameter_source);
+        mp2p_icp::update_velocity_buffer_from_obs(pts.parameter_source.localVelocityBuffer, obs);
     }
 
     update_dynamic_variables(frameId, threadIdx);
@@ -1040,6 +1018,9 @@ mp2p_icp::metric_map_t::Ptr FrameToFrameLoopClosure::generate_frame_pointcloud(
             obs->unload();
         }
     }
+
+    // Save local map ID, useful if generating debug ICP log files is enabled:
+    observation->id = std::optional<uint64_t>(static_cast<uint64_t>(frameId));
 
     return observation;
 }
@@ -1158,7 +1139,7 @@ double FrameToFrameLoopClosure::optimize_graph()
             state_.knownInlierFactorIndices.begin(), state_.knownInlierFactorIndices.end(), k);
         if (!isKnownInlier)
         {
-            if (gncWeights[k] < 0.5)
+            if (gncWeights[static_cast<Eigen::Index>(k)] < 0.5)
             {
                 numLcOutliers++;
             }
