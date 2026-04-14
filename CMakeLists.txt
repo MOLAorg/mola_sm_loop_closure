@@ -68,6 +68,11 @@ mola_add_library(
     mrpt-maps
 )
 
+# Check mp2p_icp version for log functor support
+if(mp2p_icp_VERSION VERSION_GREATER_EQUAL "2.6.0")
+  target_compile_definitions(${PROJECT_NAME} PRIVATE MP2P_ICP_HAS_LOG_FUNCTOR)
+endif()
+
 # mola_add_library() expects headers under "ROOT/include", so do this manually here:
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/module/include>

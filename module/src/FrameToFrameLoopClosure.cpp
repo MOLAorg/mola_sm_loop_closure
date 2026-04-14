@@ -39,7 +39,6 @@
 #include <mrpt/system/filesystem.h>
 
 #include <cmath>
-#include <numeric>
 
 using namespace mola;
 
@@ -271,14 +270,6 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
         pts.icp                     = icp;
         params_.icp_parameters      = icpParams;
 
-        // Only generate log files for good ICP edges:
-        params_.icp_parameters.functor_should_generate_debug_file =
-            [this](const mp2p_icp::LogRecord& log) -> bool
-        {
-            return params_.icp_parameters.generateDebugFiles &&
-                   log.icpResult.quality >= params_.min_icp_goodness;
-        };
-
         pts.icp->attachToParameterSource(pts.parameter_source);
 
         // Observation generators
@@ -302,6 +293,16 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
             mp2p_icp::AttachToParameterSource(pts.pc_filter, pts.parameter_source);
         }
     }
+
+#if MP2P_ICP_HAS_LOG_FUNCTOR  // MP2P_ICP>=2.6.0
+    //  Only generate log files for good ICP edges:
+    params_.icp_parameters.functor_should_generate_debug_file =
+        [this](const mp2p_icp::LogRecord& log) -> bool
+    {
+        return params_.icp_parameters.generateDebugFiles &&
+               log.icpResult.quality >= params_.min_icp_goodness;
+    };
+#endif
 
     state_.initialized = true;
 
@@ -1075,7 +1076,7 @@ mp2p_icp::metric_map_t::Ptr FrameToFrameLoopClosure::generate_frame_pointcloud(
     }
 
     // Save local map ID, useful if generating debug ICP log files is enabled:
-    observation->id = frameId;
+    observation->id = std::optional<uint64_t>(static_cast<uint64_t>(frameId));
 
     return observation;
 }
