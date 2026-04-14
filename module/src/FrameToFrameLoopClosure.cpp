@@ -325,24 +325,16 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
     // find_loop_candidates() does not need to access (and lazy-load) the
     // raw sensory frames on every O(N^2) candidate pair check.
     {
-        state_.frameHasMappingObs.resize(sm.size());
+        state_.frameHasMappingObs.assign(sm.size(), false);
         for (size_t i = 0; i < sm.size(); i++)
         {
             const auto& kf               = sm.get(i);
             state_.frameHasMappingObs[i] = kf.sf && frame_has_mapping_observations(*kf.sf);
-        }
-        // Unload observations that were just lazy-loaded for this check
-        if (params_.unload_observations_after_use)
-        {
-            for (size_t i = 0; i < sm.size(); i++)
+            if (params_.unload_observations_after_use && kf.sf)
             {
-                const auto& kf = sm.get(i);
-                if (kf.sf)
+                for (const auto& obs : *kf.sf)
                 {
-                    for (const auto& obs : *kf.sf)
-                    {
-                        obs->unload();
-                    }
+                    obs->unload();
                 }
             }
         }
