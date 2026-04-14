@@ -30,12 +30,21 @@
 
   <doc_depend>doxygen</doc_depend>
 
-  <!-- Minimum entries to release non-catkin pkgs: -->
+  <!-- BUILD TOOLS -->
   <buildtool_depend>cmake</buildtool_depend>
-  <export>
-    <build_type>cmake</build_type>
-  </export>
-  <!-- End -->
+  <buildtool_depend>ament_cmake_gtest</buildtool_depend>
+  <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <!-- ROS2 -->
+  <build_depend>ros_environment</build_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_cmake_lint_cmake</test_depend>
+  <test_depend>ament_cmake_pep257</test_depend>
+  <test_depend>ament_cmake_uncrustify</test_depend>
+  <test_depend>ament_cmake_xmllint</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
 
 </package>
