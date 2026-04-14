@@ -107,7 +107,8 @@ void run_sm_to_mm(Cli& cli)
     ASSERT_FILE_EXISTS_(filYaml);
     auto yamlData = mola::load_yaml_file(filYaml);
 
-    const auto& filSM = cli.argInput.getValue();
+    const auto& filSM  = cli.argInput.getValue();
+    const auto& filOut = cli.argOutput.getValue();
 
     mrpt::maps::CSimpleMap sm;
 
@@ -145,8 +146,8 @@ void run_sm_to_mm(Cli& cli)
     if (yamlData.has("params"))
     {
         auto debugFilesPrefix = mrpt::system::pathJoin(
-            {mrpt::system::extractFileDirectory(filSM),
-             mrpt::system::extractFileName(filSM) + "_lc_"});
+            {mrpt::system::extractFileDirectory(filOut),
+             mrpt::system::extractFileName(filOut) + "_lc_"});
 
         yamlData["params"]["debug_files_prefix"] = debugFilesPrefix;
     }
@@ -184,7 +185,6 @@ void run_sm_to_mm(Cli& cli)
     lc.process(sm);
 
     // save output:
-    const auto filOut = cli.argOutput.getValue();
     std::cout << "[mola-sm-lc-cli] Writing output map to: '" << filOut << "'...\n";
 
     sm.saveToFile(filOut);
