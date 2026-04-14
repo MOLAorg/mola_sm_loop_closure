@@ -101,6 +101,13 @@ mola_add_executable(
 #enable_testing()
 #add_subdirectory(module/tests)
 
+# Install files:
+install(DIRECTORY
+  pipelines
+  DESTINATION
+    share/${PROJECT_NAME}
+)
+
 # -----------------------------------------------------------------------------
 #  ROS2
 # -----------------------------------------------------------------------------
