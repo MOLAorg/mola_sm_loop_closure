@@ -2,6 +2,32 @@
 Changelog for package mola_sm_loop_closure
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* package.xml: add missing test-dep
+* add unit tests
+* cli: use output directory as default for debug output files, not input
+* Install pipelines so they are accessible under 'share'
+* Make the package discoverage by ament
+* Merge pull request `#6 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/6>`_ from MOLAorg/save-ram
+  F2F algorithm: save ram in offline runs
+* More memory efficient loop
+* Bump minimum cmake version to 3.7
+* Reuse mp2p_icp::update_velocity_buffer_from_obs() from mp2p_icp
+  Removes duplicated code in this repo now that mp2p_icp>=2.5.0 is available in all distributions
+* Fix build against mp2p_icp <2.6.0
+* icp debug log files: save only good edges
+* F2F algorithm: save ram in offline runs
+* sm2mm pipeline yaml: expose more params via env vars
+* Expose more parameters for F2F algorithm
+* Debug feature: enable saving 3Dscene files per optimization round
+* Use Graduated Non-Convexity (GNC) optimizer for superior outlier rejection
+* FIX: Reverted logic in formula for adaptive threshold
+* Add formal CLA
+* Merge pull request `#5 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/5>`_ from MOLAorg/feat/smart-ram-lazy-unload
+  Lazy unload keyframe clouds to keep RAM usage bounded
+* Contributors: Jose Luis Blanco-Claraco
+
 0.2.0 (2026-03-03)
 ------------------
 * Fix build against different gtsam versions
