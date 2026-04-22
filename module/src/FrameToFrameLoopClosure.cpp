@@ -225,6 +225,7 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     }
 
     YAML_LOAD_OPT(params_, min_icp_goodness, double);
+    YAML_LOAD_OPT(params_, min_icp_goodness_to_save_icplog, double);
     YAML_LOAD_OPT(params_, icp_edge_robust_param, double);
     YAML_LOAD_OPT(params_, icp_edge_additional_noise_xyz, double);
     YAML_LOAD_OPT(params_, icp_edge_additional_noise_ang, double);
@@ -301,7 +302,7 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
         [this](const mp2p_icp::LogRecord& log) -> bool
     {
         return params_.icp_parameters.generateDebugFiles &&
-               log.icpResult.quality >= params_.min_icp_goodness;
+               log.icpResult.quality >= params_.min_icp_goodness_to_save_icplog;
     };
 #endif
 
