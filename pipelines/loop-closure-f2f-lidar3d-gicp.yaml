@@ -10,7 +10,7 @@
 params:
   # ===== GNSS Optimization Parameters =====
   use_gnss: "${USE_GNSS|true}"
-  gnss_minimum_uncertainty_xyz: 0.10 # [m] Minimum GPS uncertainty
+  gnss_minimum_uncertainty_xyz: ${LC_GNSS_MINIMUM_XYZ_SIGMA|0.10} # [m] Minimum GPS uncertainty
   gnss_add_horizontality: false # Add constraints for flat terrain
   gnss_horizontality_sigma_z: 0.10 # [m] Z-axis constraint if enabled
   gnss_edges_uncertainty_multiplier: "${GNSS_EDGES_UNCERTAINTY_MULTIPLIER|1.0}"
@@ -56,6 +56,7 @@ params:
   save_trajectory_files: true
   save_trajectory_files_with_cov: true
   debug_files_prefix: "f2f_lc_"
+  min_icp_goodness_to_save_icplog: ${MIN_ICP_QUALITY_TO_SAVE_ICPLOG|0.50}
 
   # ===== 3D Scene Visualization Output =====
   save_3d_scene_files: "${SAVE_3D_SCENES|false}"

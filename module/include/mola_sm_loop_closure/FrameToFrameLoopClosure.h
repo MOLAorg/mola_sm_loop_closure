@@ -172,10 +172,11 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         double max_sensor_range = 100.0;  // [m]
 
         // Output and profiling
-        bool        profiler_enabled               = true;
-        bool        save_trajectory_files          = true;
-        bool        save_trajectory_files_with_cov = false;
-        std::string debug_files_prefix             = "f2f_lc_";
+        bool        profiler_enabled                = true;
+        bool        save_trajectory_files           = true;
+        bool        save_trajectory_files_with_cov  = false;
+        std::string debug_files_prefix              = "f2f_lc_";
+        double      min_icp_goodness_to_save_icplog = 0.50;
 
         // 3D scene visualization output
         bool  save_3d_scene_files               = false;
