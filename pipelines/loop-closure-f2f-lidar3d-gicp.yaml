@@ -190,6 +190,7 @@ observations_filter:
       input_pointcloud_layer: "raw"
       output_pointcloud_layer: "deskewed"
       method: "${MOLA_DESKEW_METHOD|MotionCompensationMethod::IMU}"
+      ignore_accelerometer: "${MOLA_DESKEW_IGNORE_ACCELEROMETER|false}"
       silently_ignore_no_timestamps: "${MOLA_DESKEW_IGNORE_NO_TIMESTAMPS|false}" # To handle more dataset types
       output_layer_class: "mrpt::maps::CGenericPointsMap" # Keep intensity & ring channels
 
