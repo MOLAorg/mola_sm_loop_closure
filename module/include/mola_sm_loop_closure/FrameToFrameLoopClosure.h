@@ -192,6 +192,17 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         float scene_lc_color_b                  = 0.0f;
         float scene_lc_color_a                  = 0.8f;
         float scene_keyframe_point_size         = 7.0f;
+
+        // ===== Manual Loop Closure Hints =====
+        struct ManualLoopConstraint
+        {
+            double timestamp_i = 0.0;  ///< UNIX timestamp (mrpt::Clock::toDouble()) for frame i
+            double timestamp_j = 0.0;  ///< UNIX timestamp (mrpt::Clock::toDouble()) for frame j
+            double sigma_xyz = 0.10;  ///< [m] sigma for X, Y, Z; angles are left free (large sigma)
+        };
+
+        /// List of manually specified loop closure constraints loaded from config.
+        std::vector<ManualLoopConstraint> manual_loop_constraints;
     };
 
     Parameters params_;
@@ -321,6 +332,9 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
 
     /** Accepted loop closure edges (for 3D scene output) */
     std::vector<std::pair<frame_id_t, frame_id_t>> accepted_lc_edges_;
+
+    /** Add manual loop closure factors specified in the config to the graph. */
+    void add_manual_loop_closure_factors();
 };
 
 }  // namespace mola

@@ -261,6 +261,32 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, scene_lc_color_a, float);
     YAML_LOAD_OPT(params_, scene_keyframe_point_size, float);
 
+    // Load manual loop closure hints
+    if (cfg.has("manual_loop_constraints") && !cfg["manual_loop_constraints"].isNullNode())
+    {
+        for (const auto& entryNode : cfg["manual_loop_constraints"].asSequenceRange())
+        {
+            ASSERT_(entryNode.isMap());
+            const auto& entry = entryNode.asMap();
+
+            Parameters::ManualLoopConstraint mlc;
+            ASSERTMSG_(
+                entry.count("timestamp_i") != 0 && entry.count("timestamp_j") != 0 &&
+                    entry.count("sigma_xyz") != 0,
+                "Each manual_loop_constraints entry must have: timestamp_i, timestamp_j, "
+                "sigma_xyz");
+
+            mlc.timestamp_i = entry.at("timestamp_i").as<double>();
+            mlc.timestamp_j = entry.at("timestamp_j").as<double>();
+            mlc.sigma_xyz   = entry.at("sigma_xyz").as<double>();
+
+            params_.manual_loop_constraints.push_back(mlc);
+        }
+        MRPT_LOG_INFO_STREAM(
+            "Loaded " << params_.manual_loop_constraints.size()
+                      << " manual loop closure constraint(s) from config.");
+    }
+
     profiler_.enable(params_.profiler_enabled);
 
     // Initialize ICP pipelines for each thread
@@ -366,6 +392,21 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
         {
             save_trajectory_as_tum(
                 params_.debug_files_prefix + "after_gnss.tum"s,
+                params_.save_trajectory_files_with_cov);
+        }
+    }
+
+    // Add manual loop closure constraints, if any
+    if (!params_.manual_loop_constraints.empty())
+    {
+        add_manual_loop_closure_factors();
+        MRPT_LOG_INFO("Running optimization after manual loop closure constraints...");
+        optimize_graph();
+
+        if (params_.save_trajectory_files)
+        {
+            save_trajectory_as_tum(
+                params_.debug_files_prefix + "after_manual_lc.tum"s,
                 params_.save_trajectory_files_with_cov);
         }
     }
@@ -647,6 +688,124 @@ void FrameToFrameLoopClosure::add_gnss_factors()
         state_.graphFG.emplace_shared<mola::factors::FactorGnssEnu>(
             X(frameId), sensorPointOnVeh, observedENU, robustNoise);
     }
+}
+
+void FrameToFrameLoopClosure::add_manual_loop_closure_factors()
+{
+    using gtsam::symbol_shorthand::X;
+
+    mrpt::system::CTimeLoggerEntry tle(profiler_, "add_manual_loop_closure_factors");
+
+    ASSERT_(state_.sm);
+    const auto& sm = *state_.sm;
+
+    // Build a timestamp => frame_id lookup table once
+    // (timestamps come from the first observation in each sensory frame)
+    std::vector<std::pair<double, frame_id_t>> tsIndex;
+    tsIndex.reserve(sm.size());
+
+    for (size_t i = 0; i < sm.size(); i++)
+    {
+        const auto& kf = sm.get(i);
+        if (!kf.sf || kf.sf->empty())
+        {
+            continue;
+        }
+        const auto obs = kf.sf->getObservationByIndex(0);
+        if (!obs)
+        {
+            continue;
+        }
+        tsIndex.emplace_back(mrpt::Clock::toDouble(obs->timestamp), static_cast<frame_id_t>(i));
+    }
+
+    // Sort by timestamp for fast nearest-neighbour lookup
+    std::sort(tsIndex.begin(), tsIndex.end());
+
+    // Helper: find the frame_id whose timestamp is closest to a query value
+    auto findClosestFrame = [&](double queryTs) -> std::optional<frame_id_t>
+    {
+        if (tsIndex.empty())
+        {
+            return std::nullopt;
+        }
+
+        // Lower bound by timestamp
+        auto it = std::lower_bound(
+            tsIndex.begin(), tsIndex.end(), std::make_pair(queryTs, frame_id_t{0}));
+
+        if (it == tsIndex.end())
+        {
+            return tsIndex.back().second;
+        }
+        if (it == tsIndex.begin())
+        {
+            return it->second;
+        }
+
+        auto prev = std::prev(it);
+        return (std::abs(it->first - queryTs) < std::abs(prev->first - queryTs)) ? it->second
+                                                                                 : prev->second;
+    };
+
+    size_t addedCount = 0;
+
+    for (const auto& mlc : params_.manual_loop_constraints)
+    {
+        const auto fi_opt = findClosestFrame(mlc.timestamp_i);
+        const auto fj_opt = findClosestFrame(mlc.timestamp_j);
+
+        if (!fi_opt || !fj_opt)
+        {
+            MRPT_LOG_WARN("Manual LC: could not find frames for the given timestamps; skipping.");
+            continue;
+        }
+
+        const frame_id_t fi = *fi_opt;
+        const frame_id_t fj = *fj_opt;
+
+        if (fi == fj)
+        {
+            MRPT_LOG_WARN_STREAM(
+                "Manual LC: timestamps map to the same frame (" << fi << "); skipping.");
+            continue;
+        }
+
+        // Relative pose: identity since we are assuming this is roughly a loop-closure:
+        const auto deltaPose = gtsam::Pose3::Identity();
+
+        // Tight sigma on XYZ, very loose on angles (leave orientation free)
+        constexpr double LARGE_ANGLE_SIGMA = 1e3;  // [rad] effectively unconstrained
+        gtsam::Vector6   sigmas;
+        // GTSAM Pose3 noise order: rx, ry, rz, tx, ty, tz
+        sigmas << LARGE_ANGLE_SIGMA, LARGE_ANGLE_SIGMA, LARGE_ANGLE_SIGMA, mlc.sigma_xyz,
+            mlc.sigma_xyz, mlc.sigma_xyz;
+
+        auto edgeNoise = gtsam::noiseModel::Diagonal::Sigmas(sigmas);
+
+        // Mark as known inlier (manual constraints are trusted)
+        state_.knownInlierFactorIndices.push_back(state_.graphFG.size());
+
+#if GTSAM_USES_BOOST
+        auto factor = boost::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+            X(fi), X(fj), deltaPose, edgeNoise);
+#else
+        auto factor = std::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+            X(fi), X(fj), deltaPose, edgeNoise);
+#endif
+        state_.graphFG += factor;
+
+        // Track for 3D scene output
+        accepted_lc_edges_.emplace_back(fi, fj);
+        addedCount++;
+
+        MRPT_LOG_INFO_STREAM(
+            "Manual LC added: frame " << fi << " (t=" << mlc.timestamp_i << ") <-> frame " << fj
+                                      << " (t=" << mlc.timestamp_j
+                                      << ")  sigma_xyz=" << mlc.sigma_xyz << " m");
+    }
+
+    MRPT_LOG_INFO_STREAM("Added " << addedCount << " manual loop closure factor(s).");
 }
 
 auto FrameToFrameLoopClosure::

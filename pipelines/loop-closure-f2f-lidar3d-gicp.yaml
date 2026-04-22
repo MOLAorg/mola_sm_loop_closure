@@ -73,6 +73,20 @@ params:
   scene_lc_color_a: 0.8
   scene_keyframe_point_size: 7.0
 
+  # ===== Manual Loop Closure Constraints =====
+  # Optional: force loop closure edges between specific keyframes identified by
+  # their UNIX timestamp (as a double, compatible with mrpt::Clock::toDouble()).
+  # The nearest frame in the simplemap to each timestamp is used.
+  # sigma_xyz [m] sets the positional uncertainty; rotation is left unconstrained.
+  #
+  # manual_loop_constraints:
+  # - timestamp_i: 1700000100.250   # UNIX time of first keyframe
+  #   timestamp_j: 1700000345.875   # UNIX time of second keyframe
+  #   sigma_xyz: 0.10               # [m] positional sigma
+  # - timestamp_i: 1700000210.500
+  #   timestamp_j: 1700000512.000
+  #   sigma_xyz: 0.20
+
 # ===== ICP Settings =====
 # (Your existing ICP pipeline configuration goes here)
 # The observations_generator and observations_filter sections will process
