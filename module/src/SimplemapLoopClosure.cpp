@@ -34,6 +34,9 @@
 // MOLA:
 #include <mola_relocalization/relocalization.h>
 #include <mola_sm_loop_closure/SimplemapLoopClosure.h>
+#include <mola_sm_loop_closure/common/gnc_optimizer.h>
+#include <mola_sm_loop_closure/common/obs_helpers.h>
+#include <mola_sm_loop_closure/common/planarity_factors.h>
 #include <mola_yaml/yaml_helpers.h>
 
 // MRPT graphs:
@@ -137,8 +140,15 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, do_first_gross_relocalize, bool);
     YAML_LOAD_OPT(params_, do_montecarlo_icp, bool);
     YAML_LOAD_OPT(params_, assume_planar_world, bool);
+    YAML_LOAD_OPT(params_, planar_world_initial_sigma_z, double);
+    YAML_LOAD_OPT(params_, planar_world_initial_sigma_ang, double);
+    YAML_LOAD_OPT(params_, planar_world_annealing_rounds, size_t);
+    YAML_LOAD_OPT(params_, planar_world_hard_flatten, bool);
     YAML_LOAD_OPT(params_, use_gnss, bool);
+    YAML_LOAD_OPT(params_, gnss_add_horizontality, bool);
+    YAML_LOAD_OPT(params_, gnss_horizontality_sigma_z, double);
     YAML_LOAD_OPT(params_, gnss_minimum_uncertainty_xyz, double);
+    YAML_LOAD_OPT(params_, use_gnc_optimizer, bool);
 
     YAML_LOAD_REQ(params_, threshold_sigma_initial, std::string);
     YAML_LOAD_REQ(params_, threshold_sigma_final, std::string);
@@ -254,52 +264,11 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
 
 namespace
 {
-bool sf_has_real_mapping_observations(const mrpt::obs::CSensoryFrame& sf)
-{
-    if (sf.empty())
-    {
-        return false;
-    }
-    if (auto oPC = sf.getObservationByClass<mrpt::obs::CObservationPointCloud>(); oPC)
-    {
-        return true;
-    }
+using mola::lc_common::frame_has_mapping_observations;
+using mola::lc_common::sf_timestamp;
 
-    if (auto o2D = sf.getObservationByClass<mrpt::obs::CObservation2DRangeScan>(); o2D)
-    {
-        return true;
-    }
-
-    if (auto o3D = sf.getObservationByClass<mrpt::obs::CObservation3DRangeScan>(); o3D)
-    {
-        return true;
-    }
-
-    if (auto oVl = sf.getObservationByClass<mrpt::obs::CObservationVelodyneScan>(); oVl)
-    {
-        return true;
-    }
-
-    // We don't recognize any valid mapping-suitable observation in the SF.
-    return false;
-}
-
-std::optional<mrpt::Clock::time_point> sf_timestamp(const mrpt::obs::CSensoryFrame& sf)
-{
-    for (const auto& o : sf)
-    {
-        if (!o)
-        {
-            continue;
-        }
-        if (o->timestamp == mrpt::Clock::time_point())
-        {
-            continue;
-        }
-        return o->timestamp;
-    }
-    return {};
-}
+// Alias kept so existing SM code that calls sf_has_real_mapping_observations() still compiles:
+const auto& sf_has_real_mapping_observations = frame_has_mapping_observations;
 
 }  // namespace
 
@@ -402,6 +371,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     }
 
     // anchor for X(0):
+    state_.knownInlierFactorIndices.push_back(state_.kfGraphFG.size());
     state_.kfGraphFG.push_back(x0prior);
     state_.kfGraphFGRobust.push_back(x0prior);
 
@@ -460,6 +430,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             X(i - 1), X(i), deltaPose, edgeNoise);
 #endif
 
+        state_.knownInlierFactorIndices.push_back(state_.kfGraphFG.size());
         state_.kfGraphFG += f;
         state_.kfGraphFGRobust += f;
     }
@@ -534,6 +505,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
                     << relPose.getPoseMean().asTPose());
             }
 
+            state_.knownInlierFactorIndices.push_back(state_.kfGraphFG.size());
             state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
                 X(refKfId), X(curKfId), deltaPose, edgeNoise);
 
@@ -580,14 +552,57 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
     size_t accepted_lcs = 0;
 
+    // Seed planarity constraint at full strength before any LC round:
+    if (params_.assume_planar_world)
+    {
+        lc_common::build_planarity_factors(
+            state_.planarityFG, state_.kfGraphValues, sm.size(),
+            params_.planar_world_initial_sigma_z, params_.planar_world_initial_sigma_ang);
+        MRPT_LOG_INFO_STREAM(
+            "Planar-world annealing enabled: initial sigma_z="
+            << params_.planar_world_initial_sigma_z
+            << " m, sigma_ang=" << params_.planar_world_initial_sigma_ang << " rad, over "
+            << params_.planar_world_annealing_rounds << " LC rounds");
+    }
+
     // index: <smallest_id, largest_id>
     std::set<std::pair<submap_id_t, submap_id_t>> alreadyChecked;
     // TODO: Consider a finer grade alreadyChecked reset?
 
+    size_t lcRound = 0;
+
     // repeat until checkedCount==0:
-    // for (size_t lc_loop = 0; lc_loop < 1; lc_loop++)
-    for (;;)
+    for (;; lcRound++)
     {
+        // Anneal planar-world constraint each LC round:
+        if (params_.assume_planar_world)
+        {
+            lc_common::PlanarAnneal pa;
+            pa.initSigmaZ   = params_.planar_world_initial_sigma_z;
+            pa.initSigmaAng = params_.planar_world_initial_sigma_ang;
+            pa.rounds       = params_.planar_world_annealing_rounds;
+
+            auto sigmas = lc_common::planar_sigmas_for_round(pa, lcRound);
+            if (sigmas)
+            {
+                lc_common::build_planarity_factors(
+                    state_.planarityFG, state_.kfGraphValues, sm.size(), sigmas->first,
+                    sigmas->second);
+                MRPT_LOG_INFO_STREAM(
+                    "Planar-world round " << lcRound << "/" << pa.rounds
+                                          << ": sigma_z=" << sigmas->first
+                                          << " m, sigma_ang=" << sigmas->second << " rad");
+            }
+            else
+            {
+                state_.planarityFG.resize(0);
+                if (lcRound == pa.rounds)
+                {
+                    MRPT_LOG_INFO("Planar-world constraint fully annealed out.");
+                }
+            }
+        }
+
         size_t checkedCount   = 0;
         bool   anyGraphChange = false;
 
@@ -759,7 +774,7 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
 
     const auto invSubmapPose = -submap.global_pose;
 
-    if (params_.assume_planar_world)
+    if (params_.assume_planar_world && params_.planar_world_hard_flatten)
     {
         make_pose_planar(submap.global_pose);
     }
@@ -821,7 +836,8 @@ void SimplemapLoopClosure::build_submap_from_kfs_into(
     if (params_.use_gnss && gnssCount > 2)
     {
         SMGeoReferencingParams geoParams;
-        geoParams.fgParams.addHorizontalityConstraints = false;
+        geoParams.fgParams.addHorizontalityConstraints = params_.gnss_add_horizontality;
+        geoParams.fgParams.horizontalitySigmaZ         = params_.gnss_horizontality_sigma_z;
 
         geoParams.logger            = this;
         geoParams.geodeticReference = state_.globalGeoRef;
@@ -1117,7 +1133,7 @@ SimplemapLoopClosure::PotentialLoopOutput SimplemapLoopClosure::find_next_loop_c
                 edge = -edge;
             }
 
-            if (params_.assume_planar_world)
+            if (params_.assume_planar_world && params_.planar_world_hard_flatten)
             {
                 make_pose_planar_pdf(edge);
             }
@@ -1320,12 +1336,6 @@ SimplemapLoopClosure::PotentialLoopOutput SimplemapLoopClosure::find_next_loop_c
             }
 
             potentialLCs[root_id].emplace(bestScore, lc);
-        }
-
-        // Do we have enough with this root_id submap?
-        if (!potentialLCs[root_id].empty())
-        {
-            break;
         }
 
     }  // end for each root_id
@@ -2011,38 +2021,88 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(cons
 
 double SimplemapLoopClosure::optimize_graph()
 {
-    // low-level KF graph:
-    auto lmParams = gtsam::LevenbergMarquardtParams::CeresDefaults();
-    // auto lmParams = gtsam::GaussNewtonParams();
-
-    // Pass 1
-    const double errorInit1 = state_.kfGraphFG.error(state_.kfGraphValues);
-    const double rmseInit1  = std::sqrt(errorInit1 / static_cast<double>(state_.kfGraphFG.size()));
-
-    gtsam::LevenbergMarquardtOptimizer lm1(state_.kfGraphFG, state_.kfGraphValues, lmParams);
-
-    const auto& optimalValues1 = lm1.optimize();
-
-    const double errorEnd1 = state_.kfGraphFG.error(optimalValues1);
-    const double rmseEnd1  = std::sqrt(errorEnd1 / static_cast<double>(state_.kfGraphFG.size()));
-
-    // Pass 2
-    const double errorInit2 = state_.kfGraphFGRobust.error(optimalValues1);
-    const double rmseInit2 =
-        std::sqrt(errorInit2 / static_cast<double>(state_.kfGraphFGRobust.size()));
-
-    gtsam::LevenbergMarquardtOptimizer lm2(state_.kfGraphFGRobust, optimalValues1, lmParams);
-    const auto&                        optimalValues2 = lm2.optimize();
-
-    state_.kfGraphValues = optimalValues2;
-
-    const double errorEnd2 = state_.kfGraphFGRobust.error(optimalValues2);
-    const double rmseEnd2 =
-        std::sqrt(errorEnd2 / static_cast<double>(state_.kfGraphFGRobust.size()));
-
-    // Update submaps global pose:
     double largestDelta = 0;
 
+    if (params_.use_gnc_optimizer)
+    {
+        const auto result = lc_common::run_gnc(
+            state_.kfGraphFG, state_.planarityFG, state_.kfGraphValues,
+            state_.knownInlierFactorIndices, this);
+
+        MRPT_LOG_INFO_STREAM(
+            "GNC result: " << result.numLcInliers << " LC inlier(s), " << result.numLcOutliers
+                           << " LC outlier(s) rejected");
+
+        state_.kfGraphValues = result.values;
+        largestDelta         = result.largestDelta;
+
+        auto bckCol =
+            mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO);
+        mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO) =
+            mrpt::system::ConsoleForegroundColor::BRIGHT_GREEN;
+        MRPT_LOG_INFO_STREAM(
+            "***** Graph re-optimized (GNC): RMSE " << result.rmseInit << " -> " << result.rmseEnd
+                                                    << " largestDelta=" << largestDelta << " [m]");
+        mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO) = bckCol;
+    }
+    else
+    {
+        // Legacy two-pass LM optimisation:
+        auto lmParams = gtsam::LevenbergMarquardtParams::CeresDefaults();
+
+        const double errorInit1 = state_.kfGraphFG.error(state_.kfGraphValues);
+        const double rmseInit1 =
+            std::sqrt(errorInit1 / static_cast<double>(state_.kfGraphFG.size()));
+
+        gtsam::LevenbergMarquardtOptimizer lm1(state_.kfGraphFG, state_.kfGraphValues, lmParams);
+        const auto&                        optimalValues1 = lm1.optimize();
+
+        const double errorEnd1 = state_.kfGraphFG.error(optimalValues1);
+        const double rmseEnd1 = std::sqrt(errorEnd1 / static_cast<double>(state_.kfGraphFG.size()));
+
+        const double errorInit2 = state_.kfGraphFGRobust.error(optimalValues1);
+        const double rmseInit2 =
+            std::sqrt(errorInit2 / static_cast<double>(state_.kfGraphFGRobust.size()));
+
+        gtsam::LevenbergMarquardtOptimizer lm2(state_.kfGraphFGRobust, optimalValues1, lmParams);
+        const auto&                        optimalValues2 = lm2.optimize();
+
+        state_.kfGraphValues = optimalValues2;
+
+        const double errorEnd2 = state_.kfGraphFGRobust.error(optimalValues2);
+        const double rmseEnd2 =
+            std::sqrt(errorEnd2 / static_cast<double>(state_.kfGraphFGRobust.size()));
+
+        if (PRINT_FG_ERRORS)
+        {
+            const double errorPrintThres = 10.0;
+            state_.kfGraphFG.printErrors(
+                optimalValues1, "================ 1ST PASS Factor errors ============\n",
+                gtsam::DefaultKeyFormatter,
+                std::function<bool(const gtsam::Factor*, double whitenedError, size_t)>(
+                    [&](const gtsam::Factor* /*f*/, double error, size_t /*index*/)
+                    { return error > errorPrintThres; }));
+            state_.kfGraphFGRobust.printErrors(
+                optimalValues2, "================ 2ND PASS Factor errors ============\n",
+                gtsam::DefaultKeyFormatter,
+                std::function<bool(const gtsam::Factor*, double whitenedError, size_t)>(
+                    [&](const gtsam::Factor* /*f*/, double error, size_t /*index*/)
+                    { return error > errorPrintThres; }));
+        }
+
+        auto bckCol =
+            mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO);
+        mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO) =
+            mrpt::system::ConsoleForegroundColor::BRIGHT_GREEN;
+        MRPT_LOG_INFO_STREAM(
+            "***** Graph re-optimized in "
+            << lm1.iterations() << "/" << lm2.iterations() << " iters, RMSE: 1st PASS:" << rmseInit1
+            << " ==> " << rmseEnd1 << " / 2nd PASS: " << rmseInit2 << " ==> " << rmseEnd2
+            << " largestDelta=" << largestDelta << " [m]");
+        mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO) = bckCol;
+    }
+
+    // Update submaps global pose:
     for (auto& [submapId, submap] : state_.submaps)
     {
         const auto  refId      = *submap.kf_ids.begin();
@@ -2055,41 +2115,8 @@ double SimplemapLoopClosure::optimize_graph()
             "Optimized refPose of submap #" << submapId << ":\n old=" << targetPose.asTPose()
                                             << "\n new=" << newPose.asTPose());
 
-        // 1) in map<> data structure:
-        targetPose = newPose;
-
-        // 2) and in mrpt graph nodes:
+        targetPose                             = newPose;
         state_.submapsGraph.nodes.at(submapId) = newPose;
-    }
-
-    auto bckCol =
-        mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO);
-    mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO) =
-        mrpt::system::ConsoleForegroundColor::BRIGHT_GREEN;
-    MRPT_LOG_INFO_STREAM(
-        "***** Graph re-optimized in "
-        << lm1.iterations() << "/" << lm2.iterations() << " iters, RMSE: 1st PASS:" << rmseInit1
-        << " ==> " << rmseEnd1 << " / 2nd PASS: " << rmseInit2 << " ==> " << rmseEnd2
-        << " largestDelta=" << largestDelta << " [m]");
-    mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO) = bckCol;
-
-    if (PRINT_FG_ERRORS)
-    {
-        const double errorPrintThres = 10.0;
-
-        state_.kfGraphFG.printErrors(
-            optimalValues1, "================ 1ST PASS Factor errors ============\n",
-            gtsam::DefaultKeyFormatter,
-            std::function<bool(const gtsam::Factor*, double whitenedError, size_t)>(
-                [&](const gtsam::Factor* /*f*/, double error, size_t /*index*/)
-                { return error > errorPrintThres; }));
-
-        state_.kfGraphFGRobust.printErrors(
-            optimalValues2, "================ 2ND PASS Factor errors ============\n",
-            gtsam::DefaultKeyFormatter,
-            std::function<bool(const gtsam::Factor*, double whitenedError, size_t)>(
-                [&](const gtsam::Factor* /*f*/, double error, size_t /*index*/)
-                { return error > errorPrintThres; }));
     }
 
     return largestDelta;

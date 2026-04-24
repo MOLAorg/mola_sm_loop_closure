@@ -74,8 +74,15 @@ class SimplemapLoopClosure : public mola::LoopClosureInterface
         double      max_time_between_kfs_to_break_submap             = 10.0;
         double      min_volume_intersection_ratio_for_lc_candidate   = 0.6;
         bool        assume_planar_world                              = false;
+        double      planar_world_initial_sigma_z                     = 0.10;  // [m]
+        double      planar_world_initial_sigma_ang                   = 0.02;  // [rad]
+        size_t      planar_world_annealing_rounds                    = 2;
+        bool        planar_world_hard_flatten                        = false;
         bool        use_gnss                                         = true;
+        bool        gnss_add_horizontality                           = false;
+        double      gnss_horizontality_sigma_z                       = 0.01;  // [m]
         double      gnss_minimum_uncertainty_xyz                     = 0.10;  // [m]
+        bool        use_gnc_optimizer                                = false;
         uint32_t    max_number_lc_candidates                         = 150;  // 0: no limit
         double      min_lc_uncertainty_ratio_to_draw_several_samples = 2.0;
         double      largest_delta_for_reconsider_all                 = 10.0;
@@ -171,6 +178,8 @@ class SimplemapLoopClosure : public mola::LoopClosureInterface
 
         gtsam::Values               kfGraphValues;
         gtsam::NonlinearFactorGraph kfGraphFG, kfGraphFGRobust;
+        gtsam::NonlinearFactorGraph planarityFG;
+        std::vector<uint64_t>       knownInlierFactorIndices;
 
         mrpt::poses::CPose3D kfGraph_get_pose(keyframe_id_t id) const;
     };
