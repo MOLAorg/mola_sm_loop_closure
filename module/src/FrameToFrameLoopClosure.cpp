@@ -239,6 +239,11 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, pc_cache_max_bytes, size_t);
     YAML_LOAD_OPT(params_, unload_observations_after_use, bool);
 
+    YAML_LOAD_OPT(params_, assume_planar_world, bool);
+    YAML_LOAD_OPT(params_, planar_world_initial_sigma_z, double);
+    YAML_LOAD_OPT(params_, planar_world_initial_sigma_ang, double);
+    YAML_LOAD_OPT(params_, planar_world_annealing_rounds, size_t);
+
     YAML_LOAD_OPT(params_, largest_delta_for_reconsider, double);
     YAML_LOAD_OPT(params_, max_sensor_range, double);
 
@@ -370,6 +375,18 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
     // Build initial graph with odometry edges
     build_initial_graph();
 
+    // Seed planarity constraint at full strength before any optimization
+    if (params_.assume_planar_world)
+    {
+        build_planarity_factors(
+            params_.planar_world_initial_sigma_z, params_.planar_world_initial_sigma_ang);
+        MRPT_LOG_INFO_STREAM(
+            "Planar-world annealing enabled: initial sigma_z="
+            << params_.planar_world_initial_sigma_z
+            << " m, sigma_ang=" << params_.planar_world_initial_sigma_ang << " rad, over "
+            << params_.planar_world_annealing_rounds << " LC rounds");
+    }
+
     if (params_.save_trajectory_files)
     {
         optimize_graph();
@@ -422,6 +439,36 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
 
     for (size_t lcRound = 0; lcRound < params_.max_lc_optimization_rounds; lcRound++)
     {
+        // Anneal planar-world constraint: grows from initial sigma to 1e6 over
+        // planar_world_annealing_rounds, then the constraint is dropped entirely.
+        if (params_.assume_planar_world)
+        {
+            const size_t N = params_.planar_world_annealing_rounds;
+            if (lcRound >= N)
+            {
+                state_.planarityFG.resize(0);
+                if (lcRound == N)
+                {
+                    MRPT_LOG_INFO("Planar-world constraint fully annealed out.");
+                }
+            }
+            else
+            {
+                const double t        = static_cast<double>(lcRound) / static_cast<double>(N);
+                const double logScale = std::log(1e6);
+                const double sigmaZ =
+                    params_.planar_world_initial_sigma_z *
+                    std::exp(t * (logScale - std::log(params_.planar_world_initial_sigma_z)));
+                const double sigmaAng =
+                    params_.planar_world_initial_sigma_ang *
+                    std::exp(t * (logScale - std::log(params_.planar_world_initial_sigma_ang)));
+                build_planarity_factors(sigmaZ, sigmaAng);
+                MRPT_LOG_INFO_STREAM(
+                    "Planar-world round " << lcRound << "/" << N << ": sigma_z=" << sigmaZ
+                                          << " m, sigma_ang=" << sigmaAng << " rad");
+            }
+        }
+
         size_t checkedCount   = 0;
         bool   anyGraphChange = false;
 
@@ -1263,9 +1310,17 @@ double FrameToFrameLoopClosure::optimize_graph()
 
     ASSERT_(!state_.graphFG.empty());
 
-    const auto N_1 = 1.0 / static_cast<double>(state_.graphFG.size());
+    // Combine main factor graph with (possibly empty) planarity factor graph
+    gtsam::NonlinearFactorGraph combined = state_.graphFG;
+    const size_t                nBase    = state_.graphFG.size();
+    if (!state_.planarityFG.empty())
+    {
+        combined.add(state_.planarityFG);
+    }
 
-    const double errInit1  = state_.graphFG.error(state_.graphValues);
+    const auto N_1 = 1.0 / static_cast<double>(combined.size());
+
+    const double errInit1  = combined.error(state_.graphValues);
     const double rmseInit1 = std::sqrt(errInit1 * N_1);
 
     // Use Graduated Non-Convexity (GNC) optimizer with Geman-McClure loss.
@@ -1279,13 +1334,18 @@ double FrameToFrameLoopClosure::optimize_graph()
     gncParams.setLossType(gtsam::GncLossType::GM);
     GncParams::IndexVector knownInliers(
         state_.knownInlierFactorIndices.begin(), state_.knownInlierFactorIndices.end());
+    // Planarity factors are trusted inliers too
+    for (size_t k = 0; k < state_.planarityFG.size(); k++)
+    {
+        knownInliers.push_back(nBase + k);
+    }
     gncParams.setKnownInliers(knownInliers);
 
-    gtsam::GncOptimizer<GncParams> gnc(state_.graphFG, state_.graphValues, gncParams);
+    gtsam::GncOptimizer<GncParams> gnc(combined, state_.graphValues, gncParams);
 
     const auto optimalValues = gnc.optimize();
 
-    const double errEnd1  = state_.graphFG.error(optimalValues);
+    const double errEnd1  = combined.error(optimalValues);
     const double rmseEnd1 = std::sqrt(errEnd1 * N_1);
 
     // Log GNC weights for LC edges (for diagnostics)
@@ -1295,8 +1355,8 @@ double FrameToFrameLoopClosure::optimize_graph()
     for (size_t k = 0; k < static_cast<size_t>(gncWeights.size()); k++)
     {
         // Check if this factor is NOT a known inlier (i.e., it's an LC edge)
-        const bool isKnownInlier = std::binary_search(
-            state_.knownInlierFactorIndices.begin(), state_.knownInlierFactorIndices.end(), k);
+        const bool isKnownInlier =
+            std::binary_search(knownInliers.begin(), knownInliers.end(), static_cast<uint64_t>(k));
         if (!isKnownInlier)
         {
             if (gncWeights[static_cast<Eigen::Index>(k)] < 0.5)
@@ -1331,7 +1391,7 @@ double FrameToFrameLoopClosure::optimize_graph()
     state_.graphValues = optimalValues;
 
     // Compute marginals:
-    state_.graphMarginals.emplace(state_.graphFG, state_.graphValues);
+    state_.graphMarginals.emplace(combined, state_.graphValues);
 
     // Logging:
     auto bckCol =
@@ -1565,6 +1625,34 @@ void FrameToFrameLoopClosure::save_3d_scene_files(const std::string& suffix) con
         {
             MRPT_LOG_WARN_STREAM("Failed to save 3D scene: " << fn);
         }
+    }
+}
+
+void FrameToFrameLoopClosure::build_planarity_factors(double sigmaZ, double sigmaAng)
+{
+    using gtsam::symbol_shorthand::X;
+
+    ASSERT_(state_.sm);
+    state_.planarityFG.resize(0);
+
+    // GTSAM Pose3 tangent-space order: [rx, ry, rz, tx, ty, tz]
+    // Planarity: constrain z (tz) and roll/pitch (rx, ry) tightly; leave x, y, yaw free.
+    constexpr double kLargeSigma = 1e6;
+
+    for (size_t i = 0; i < state_.sm->size(); i++)
+    {
+        const auto pose = state_.get_pose(i);
+
+        // Target pose: same x, y, yaw as current estimate, but z=0, roll=0, pitch=0.
+        const mrpt::poses::CPose3D target(pose.x(), pose.y(), 0.0, pose.yaw(), 0.0, 0.0);
+
+        gtsam::Vector6 sigmas;
+        sigmas << sigmaAng, sigmaAng, kLargeSigma,  // rx (roll), ry (pitch), rz (yaw): free yaw
+            kLargeSigma, kLargeSigma, sigmaZ;  // tx, ty: free; tz: constrained
+
+        auto noise = gtsam::noiseModel::Diagonal::Sigmas(sigmas);
+        state_.planarityFG.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
+            X(i), mrpt::gtsam_wrappers::toPose3(target), noise);
     }
 }
 
