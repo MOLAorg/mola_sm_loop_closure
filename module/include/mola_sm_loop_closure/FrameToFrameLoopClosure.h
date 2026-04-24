@@ -193,6 +193,15 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         float scene_lc_color_a                  = 0.8f;
         float scene_keyframe_point_size         = 7.0f;
 
+        // ===== Planar World Annealing =====
+        /** If true, add planar-world constraints (z≈0, roll≈0, pitch≈0) that
+         *  start strong and are gradually relaxed over the first
+         *  `planar_world_annealing_rounds` LC rounds, then disappear. */
+        bool   assume_planar_world            = false;
+        double planar_world_initial_sigma_z   = 0.10;  // [m]   sigma at round 0
+        double planar_world_initial_sigma_ang = 0.02;  // [rad] sigma at round 0 (~1 deg)
+        size_t planar_world_annealing_rounds  = 2;  // rounds until constraint vanishes
+
         // ===== Manual Loop Closure Hints =====
         struct ManualLoopConstraint
         {
@@ -256,6 +265,9 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         /// observations.  Computed once at the start of process() to avoid
         /// repeated lazy-loading of externally-stored observations.
         std::vector<bool> frameHasMappingObs;
+
+        // Planarity factor graph (rebuilt each LC round when assume_planar_world=true)
+        gtsam::NonlinearFactorGraph planarityFG;
 
         // LRU point cloud cache
         struct CachedPC
@@ -335,6 +347,11 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
 
     /** Add manual loop closure factors specified in the config to the graph. */
     void add_manual_loop_closure_factors();
+
+    /** Rebuild the planarity factor graph with the given z and angular sigmas.
+     *  Called once per LC round when assume_planar_world=true; sigmas grow
+     *  exponentially from initial to 1e6 over planar_world_annealing_rounds. */
+    void build_planarity_factors(double sigmaZ, double sigmaAng);
 };
 
 }  // namespace mola
