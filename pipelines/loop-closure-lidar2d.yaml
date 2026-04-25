@@ -36,11 +36,13 @@ params:
   use_gnss: "${USE_GNSS|true}"
 
   assume_planar_world: true
+  planar_world_hard_flatten: "${PLANAR_WORLD_HARD_FLATTEN|false}"
+  planar_world_initial_sigma_z: 0.10
+  planar_world_initial_sigma_ang: 0.02
+  planar_world_annealing_rounds: 2
 
   # Minimum ICP quality to accept a loop closure:
   min_icp_goodness: 0.40
-  icp_edge_worst_multiplier: 2.0 # how much uncertainty for the "min_icp_goodness" in comparison to a 100% icp result
-  icp_edge_robust_param: 1.0
 
   input_edges_uncertainty_multiplier: 1.0
 

@@ -38,11 +38,16 @@ params:
   use_gnss: "${USE_GNSS|true}"
 
   assume_planar_world: false
+  # Planar-world annealing (opt-in): soft z/roll/pitch constraints that decay over LC rounds.
+  # Only active when assume_planar_world: true. Set planar_world_hard_flatten: true to use
+  # the legacy hard-flattening behaviour instead.
+  # planar_world_initial_sigma_z: 0.10    # [m]
+  # planar_world_initial_sigma_ang: 0.02  # [rad]
+  # planar_world_annealing_rounds: 2
+  # planar_world_hard_flatten: false
 
   # Minimum ICP quality to accept a loop closure:
   min_icp_goodness: "${LC_MIN_ICP_QUALITY|0.55}"
-  icp_edge_worst_multiplier: 3.0 # how much uncertainty for the "min_icp_goodness" in comparison to a 100% icp result
-  icp_edge_robust_param: ${MOLA_LC_ICP_EDGE_ROBUST_PARAMETER|10.0}
 
   icp_edge_additional_noise_xyz: 0.01 # [m]
   icp_edge_additional_noise_ang_deg: 0.05 # [deg]
