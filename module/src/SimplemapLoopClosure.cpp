@@ -373,7 +373,10 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     // anchor for X(0):
     state_.knownInlierFactorIndices.push_back(state_.kfGraphFG.size());
     state_.kfGraphFG.push_back(x0prior);
-    state_.kfGraphFGRobust.push_back(x0prior);
+    if (!params_.use_gnc_optimizer)
+    {
+        state_.kfGraphFGRobust.push_back(x0prior);
+    }
 
     // create edges: i -> i-1
     for (size_t i = 1; i < sm.size(); i++)
@@ -509,7 +512,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
                 X(refKfId), X(curKfId), deltaPose, edgeNoise);
 
-            if (ADD_GNSS_FACTORS_2ND_STAGE)
+            if (ADD_GNSS_FACTORS_2ND_STAGE && !params_.use_gnc_optimizer)
             {
                 state_.kfGraphFGRobust.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
                     X(refKfId), X(curKfId), deltaPose, edgeRobNoise);
@@ -1497,10 +1500,12 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
             gtsam::noiseModel::mEstimator::GemanMcClure::Create(icp_edge_robust_param),
             gtsam::noiseModel::Diagonal::Sigmas(realSigmasGtsam));
 
-        // Robust graph:
-        state_.kfGraphFGRobust.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-            X(*submapGlobal.kf_ids.begin()), X(*submapLocal.kf_ids.begin()), deltaPose,
-            icpRobNoise);
+        if (!params_.use_gnc_optimizer)
+        {
+            state_.kfGraphFGRobust.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+                X(*submapGlobal.kf_ids.begin()), X(*submapLocal.kf_ids.begin()), deltaPose,
+                icpRobNoise);
+        }
 
         if (DEBUG_PRINT_BETWEEN_EDGES)
         {
@@ -2050,39 +2055,62 @@ double SimplemapLoopClosure::optimize_graph()
         // Legacy two-pass LM optimisation:
         auto lmParams = gtsam::LevenbergMarquardtParams::CeresDefaults();
 
-        const double errorInit1 = state_.kfGraphFG.error(state_.kfGraphValues);
-        const double rmseInit1 =
-            std::sqrt(errorInit1 / static_cast<double>(state_.kfGraphFG.size()));
+        // Merge planarity factors (if any) so assume_planar_world is not a no-op here.
+        gtsam::NonlinearFactorGraph fg1 = state_.kfGraphFG;
+        gtsam::NonlinearFactorGraph fg2 = state_.kfGraphFGRobust;
+        if (!state_.planarityFG.empty())
+        {
+            fg1.push_back(state_.planarityFG.begin(), state_.planarityFG.end());
+            fg2.push_back(state_.planarityFG.begin(), state_.planarityFG.end());
+        }
 
-        gtsam::LevenbergMarquardtOptimizer lm1(state_.kfGraphFG, state_.kfGraphValues, lmParams);
+        const double errorInit1 = fg1.error(state_.kfGraphValues);
+        const double rmseInit1  = std::sqrt(errorInit1 / static_cast<double>(fg1.size()));
+
+        gtsam::LevenbergMarquardtOptimizer lm1(fg1, state_.kfGraphValues, lmParams);
         const auto&                        optimalValues1 = lm1.optimize();
 
-        const double errorEnd1 = state_.kfGraphFG.error(optimalValues1);
-        const double rmseEnd1 = std::sqrt(errorEnd1 / static_cast<double>(state_.kfGraphFG.size()));
+        const double errorEnd1 = fg1.error(optimalValues1);
+        const double rmseEnd1  = std::sqrt(errorEnd1 / static_cast<double>(fg1.size()));
 
-        const double errorInit2 = state_.kfGraphFGRobust.error(optimalValues1);
-        const double rmseInit2 =
-            std::sqrt(errorInit2 / static_cast<double>(state_.kfGraphFGRobust.size()));
+        const double errorInit2 = fg2.error(optimalValues1);
+        const double rmseInit2  = std::sqrt(errorInit2 / static_cast<double>(fg2.size()));
 
-        gtsam::LevenbergMarquardtOptimizer lm2(state_.kfGraphFGRobust, optimalValues1, lmParams);
+        gtsam::LevenbergMarquardtOptimizer lm2(fg2, optimalValues1, lmParams);
         const auto&                        optimalValues2 = lm2.optimize();
+
+        // Compute largestDelta before overwriting kfGraphValues:
+        for (const auto& key_val : state_.kfGraphValues)
+        {
+            try
+            {
+                const auto newPose =
+                    mrpt::gtsam_wrappers::toTPose3D(optimalValues2.at<gtsam::Pose3>(key_val.key));
+                const auto oldPose = mrpt::gtsam_wrappers::toTPose3D(
+                    state_.kfGraphValues.at<gtsam::Pose3>(key_val.key));
+                const double delta = mrpt::poses::CPose3D(oldPose - newPose).translation().norm();
+                mrpt::keep_max(largestDelta, delta);
+            }
+            catch (...)
+            {
+            }
+        }
 
         state_.kfGraphValues = optimalValues2;
 
-        const double errorEnd2 = state_.kfGraphFGRobust.error(optimalValues2);
-        const double rmseEnd2 =
-            std::sqrt(errorEnd2 / static_cast<double>(state_.kfGraphFGRobust.size()));
+        const double errorEnd2 = fg2.error(optimalValues2);
+        const double rmseEnd2  = std::sqrt(errorEnd2 / static_cast<double>(fg2.size()));
 
         if (PRINT_FG_ERRORS)
         {
             const double errorPrintThres = 10.0;
-            state_.kfGraphFG.printErrors(
+            fg1.printErrors(
                 optimalValues1, "================ 1ST PASS Factor errors ============\n",
                 gtsam::DefaultKeyFormatter,
                 std::function<bool(const gtsam::Factor*, double whitenedError, size_t)>(
                     [&](const gtsam::Factor* /*f*/, double error, size_t /*index*/)
                     { return error > errorPrintThres; }));
-            state_.kfGraphFGRobust.printErrors(
+            fg2.printErrors(
                 optimalValues2, "================ 2ND PASS Factor errors ============\n",
                 gtsam::DefaultKeyFormatter,
                 std::function<bool(const gtsam::Factor*, double whitenedError, size_t)>(

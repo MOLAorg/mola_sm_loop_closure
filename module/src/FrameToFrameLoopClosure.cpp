@@ -432,14 +432,13 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
             }
             else
             {
-                const double t        = static_cast<double>(lcRound) / static_cast<double>(N);
-                const double logScale = std::log(1e6);
-                const double sigmaZ =
-                    params_.planar_world_initial_sigma_z *
-                    std::exp(t * (logScale - std::log(params_.planar_world_initial_sigma_z)));
-                const double sigmaAng =
-                    params_.planar_world_initial_sigma_ang *
-                    std::exp(t * (logScale - std::log(params_.planar_world_initial_sigma_ang)));
+                lc_common::PlanarAnneal pa;
+                pa.rounds         = N;
+                pa.initSigmaZ     = params_.planar_world_initial_sigma_z;
+                pa.initSigmaAng   = params_.planar_world_initial_sigma_ang;
+                const auto sigmas = lc_common::planar_sigmas_for_round(pa, lcRound);
+                ASSERT_(sigmas.has_value());
+                const auto [sigmaZ, sigmaAng] = *sigmas;
                 build_planarity_factors(sigmaZ, sigmaAng);
                 MRPT_LOG_INFO_STREAM(
                     "Planar-world round " << lcRound << "/" << N << ": sigma_z=" << sigmaZ

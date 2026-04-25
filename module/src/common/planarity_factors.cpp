@@ -12,6 +12,7 @@
 #include <gtsam/inference/Symbol.h>
 #include <gtsam/slam/PriorFactor.h>
 #include <mola_sm_loop_closure/common/planarity_factors.h>
+#include <mrpt/core/exceptions.h>
 #include <mrpt/poses/CPose3D.h>
 #include <mrpt/poses/gtsam_wrappers.h>
 
@@ -49,6 +50,8 @@ void build_planarity_factors(
 std::optional<std::pair<double, double>> planar_sigmas_for_round(
     const PlanarAnneal& p, std::size_t lcRound)
 {
+    ASSERT_GT_(p.initSigmaZ, 0.0);
+    ASSERT_GT_(p.initSigmaAng, 0.0);
     if (lcRound >= p.rounds)
     {
         return std::nullopt;

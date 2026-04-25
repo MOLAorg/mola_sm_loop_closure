@@ -19,10 +19,6 @@ namespace mola::lc_common
 {
 bool frame_has_mapping_observations(const mrpt::obs::CSensoryFrame& sf)
 {
-    if (sf.empty())
-    {
-        return false;
-    }
     if (sf.getObservationByClass<mrpt::obs::CObservationPointCloud>())
     {
         return true;
