@@ -55,7 +55,6 @@ mola-sm-lc-cli -i in.simplemap -o out.simplemap \
 - `assume_planar_world: true` enables annealed soft planar constraints (z, roll, pitch).
   - `planar_world_initial_sigma_z`, `planar_world_initial_sigma_ang`, `planar_world_annealing_rounds` — tune the annealing schedule.
   - `planar_world_hard_flatten: true` restores the old hard-flattening behaviour.
-- `use_gnc_optimizer: true` replaces the legacy two-pass LM with a single GNC pass.
 - `use_gnss: true` / `gnss_add_horizontality: true` — GNSS-assisted global alignment.
 
 **FrameToFrameLoopClosure**

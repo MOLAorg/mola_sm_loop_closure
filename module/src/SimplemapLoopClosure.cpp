@@ -53,7 +53,6 @@
 #include <gtsam/inference/Symbol.h>
 #include <gtsam/nonlinear/ExpressionFactor.h>
 // #include <gtsam/nonlinear/GaussNewtonOptimizer.h>
-#include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
 #include <gtsam/nonlinear/Values.h>
 #include <gtsam/nonlinear/expressions.h>
 #include <gtsam/slam/BetweenFactor.h>
@@ -69,8 +68,6 @@ const bool PRINT_ALL_SCORES = mrpt::get_env<bool>("PRINT_ALL_SCORES", false);
 const bool SAVE_LCS         = mrpt::get_env<bool>("SAVE_LCS", false);
 const bool SAVE_TREES       = mrpt::get_env<bool>("SAVE_TREES", false);
 const bool PRINT_FG_ERRORS  = mrpt::get_env<bool>("PRINT_FG_ERRORS", false);
-
-const bool ADD_GNSS_FACTORS_2ND_STAGE = mrpt::get_env<bool>("ADD_GNSS_FACTORS_2ND_STAGE", true);
 
 const bool DEBUG_PRINT_BETWEEN_EDGES = mrpt::get_env<bool>("DEBUG_PRINT_BETWEEN_EDGES", false);
 
@@ -148,14 +145,10 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, gnss_add_horizontality, bool);
     YAML_LOAD_OPT(params_, gnss_horizontality_sigma_z, double);
     YAML_LOAD_OPT(params_, gnss_minimum_uncertainty_xyz, double);
-    YAML_LOAD_OPT(params_, use_gnc_optimizer, bool);
 
     YAML_LOAD_REQ(params_, threshold_sigma_initial, std::string);
     YAML_LOAD_REQ(params_, threshold_sigma_final, std::string);
     YAML_LOAD_REQ(params_, max_sensor_range, double);
-
-    YAML_LOAD_REQ(params_, icp_edge_robust_param, double);
-    YAML_LOAD_REQ(params_, icp_edge_worst_multiplier, double);
 
     YAML_LOAD_REQ(params_, icp_edge_additional_noise_xyz, double);
     YAML_LOAD_REQ(params_, icp_edge_additional_noise_ang_deg, double);
@@ -373,10 +366,6 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
     // anchor for X(0):
     state_.knownInlierFactorIndices.push_back(state_.kfGraphFG.size());
     state_.kfGraphFG.push_back(x0prior);
-    if (!params_.use_gnc_optimizer)
-    {
-        state_.kfGraphFGRobust.push_back(x0prior);
-    }
 
     // create edges: i -> i-1
     for (size_t i = 1; i < sm.size(); i++)
@@ -435,7 +424,6 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
         state_.knownInlierFactorIndices.push_back(state_.kfGraphFG.size());
         state_.kfGraphFG += f;
-        state_.kfGraphFGRobust += f;
     }
 
     // GNSS Edges: additional edges in both graphs:
@@ -473,18 +461,6 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             auto edgeNoise = gtsam::noiseModel::Gaussian::Covariance(
                 mrpt::gtsam_wrappers::to_gtsam_se3_cov6_reordering(relPose.cov));
 
-#if 0
-            const double gnss_edge_robust_param = 3.0;
-
-            gtsam::noiseModel::Base::shared_ptr edgeRobNoise =
-                gtsam::noiseModel::Robust::Create(
-                    gtsam::noiseModel::mEstimator::GemanMcClure::Create(
-                        gnss_edge_robust_param),
-                    edgeNoise);
-#else
-            auto edgeRobNoise = edgeNoise;
-#endif
-
             const auto refKfId = *refSubmap.kf_ids.begin();
             const auto curKfId = *submap.kf_ids.begin();
 
@@ -511,12 +487,6 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             state_.knownInlierFactorIndices.push_back(state_.kfGraphFG.size());
             state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
                 X(refKfId), X(curKfId), deltaPose, edgeNoise);
-
-            if (ADD_GNSS_FACTORS_2ND_STAGE && !params_.use_gnc_optimizer)
-            {
-                state_.kfGraphFGRobust.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-                    X(refKfId), X(curKfId), deltaPose, edgeRobNoise);
-            }
         }
 
         if (params_.save_submaps_viz_files)
@@ -1437,7 +1407,7 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
     bool atLeastOneGoodIcp = false;
 
     auto lambdaAddIcpEdge =
-        [&](const mrpt::poses::CPose3DPDFGaussian& icpRelPose, const double icpQuality)
+        [&](const mrpt::poses::CPose3DPDFGaussian& icpRelPose, const double /*icpQuality*/)
     {
         if (!state_.submapsGraph.edgeExists(idGlobal, idLocal))
         {
@@ -1449,41 +1419,7 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
 
         using gtsam::symbol_shorthand::X;
 
-        // (1/2) Non-Robust edge for 1st PASS optimization, with "fake" cov
-        double edge_std_xyz = 0.5;  // [m]
-        double edge_std_ang = mrpt::DEG2RAD(0.5);
-
-        // Use a variable variance depending on the ICP quality:
-        ASSERT_(params_.icp_edge_worst_multiplier > 1.0);
-
-        double std_multiplier =
-            params_.icp_edge_worst_multiplier - (params_.icp_edge_worst_multiplier - 1.0) *
-                                                    (icpQuality - params_.min_icp_goodness) /
-                                                    params_.min_icp_goodness;
-
-        edge_std_xyz *= std_multiplier;
-        edge_std_ang *= std_multiplier;
-
-        const double icp_edge_robust_param = params_.icp_edge_robust_param;
-
-        gtsam::Vector6 sigmasNoRobust;
-        sigmasNoRobust << edge_std_ang, edge_std_ang, edge_std_ang,  //
-            edge_std_xyz, edge_std_xyz, edge_std_xyz;
-
-        auto icpNoiseNoRubust = gtsam::noiseModel::Diagonal::Sigmas(sigmasNoRobust);
-
-        // Non-robust graph:
-        state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-            X(*submapGlobal.kf_ids.begin()), X(*submapLocal.kf_ids.begin()), deltaPose,
-            icpNoiseNoRubust);
-
-        if (DEBUG_PRINT_BETWEEN_EDGES)
-        {
-            state_.kfGraphFG.back()->print("1/2 ICP edge factor: ");
-        }
-
-        // (2/2) Robust edge for 2nd PASS optimization, with real cov
-
+        // Single LC edge with real ICP cov + extra noise; GNC handles outlier rejection.
         gtsam::Vector6 realSigmasXYZYPR = icpRelPose.cov.asEigen().diagonal().array().sqrt().eval();
 
         for (int i = 0; i < 3; i++)
@@ -1496,20 +1432,15 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         realSigmasGtsam << realSigmasXYZYPR[5], realSigmasXYZYPR[4], realSigmasXYZYPR[3],
             realSigmasXYZYPR[0], realSigmasXYZYPR[1], realSigmasXYZYPR[2];
 
-        gtsam::noiseModel::Base::shared_ptr icpRobNoise = gtsam::noiseModel::Robust::Create(
-            gtsam::noiseModel::mEstimator::GemanMcClure::Create(icp_edge_robust_param),
-            gtsam::noiseModel::Diagonal::Sigmas(realSigmasGtsam));
+        auto icpEdgeNoise = gtsam::noiseModel::Diagonal::Sigmas(realSigmasGtsam);
 
-        if (!params_.use_gnc_optimizer)
-        {
-            state_.kfGraphFGRobust.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-                X(*submapGlobal.kf_ids.begin()), X(*submapLocal.kf_ids.begin()), deltaPose,
-                icpRobNoise);
-        }
+        state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+            X(*submapGlobal.kf_ids.begin()), X(*submapLocal.kf_ids.begin()), deltaPose,
+            icpEdgeNoise);
 
         if (DEBUG_PRINT_BETWEEN_EDGES)
         {
-            state_.kfGraphFGRobust.back()->print("2/2 ICP edge factor: ");
+            state_.kfGraphFG.back()->print("ICP LC edge factor: ");
         }
 
         atLeastOneGoodIcp = true;
@@ -2028,107 +1959,40 @@ double SimplemapLoopClosure::optimize_graph()
 {
     double largestDelta = 0;
 
-    if (params_.use_gnc_optimizer)
+    const auto result = lc_common::run_gnc(
+        state_.kfGraphFG, state_.planarityFG, state_.kfGraphValues,
+        state_.knownInlierFactorIndices, this);
+
+    MRPT_LOG_INFO_STREAM(
+        "GNC result: " << result.numLcInliers << " LC inlier(s), " << result.numLcOutliers
+                       << " LC outlier(s) rejected");
+
+    state_.kfGraphValues = result.values;
+    largestDelta         = result.largestDelta;
+
+    if (PRINT_FG_ERRORS)
     {
-        const auto result = lc_common::run_gnc(
-            state_.kfGraphFG, state_.planarityFG, state_.kfGraphValues,
-            state_.knownInlierFactorIndices, this);
-
-        MRPT_LOG_INFO_STREAM(
-            "GNC result: " << result.numLcInliers << " LC inlier(s), " << result.numLcOutliers
-                           << " LC outlier(s) rejected");
-
-        state_.kfGraphValues = result.values;
-        largestDelta         = result.largestDelta;
-
-        auto bckCol =
-            mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO);
-        mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO) =
-            mrpt::system::ConsoleForegroundColor::BRIGHT_GREEN;
-        MRPT_LOG_INFO_STREAM(
-            "***** Graph re-optimized (GNC): RMSE " << result.rmseInit << " -> " << result.rmseEnd
-                                                    << " largestDelta=" << largestDelta << " [m]");
-        mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO) = bckCol;
-    }
-    else
-    {
-        // Legacy two-pass LM optimisation:
-        auto lmParams = gtsam::LevenbergMarquardtParams::CeresDefaults();
-
-        // Merge planarity factors (if any) so assume_planar_world is not a no-op here.
-        gtsam::NonlinearFactorGraph fg1 = state_.kfGraphFG;
-        gtsam::NonlinearFactorGraph fg2 = state_.kfGraphFGRobust;
+        gtsam::NonlinearFactorGraph combined = state_.kfGraphFG;
         if (!state_.planarityFG.empty())
         {
-            fg1.push_back(state_.planarityFG.begin(), state_.planarityFG.end());
-            fg2.push_back(state_.planarityFG.begin(), state_.planarityFG.end());
+            combined.push_back(state_.planarityFG.begin(), state_.planarityFG.end());
         }
-
-        const double errorInit1 = fg1.error(state_.kfGraphValues);
-        const double rmseInit1  = std::sqrt(errorInit1 / static_cast<double>(fg1.size()));
-
-        gtsam::LevenbergMarquardtOptimizer lm1(fg1, state_.kfGraphValues, lmParams);
-        const auto&                        optimalValues1 = lm1.optimize();
-
-        const double errorEnd1 = fg1.error(optimalValues1);
-        const double rmseEnd1  = std::sqrt(errorEnd1 / static_cast<double>(fg1.size()));
-
-        const double errorInit2 = fg2.error(optimalValues1);
-        const double rmseInit2  = std::sqrt(errorInit2 / static_cast<double>(fg2.size()));
-
-        gtsam::LevenbergMarquardtOptimizer lm2(fg2, optimalValues1, lmParams);
-        const auto&                        optimalValues2 = lm2.optimize();
-
-        // Compute largestDelta before overwriting kfGraphValues:
-        for (const auto& key_val : state_.kfGraphValues)
-        {
-            try
-            {
-                const auto newPose =
-                    mrpt::gtsam_wrappers::toTPose3D(optimalValues2.at<gtsam::Pose3>(key_val.key));
-                const auto oldPose = mrpt::gtsam_wrappers::toTPose3D(
-                    state_.kfGraphValues.at<gtsam::Pose3>(key_val.key));
-                const double delta = mrpt::poses::CPose3D(oldPose - newPose).translation().norm();
-                mrpt::keep_max(largestDelta, delta);
-            }
-            catch (...)
-            {
-            }
-        }
-
-        state_.kfGraphValues = optimalValues2;
-
-        const double errorEnd2 = fg2.error(optimalValues2);
-        const double rmseEnd2  = std::sqrt(errorEnd2 / static_cast<double>(fg2.size()));
-
-        if (PRINT_FG_ERRORS)
-        {
-            const double errorPrintThres = 10.0;
-            fg1.printErrors(
-                optimalValues1, "================ 1ST PASS Factor errors ============\n",
-                gtsam::DefaultKeyFormatter,
-                std::function<bool(const gtsam::Factor*, double whitenedError, size_t)>(
-                    [&](const gtsam::Factor* /*f*/, double error, size_t /*index*/)
-                    { return error > errorPrintThres; }));
-            fg2.printErrors(
-                optimalValues2, "================ 2ND PASS Factor errors ============\n",
-                gtsam::DefaultKeyFormatter,
-                std::function<bool(const gtsam::Factor*, double whitenedError, size_t)>(
-                    [&](const gtsam::Factor* /*f*/, double error, size_t /*index*/)
-                    { return error > errorPrintThres; }));
-        }
-
-        auto bckCol =
-            mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO);
-        mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO) =
-            mrpt::system::ConsoleForegroundColor::BRIGHT_GREEN;
-        MRPT_LOG_INFO_STREAM(
-            "***** Graph re-optimized in "
-            << lm1.iterations() << "/" << lm2.iterations() << " iters, RMSE: 1st PASS:" << rmseInit1
-            << " ==> " << rmseEnd1 << " / 2nd PASS: " << rmseInit2 << " ==> " << rmseEnd2
-            << " largestDelta=" << largestDelta << " [m]");
-        mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO) = bckCol;
+        const double errorPrintThres = 10.0;
+        combined.printErrors(
+            state_.kfGraphValues, "================ Factor errors ============\n",
+            gtsam::DefaultKeyFormatter,
+            std::function<bool(const gtsam::Factor*, double whitenedError, size_t)>(
+                [&](const gtsam::Factor* /*f*/, double error, size_t /*index*/)
+                { return error > errorPrintThres; }));
     }
+
+    auto bckCol = mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO);
+    mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO) =
+        mrpt::system::ConsoleForegroundColor::BRIGHT_GREEN;
+    MRPT_LOG_INFO_STREAM(
+        "***** Graph re-optimized (GNC): RMSE " << result.rmseInit << " -> " << result.rmseEnd
+                                                << " largestDelta=" << largestDelta << " [m]");
+    mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO) = bckCol;
 
     // Update submaps global pose:
     for (auto& [submapId, submap] : state_.submaps)
