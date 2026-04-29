@@ -2,6 +2,24 @@
 Changelog for package mola_sm_loop_closure
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Merge pull request `#10 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/10>`_ from MOLAorg/refactor/lc-common-helpers
+  refactor: extract lc_common helpers; port planar-world annealing + GNC to SM
+* refactor: replace two-pass LM with single GNC pass in SimplemapLoopClosure
+* refactor: extract lc_common helpers; port planar-world annealing + GNC to SM
+* Merge pull request `#9 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/9>`_ from MOLAorg/feat/planar-world-in-f2f
+  feat: optional f2f planar world soft-constraints
+* feat: optional f2f planar world soft-constraints
+* Merge pull request `#8 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/8>`_ from MOLAorg/feat/manual-lc
+  Support for optional manual hints for LC
+* Support for optional manual hints for LC
+* Merge pull request `#7 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/7>`_ from MOLAorg/feat/more-flexible-icp-sigmas-and-logging
+  Expose more env vars
+* Expose more env vars
+* f2f pipeline file: add env var MOLA_DESKEW_IGNORE_ACCELEROMETER
+* Contributors: Jose Luis Blanco-Claraco
+
 1.0.0 (2026-04-14)
 ------------------
 * package.xml: add missing test-dep
