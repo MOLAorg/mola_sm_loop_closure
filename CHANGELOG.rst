@@ -2,8 +2,8 @@
 Changelog for package mola_sm_loop_closure
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+1.1.0 (2026-04-29)
+------------------
 * Merge pull request `#10 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/10>`_ from MOLAorg/refactor/lc-common-helpers
   refactor: extract lc_common helpers; port planar-world annealing + GNC to SM
 * refactor: replace two-pass LM with single GNC pass in SimplemapLoopClosure
