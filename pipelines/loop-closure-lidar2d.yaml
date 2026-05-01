@@ -35,6 +35,14 @@ params:
 
   use_gnss: "${USE_GNSS|true}"
 
+  # IMU-derived gravity-alignment factors (added in stage 1, alongside GNSS).
+  use_imu_gravity: true
+  imu_gravity_sigma_deg: 3.0
+
+  # Sigmas for the submap-graph odometry edges used in Dijkstra candidate search.
+  # Defaults match the legacy hard-coded values [m, m, m, rad, rad, rad].
+  # submap_graph_edge_sigmas: [0.10, 0.10, 0.15, 0.01745, 0.02618, 0.01745]
+
   assume_planar_world: true
   planar_world_hard_flatten: "${PLANAR_WORLD_HARD_FLATTEN|false}"
   planar_world_initial_sigma_z: 0.10

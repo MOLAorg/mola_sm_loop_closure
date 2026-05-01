@@ -18,6 +18,7 @@
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/Values.h>
 #include <mola_sm_loop_closure/LoopClosureInterface.h>
+#include <mola_sm_loop_closure/common/icp_pipeline_setup.h>
 #include <mp2p_icp/icp_pipeline_from_yaml.h>
 #include <mp2p_icp/metricmap.h>
 #include <mp2p_icp_filters/FilterBase.h>
@@ -30,6 +31,7 @@
 #include <mrpt/topography/data_types.h>
 #include <mrpt/typemeta/TEnumType.h>
 
+#include <atomic>
 #include <list>
 #include <set>
 #include <unordered_map>
@@ -69,7 +71,7 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         bool   use_gnss                          = true;
         double gnss_minimum_uncertainty_xyz      = 0.10;  // [m]
         bool   gnss_add_horizontality            = false;
-        double gnss_horizontality_sigma_z        = 0.01;  // [m]
+        double gnss_horizontality_sigma_rpy      = 0.01;  // [rad]
         double gnss_edges_uncertainty_multiplier = 1.0;
 
         // Loop closure candidate selection
@@ -223,15 +225,8 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
     {
         std::mutex mtx;
 
-        mp2p_icp::ParameterSource parameter_source;
-        mp2p_icp::ICP::Ptr        icp;
-
-        // For processing observations
-        mp2p_icp_filters::GeneratorSet   obs_generators;
-        mp2p_icp_filters::FilterPipeline pc_filter;
-
-        mrpt::expr::CRuntimeCompiledExpression expr_threshold_sigma_initial;
-        mrpt::expr::CRuntimeCompiledExpression expr_threshold_sigma_final;
+        // Shared ICP pipeline (obs generators, filter, parameter source):
+        lc_common::PerThreadIcpPipeline pipeline;
     };
 
     struct State
@@ -292,6 +287,9 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
 
     mrpt::system::CTimeLogger profiler_{true, "frame_to_frame_lc"};
     mrpt::WorkerThreadsPool   threads_{state_.perThreadState_.size()};
+
+    // Round-robin counter for distributing candidates across per-thread state slots.
+    std::atomic<size_t> lc_candidate_counter_{0};
 
     // Private methods
     mrpt::poses::CPose3D frame_pose_in_simplemap(frame_id_t frameId) const;

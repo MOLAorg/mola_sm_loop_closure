@@ -12,7 +12,7 @@ params:
   use_gnss: "${USE_GNSS|true}"
   gnss_minimum_uncertainty_xyz: ${LC_GNSS_MINIMUM_XYZ_SIGMA|0.10} # [m] Minimum GPS uncertainty
   gnss_add_horizontality: false # Add constraints for flat terrain
-  gnss_horizontality_sigma_z: 0.10 # [m] Z-axis constraint if enabled
+  gnss_horizontality_sigma_rpy: 0.10 # [rad] roll/pitch constraint if enabled
   gnss_edges_uncertainty_multiplier: "${GNSS_EDGES_UNCERTAINTY_MULTIPLIER|1.0}"
 
   # ===== Loop Closure Candidate Selection =====

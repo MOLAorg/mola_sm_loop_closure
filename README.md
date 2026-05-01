@@ -56,10 +56,12 @@ mola-sm-lc-cli -i in.simplemap -o out.simplemap \
   - `planar_world_initial_sigma_z`, `planar_world_initial_sigma_ang`, `planar_world_annealing_rounds` — tune the annealing schedule.
   - `planar_world_hard_flatten: true` restores the old hard-flattening behaviour.
 - `use_gnss: true` / `gnss_add_horizontality: true` — GNSS-assisted global alignment.
+  - `gnss_factor_strategy: "submap"` (default, scalable) or `"per_kf"` (sensor-pose-aware, larger graph).
+- `use_imu_gravity: true` / `imu_gravity_sigma_deg` — IMU-derived gravity-alignment factors added in stage 1.
 
 **FrameToFrameLoopClosure**
 - `lc_candidate_strategy` — `DISTANCE_STRATIFIED` (default), `PROXIMITY_ONLY`, or `MULTI_OBJECTIVE`.
-- `assume_planar_world: true` — planar-world annealing.
+- `assume_planar_world: true` — planar-world annealing (subset of SM options; IMU-gravity options are not exposed by `FrameToFrameLoopClosure::Parameters`).
 - `use_gnss: true` — per-keyframe GNSS factors (`FactorGnssEnu`).
 
 See the [online tutorial](https://docs.mola-slam.org/latest/tutorial-ouster-mapping-lc.html) for a step-by-step example.
