@@ -46,12 +46,22 @@ mola_add_library(
     module/src/common/obs_helpers.cpp
     module/src/common/planarity_factors.cpp
     module/src/common/gnc_optimizer.cpp
+    module/src/common/tum_writer.cpp
+    module/src/common/graph_builders.cpp
+    module/src/common/icp_pipeline_setup.cpp
+    module/src/common/gnss_factor_helpers.cpp
+    module/src/common/debug_flags.cpp
     # Headers:
     module/include/mola_sm_loop_closure/SimplemapLoopClosure.h
     module/include/mola_sm_loop_closure/FrameToFrameLoopClosure.h
     module/include/mola_sm_loop_closure/common/obs_helpers.h
     module/include/mola_sm_loop_closure/common/planarity_factors.h
     module/include/mola_sm_loop_closure/common/gnc_optimizer.h
+    module/include/mola_sm_loop_closure/common/tum_writer.h
+    module/include/mola_sm_loop_closure/common/graph_builders.h
+    module/include/mola_sm_loop_closure/common/icp_pipeline_setup.h
+    module/include/mola_sm_loop_closure/common/gnss_factor_helpers.h
+    module/include/mola_sm_loop_closure/common/debug_flags.h
   PUBLIC_LINK_LIBRARIES
     gtsam
     mola::mola_georeferencing

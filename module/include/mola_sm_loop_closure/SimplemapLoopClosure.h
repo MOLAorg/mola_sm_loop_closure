@@ -14,9 +14,11 @@
 
 #pragma once
 
+#include <gtsam/nonlinear/Marginals.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/Values.h>
 #include <mola_sm_loop_closure/LoopClosureInterface.h>
+#include <mola_sm_loop_closure/common/icp_pipeline_setup.h>
 #include <mp2p_icp/icp_pipeline_from_yaml.h>
 #include <mp2p_icp/metricmap.h>
 #include <mp2p_icp_filters/FilterBase.h>
@@ -29,6 +31,7 @@
 #include <mrpt/opengl/CSetOfObjects.h>
 #include <mrpt/system/CTimeLogger.h>
 
+#include <future>
 #include <set>
 
 namespace mola
@@ -58,28 +61,35 @@ class SimplemapLoopClosure : public mola::LoopClosureInterface
     {
         mp2p_icp::Parameters icp_parameters;
 
-        std::string threshold_sigma_initial                          = "5.0";
-        std::string threshold_sigma_final                            = "0.5";
-        double      max_sensor_range                                 = 100.0;
-        double      icp_edge_additional_noise_xyz                    = 1e-2;
-        double      icp_edge_additional_noise_ang_deg                = 0.05;
-        double      input_odometry_edge_additional_noise_xyz         = 0.001;
-        double      input_odometry_edge_additional_noise_ang_deg     = 0.001;
-        double      input_edges_uncertainty_multiplier               = 1.0;
-        double      submap_max_length_wrt_map                        = 0.10;
-        double      submap_max_absolute_length                       = 100.0;
-        double      submap_min_absolute_length                       = 50.0;
-        double      max_time_between_kfs_to_break_submap             = 10.0;
-        double      min_volume_intersection_ratio_for_lc_candidate   = 0.6;
-        bool        assume_planar_world                              = false;
-        double      planar_world_initial_sigma_z                     = 0.10;  // [m]
-        double      planar_world_initial_sigma_ang                   = 0.02;  // [rad]
-        size_t      planar_world_annealing_rounds                    = 2;
-        bool        planar_world_hard_flatten                        = false;
-        bool        use_gnss                                         = true;
+        std::string           threshold_sigma_initial                        = "5.0";
+        std::string           threshold_sigma_final                          = "0.5";
+        double                max_sensor_range                               = 100.0;
+        double                icp_edge_additional_noise_xyz                  = 1e-2;
+        double                icp_edge_additional_noise_ang_deg              = 0.05;
+        double                input_odometry_edge_additional_noise_xyz       = 0.001;
+        double                input_odometry_edge_additional_noise_ang_deg   = 0.001;
+        double                input_edges_uncertainty_multiplier             = 1.0;
+        double                submap_max_length_wrt_map                      = 0.10;
+        double                submap_max_absolute_length                     = 100.0;
+        double                submap_min_absolute_length                     = 50.0;
+        double                max_time_between_kfs_to_break_submap           = 10.0;
+        double                min_volume_intersection_ratio_for_lc_candidate = 0.6;
+        bool                  assume_planar_world                            = false;
+        double                planar_world_initial_sigma_z                   = 0.10;  // [m]
+        double                planar_world_initial_sigma_ang                 = 0.02;  // [rad]
+        size_t                planar_world_annealing_rounds                  = 2;
+        bool                  planar_world_hard_flatten                      = false;
+        std::array<double, 6> submap_graph_edge_sigmas                       = {
+                                  0.10, 0.10, 0.15, 1.0 * M_PI / 180, 1.5 * M_PI / 180, 1.0 * M_PI / 180};
+        bool use_gnss = true;
+        /// "submap" (default, scalable for very large maps) or "per_kf"
+        /// (sensor-pose aware, more accurate, larger factor graph).
+        std::string gnss_factor_strategy                             = "submap";
         bool        gnss_add_horizontality                           = false;
-        double      gnss_horizontality_sigma_z                       = 0.01;  // [m]
+        double      gnss_horizontality_sigma_rpy                     = 0.01;  // [rad]
         double      gnss_minimum_uncertainty_xyz                     = 0.10;  // [m]
+        bool        use_imu_gravity                                  = true;
+        double      imu_gravity_sigma_deg                            = 3.0;  // [deg]
         uint32_t    max_number_lc_candidates                         = 150;  // 0: no limit
         double      min_lc_uncertainty_ratio_to_draw_several_samples = 2.0;
         double      largest_delta_for_reconsider_all                 = 10.0;
@@ -112,6 +122,10 @@ class SimplemapLoopClosure : public mola::LoopClosureInterface
         submap_id_t id = 0;
 
         mutable mrpt::math::TBoundingBox bbox;  // in the submap local frame
+        mutable bool                     bbox_ready = false;
+
+        // Pending async local-map build (used when bbox_ready == false).
+        mutable std::shared_future<mp2p_icp::metric_map_t::Ptr> pending_local_map_fut;
 
         std::optional<mp2p_icp::metric_map_t::Georeferencing> geo_ref;
 
@@ -124,6 +138,10 @@ class SimplemapLoopClosure : public mola::LoopClosureInterface
     std::future<mp2p_icp::metric_map_t::Ptr> get_submap_local_map(const SubMap& submap);
 
     mp2p_icp::metric_map_t::Ptr impl_get_submap_local_map(const SubMap& submap);
+
+    /** Ensure submap bbox is populated; blocks if a deferred build is pending.
+     */
+    void ensure_submap_bbox_ready(const SubMap& submap) const;
 
     struct State
     {
@@ -139,25 +157,15 @@ class SimplemapLoopClosure : public mola::LoopClosureInterface
         {
             std::mutex mtx;
 
-            mp2p_icp::ParameterSource parameter_source;
+            // Shared ICP pipeline (obs generators, filter, parameter source):
+            lc_common::PerThreadIcpPipeline pipeline;
 
-            mp2p_icp::ICP::Ptr icp;
-
-            // observations:
-            mp2p_icp_filters::GeneratorSet   obs_generators;
-            mp2p_icp_filters::FilterPipeline pc_filter;
-
-            // local maps:
+            // SM-specific pipelines:
             mp2p_icp_filters::GeneratorSet   local_map_generators;
             mp2p_icp_filters::FilterPipeline obs2map_merge;
-
-            // final stage filters for submaps:
             mp2p_icp_filters::FilterPipeline submap_final_filter;
 
             double REL_POSE_SIGMA_XY = 1.0;
-
-            mrpt::expr::CRuntimeCompiledExpression expr_threshold_sigma_initial;
-            mrpt::expr::CRuntimeCompiledExpression expr_threshold_sigma_final;
         };
 
         // One copy of the state per working thread:
@@ -173,10 +181,11 @@ class SimplemapLoopClosure : public mola::LoopClosureInterface
         std::optional<mrpt::topography::TGeodeticCoords> globalGeoRef;
         submap_id_t                                      globalGeoRefSubmapId{};
 
-        gtsam::Values               kfGraphValues;
-        gtsam::NonlinearFactorGraph kfGraphFG;
-        gtsam::NonlinearFactorGraph planarityFG;
-        std::vector<uint64_t>       knownInlierFactorIndices;
+        gtsam::Values                   kfGraphValues;
+        gtsam::NonlinearFactorGraph     kfGraphFG;
+        gtsam::NonlinearFactorGraph     planarityFG;
+        std::vector<uint64_t>           knownInlierFactorIndices;
+        std::optional<gtsam::Marginals> kfGraphMarginals;
 
         mrpt::poses::CPose3D kfGraph_get_pose(keyframe_id_t id) const;
     };
@@ -235,6 +244,8 @@ class SimplemapLoopClosure : public mola::LoopClosureInterface
     std::vector<std::set<keyframe_id_t>> detect_sub_maps() const;
 
     void save_current_key_frame_poses_as_tum(const std::string& outTumFile) const;
+
+    void add_gnss_factors_per_kf();
 };
 
 }  // namespace mola

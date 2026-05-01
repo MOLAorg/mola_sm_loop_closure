@@ -21,9 +21,13 @@
 #include <mola_gtsam_factors/FactorGnssEnu.h>
 #include <mola_gtsam_factors/gtsam_detect_version.h>
 #include <mola_sm_loop_closure/FrameToFrameLoopClosure.h>
+#include <mola_sm_loop_closure/common/debug_flags.h>
 #include <mola_sm_loop_closure/common/gnc_optimizer.h>
+#include <mola_sm_loop_closure/common/gnss_factor_helpers.h>
+#include <mola_sm_loop_closure/common/icp_pipeline_setup.h>
 #include <mola_sm_loop_closure/common/obs_helpers.h>
 #include <mola_sm_loop_closure/common/planarity_factors.h>
+#include <mola_sm_loop_closure/common/tum_writer.h>
 #include <mola_yaml/yaml_helpers.h>
 #include <mp2p_icp/update_velocity_buffer_from_obs.h>
 #include <mrpt/core/get_env.h>
@@ -50,8 +54,9 @@ IMPLEMENTS_SERIALIZABLE(FrameToFrameLoopClosure, LoopClosureInterface, mola)
 
 namespace
 {
-const bool PRINT_LC_SCORES = mrpt::get_env<bool>("PRINT_LC_SCORES", false);
-const bool SAVE_ICP_LOGS   = mrpt::get_env<bool>("SAVE_ICP_LOGS", false);
+// Convenience shortcuts to the shared debug-flag singleton.
+#define PRINT_LC_SCORES (mola::lc_common::DebugFlags::instance().print_lc_scores)
+#define SAVE_ICP_LOGS (mola::lc_common::DebugFlags::instance().save_icp_logs)
 
 using mola::lc_common::frame_has_mapping_observations;
 
@@ -164,7 +169,7 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, use_gnss, bool);
     YAML_LOAD_OPT(params_, gnss_minimum_uncertainty_xyz, double);
     YAML_LOAD_OPT(params_, gnss_add_horizontality, bool);
-    YAML_LOAD_OPT(params_, gnss_horizontality_sigma_z, double);
+    YAML_LOAD_OPT(params_, gnss_horizontality_sigma_rpy, double);
     YAML_LOAD_OPT(params_, gnss_edges_uncertainty_multiplier, double);
 
     YAML_LOAD_OPT(params_, min_distance_between_frames, double);
@@ -273,36 +278,10 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     profiler_.enable(params_.profiler_enabled);
 
     // Initialize ICP pipelines for each thread
-    ENSURE_YAML_ENTRY_EXISTS(c, "icp_settings");
-
     for (auto& pts : state_.perThreadState_)
     {
-        const auto [icp, icpParams] = mp2p_icp::icp_pipeline_from_yaml(c["icp_settings"]);
-        pts.icp                     = icp;
-        params_.icp_parameters      = icpParams;
-
-        pts.icp->attachToParameterSource(pts.parameter_source);
-
-        // Observation generators
-        if (c.has("observations_generator") && !c["observations_generator"].isNullNode())
-        {
-            pts.obs_generators =
-                mp2p_icp_filters::generators_from_yaml(c["observations_generator"]);
-        }
-        else
-        {
-            auto defaultGen = mp2p_icp_filters::Generator::Create();
-            defaultGen->initialize({});
-            pts.obs_generators.push_back(defaultGen);
-        }
-        mp2p_icp::AttachToParameterSource(pts.obs_generators, pts.parameter_source);
-
-        // Observation filters
-        if (c.has("observations_filter"))
-        {
-            pts.pc_filter = mp2p_icp_filters::filter_pipeline_from_yaml(c["observations_filter"]);
-            mp2p_icp::AttachToParameterSource(pts.pc_filter, pts.parameter_source);
-        }
+        params_.icp_parameters = lc_common::load_icp_pipeline_from_yaml(
+            c, pts.pipeline, params_.threshold_sigma_initial, params_.threshold_sigma_final);
     }
 
 #if MP2P_ICP_HAS_LOG_FUNCTOR  // MP2P_ICP>=2.6.0
@@ -551,6 +530,7 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
     }
 
     // Update simplemap with optimized poses
+    using gtsam::symbol_shorthand::X;
     mrpt::maps::CSimpleMap outSM;
     for (size_t id = 0; id < sm.size(); id++)
     {
@@ -558,7 +538,25 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
 
         const auto newPose = mrpt::poses::CPose3DPDFGaussian::Create();
         newPose->mean      = state_.get_pose(id);
-        newPose->cov.setIdentity();
+        if (state_.graphMarginals.has_value())
+        {
+            try
+            {
+                newPose->cov = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(
+                    state_.graphMarginals->marginalCovariance(X(id)));
+            }
+            catch (const std::exception& e)
+            {
+                MRPT_LOG_WARN_STREAM(
+                    "[f2f_lc] Marginal covariance unavailable for frame " << id << ": "
+                                                                          << e.what());
+                newPose->cov.setIdentity();
+            }
+        }
+        else
+        {
+            newPose->cov.setIdentity();
+        }
 
         outSM.insert(newPose, sf, twist);
     }
@@ -636,61 +634,18 @@ void FrameToFrameLoopClosure::build_initial_graph()
 
 void FrameToFrameLoopClosure::add_gnss_factors()
 {
-    using gtsam::symbol_shorthand::X;
-
     mrpt::system::CTimeLoggerEntry tle(profiler_, "add_gnss_factors");
 
     ASSERT_(state_.sm);
-    const auto& sm = *state_.sm;
 
-    // Extract GNSS frames
-    AddGNSSFactorParams gpsParams;
-    gpsParams.minimumUncertaintyXYZ       = params_.gnss_minimum_uncertainty_xyz;
-    gpsParams.addHorizontalityConstraints = params_.gnss_add_horizontality;
-    gpsParams.horizontalitySigmaZ         = params_.gnss_horizontality_sigma_z;
+    lc_common::GnssFactorParams p;
+    p.add_horizontality       = params_.gnss_add_horizontality;
+    p.horizontality_sigma_rpy = params_.gnss_horizontality_sigma_rpy;
+    p.minimum_uncertainty_xyz = params_.gnss_minimum_uncertainty_xyz;
+    p.uncertainty_multiplier  = params_.gnss_edges_uncertainty_multiplier;
 
-    const auto gnssFrames = extract_gnss_frames_from_sm(sm, state_.globalGeoRef);
-
-    if (gnssFrames.frames.empty())
-    {
-        MRPT_LOG_WARN("No valid GNSS observations found");
-        return;
-    }
-
-    if (!state_.globalGeoRef.has_value())
-    {
-        state_.globalGeoRef = gnssFrames.refCoord;
-    }
-
-    MRPT_LOG_INFO_STREAM("Adding " << gnssFrames.frames.size() << " GNSS factors");
-
-    // Add GNSS factors for each frame
-    for (const auto& gf : gnssFrames.frames)
-    {
-        // kf_index is already set by extract_gnss_frames_from_sm
-        const frame_id_t frameId = static_cast<frame_id_t>(gf.kf_index);
-        if (frameId >= static_cast<frame_id_t>(sm.size()))
-        {
-            continue;
-        }
-
-        auto noiseOrg = gtsam::noiseModel::Diagonal::Sigmas(
-            gtsam::Vector3(gf.sigma_E, gf.sigma_N, gf.sigma_U)
-                .array()
-                .max(params_.gnss_minimum_uncertainty_xyz) *
-            params_.gnss_edges_uncertainty_multiplier);
-
-        auto robustNoise = gtsam::noiseModel::Robust::Create(
-            gtsam::noiseModel::mEstimator::Huber::Create(1.5), noiseOrg);
-
-        const auto observedENU = mrpt::gtsam_wrappers::toPoint3(gf.enu);
-        const auto sensorPointOnVeh =
-            mrpt::gtsam_wrappers::toPoint3(gf.obs->sensorPose.translation());
-
-        state_.knownInlierFactorIndices.push_back(state_.graphFG.size());
-        state_.graphFG.emplace_shared<mola::factors::FactorGnssEnu>(
-            X(frameId), sensorPointOnVeh, observedENU, robustNoise);
-    }
+    lc_common::add_gnss_factors_per_kf(
+        state_.graphFG, *state_.sm, state_.globalGeoRef, p, state_.knownInlierFactorIndices, this);
 }
 
 void FrameToFrameLoopClosure::add_manual_loop_closure_factors()
@@ -1053,7 +1008,9 @@ bool FrameToFrameLoopClosure::process_loop_candidate(const LoopCandidate& lc)
 
     mrpt::system::CTimeLoggerEntry tle(profiler_, "process_loop_candidate");
 
-    const size_t threadIdx = 0;  // Use first thread for now
+    const size_t threadIdx = lc_candidate_counter_.fetch_add(1, std::memory_order_relaxed) %
+                             state_.perThreadState_.size();
+    ASSERT_(threadIdx < state_.perThreadState_.size());
 
     // Get point clouds for both frames (using LRU cache)
     auto pc_i = get_cached_pointcloud(lc.frame_i, threadIdx);
@@ -1077,7 +1034,7 @@ bool FrameToFrameLoopClosure::process_loop_candidate(const LoopCandidate& lc)
     update_dynamic_variables(lc.frame_j, threadIdx);
 
     mp2p_icp::Results icp_result;
-    pts.icp->align(*pc_j, *pc_i, initGuess, params_.icp_parameters, icp_result);
+    pts.pipeline.icp->align(*pc_j, *pc_i, initGuess, params_.icp_parameters, icp_result);
 
     const auto poseDelta = (icp_result.optimal_tf.getMeanVal().asTPose() - initGuess);
 
@@ -1139,7 +1096,8 @@ mp2p_icp::metric_map_t::Ptr FrameToFrameLoopClosure::generate_frame_pointcloud(
     for (const auto& obs : *sf)
     {
         ASSERT_(obs);
-        mp2p_icp::update_velocity_buffer_from_obs(pts.parameter_source.localVelocityBuffer, obs);
+        mp2p_icp::update_velocity_buffer_from_obs(
+            pts.pipeline.parameter_source.localVelocityBuffer, obs);
     }
 
     update_dynamic_variables(frameId, threadIdx);
@@ -1151,7 +1109,7 @@ mp2p_icp::metric_map_t::Ptr FrameToFrameLoopClosure::generate_frame_pointcloud(
         // Generate point cloud from observations
         for (const auto& obs : *sf)
         {
-            mp2p_icp_filters::apply_generators(pts.obs_generators, *obs, *observation);
+            mp2p_icp_filters::apply_generators(pts.pipeline.obs_generators, *obs, *observation);
         }
     }
     catch (const std::exception& e)
@@ -1171,7 +1129,7 @@ mp2p_icp::metric_map_t::Ptr FrameToFrameLoopClosure::generate_frame_pointcloud(
     }
 
     // Apply filters
-    mp2p_icp_filters::apply_filter_pipeline(pts.pc_filter, *observation, profiler_);
+    mp2p_icp_filters::apply_filter_pipeline(pts.pipeline.pc_filter, *observation, profiler_);
 
     // Unload raw observation data to free RAM (only effective for externally-stored data)
     if (params_.unload_observations_after_use)
@@ -1282,7 +1240,14 @@ double FrameToFrameLoopClosure::optimize_graph()
     {
         combined.add(state_.planarityFG);
     }
-    state_.graphMarginals.emplace(combined, state_.graphValues);
+    try
+    {
+        state_.graphMarginals.emplace(combined, state_.graphValues);
+    }
+    catch (const std::exception& e)
+    {
+        MRPT_LOG_WARN_STREAM("Could not compute graph marginals: " << e.what());
+    }
 
     auto bckCol =
         mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO);
@@ -1322,7 +1287,7 @@ mrpt::math::CMatrixDouble66 FrameToFrameLoopClosure::State::get_pose_cov(frame_i
 void FrameToFrameLoopClosure::update_dynamic_variables(frame_id_t frameId, size_t threadIdx)
 {
     auto& pts = state_.perThreadState_.at(threadIdx);
-    auto& ps  = pts.parameter_source;
+    auto& ps  = pts.pipeline.parameter_source;
 
     const auto& [pose, sf, twist] = state_.sm->get(frameId);
 
@@ -1340,17 +1305,17 @@ void FrameToFrameLoopClosure::update_dynamic_variables(frame_id_t frameId, size_
     ps.updateVariable("wy", twistForIcp.wy);
     ps.updateVariable("wz", twistForIcp.wz);
 
-    if (!pts.expr_threshold_sigma_final.is_compiled())
+    if (!pts.pipeline.expr_threshold_sigma_final.is_compiled())
     {
-        pts.expr_threshold_sigma_final.compile(
+        pts.pipeline.expr_threshold_sigma_final.compile(
             params_.threshold_sigma_final, {}, "expr_threshold_sigma_final");
 
-        pts.expr_threshold_sigma_initial.compile(
+        pts.pipeline.expr_threshold_sigma_initial.compile(
             params_.threshold_sigma_initial, {}, "expr_threshold_sigma_initial");
     }
 
-    ps.updateVariable("SIGMA_INIT", pts.expr_threshold_sigma_initial.eval());
-    ps.updateVariable("SIGMA_FINAL", pts.expr_threshold_sigma_final.eval());
+    ps.updateVariable("SIGMA_INIT", pts.pipeline.expr_threshold_sigma_initial.eval());
+    ps.updateVariable("SIGMA_FINAL", pts.pipeline.expr_threshold_sigma_final.eval());
     ps.updateVariable("ESTIMATED_SENSOR_MAX_RANGE", params_.max_sensor_range);
 
     // This will be overwritten by the actual ICP loop later on,
@@ -1527,52 +1492,18 @@ void FrameToFrameLoopClosure::save_trajectory_as_tum(
     const std::string& filename, bool saveCovariancesToo) const
 {
     ASSERT_(state_.sm);
-
-    mrpt::poses::CPose3DInterpolator path;
-    mrpt::math::CMatrixDouble        pathSigmas;
-
     if (saveCovariancesToo)
     {
         ASSERT_(state_.graphMarginals.has_value());
     }
 
-    for (size_t id = 0; id < state_.sm->size(); id++)
-    {
-        const auto& [oldPose, sf, twist] = state_.sm->get(id);
-        const auto newPose               = state_.get_pose(id);
-
-        if (sf->empty())
-        {
-            MRPT_LOG_WARN_STREAM("Frame " << id << " has no observations, skipping in trajectory");
-            continue;
-        }
-        const auto t = sf->getObservationByIndex(0)->timestamp;
-
-        path.insert(t, newPose);
-
-        if (saveCovariancesToo)
-        {
-            const auto& cov = state_.get_pose_cov(id);
-
-            const auto row = static_cast<Eigen::Index>(path.size() - 1);
-            pathSigmas.conservativeResize(row + 1, 6);
-            for (int i = 0; i < 6; i++)
-            {
-                pathSigmas(row, i) = std::sqrt(cov(i, i));
-            }
-        }
-    }
-
-    path.saveToTextFile_TUM(filename);
-
+    std::function<mrpt::math::CMatrixDouble66(size_t)> covOf;
     if (saveCovariancesToo)
     {
-        const std::string header =
-            "# sigma_x_m sigma_y_m sigma_z_m sigma_yaw_rad sigma_pitch_rad sigma_roll_rad";
-        pathSigmas.saveToTextFile(
-            mrpt::system::fileNameChangeExtension(filename, "cov"), mrpt::math::MATRIX_FORMAT_ENG,
-            false, header);
+        covOf = [this](size_t id) { return state_.get_pose_cov(id); };
     }
 
-    MRPT_LOG_INFO_STREAM("Saved trajectory to: " << filename);
+    lc_common::save_trajectory_as_tum(
+        filename, *state_.sm, [this](size_t id) { return state_.get_pose(id); },
+        saveCovariancesToo ? &covOf : nullptr, const_cast<FrameToFrameLoopClosure*>(this));
 }
