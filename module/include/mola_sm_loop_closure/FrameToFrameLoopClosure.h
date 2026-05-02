@@ -14,10 +14,6 @@
 
 #pragma once
 
-#ifdef MOLA_HAS_KISS_MATCHER
-#include <kiss_matcher/KISSMatcher.hpp>
-#endif
-
 #include <gtsam/nonlinear/Marginals.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/Values.h>
@@ -249,9 +245,7 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         // Shared ICP pipeline (obs generators, filter, parameter source):
         lc_common::PerThreadIcpPipeline pipeline;
 
-#ifdef MOLA_HAS_KISS_MATCHER
-        std::optional<kiss_matcher::KISSMatcher> kissMatcher;
-#endif
+        std::shared_ptr<void> kissMatcher;  // holds kiss_matcher::KISSMatcher when enabled
     };
 
     struct State
@@ -346,8 +340,9 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
     std::vector<LoopCandidate> find_loop_candidates(
         const std::set<std::pair<frame_id_t, frame_id_t>>& alreadyChecked) const;
 
-    /** Process a single loop closure candidate with ICP */
-    bool process_loop_candidate(const LoopCandidate& lc);
+    /** Process a single loop closure candidate with ICP.
+     *  Returns the factor index in graphFG on success, or nullopt on failure. */
+    std::optional<size_t> process_loop_candidate(const LoopCandidate& lc);
 
     /** Optimize the graph and return the largest pose change */
     double optimize_graph();

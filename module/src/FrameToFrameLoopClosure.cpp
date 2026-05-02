@@ -46,6 +46,10 @@
 #include <mrpt/poses/gtsam_wrappers.h>
 #include <mrpt/system/filesystem.h>
 
+#ifdef MOLA_HAS_KISS_MATCHER
+#include <kiss_matcher/KISSMatcher.hpp>
+#endif
+
 #include <cmath>
 
 using namespace mola;
@@ -305,7 +309,8 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     {
         const kiss_matcher::KISSMatcherConfig km_cfg(
             static_cast<float>(params_.kiss_matcher_resolution));
-        for (auto& pts : state_.perThreadState_) pts.kissMatcher.emplace(km_cfg);
+        for (auto& pts : state_.perThreadState_)
+            pts.kissMatcher = std::make_shared<kiss_matcher::KISSMatcher>(km_cfg);
         MRPT_LOG_INFO_STREAM(
             "KISS-Matcher enabled: resolution=" << params_.kiss_matcher_resolution << " m, layer='"
                                                 << params_.kiss_matcher_layer << "'");
@@ -496,8 +501,8 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
             alreadyChecked.insert(IDs);
             checkedCount++;
 
-            const bool accepted = process_loop_candidate(lc);
-            if (accepted)
+            const auto lc_result = process_loop_candidate(lc);
+            if (lc_result.has_value())
             {
                 anyGraphChange = true;
                 accepted_lcs++;
@@ -768,8 +773,9 @@ void FrameToFrameLoopClosure::add_manual_loop_closure_factors()
                 (state_.get_pose(fi).translation() - state_.get_pose(fj).translation()).norm();
             lc.score = 1.0;
 
-            if (process_loop_candidate(lc))
+            if (const auto km_result = process_loop_candidate(lc); km_result.has_value())
             {
+                state_.knownInlierFactorIndices.push_back(*km_result);
                 addedCount++;
                 MRPT_LOG_INFO_STREAM(
                     "Manual LC (KISS-Matcher+ICP) added: frame "
@@ -1060,7 +1066,7 @@ auto FrameToFrameLoopClosure::
     return finalCandidates;
 }
 
-bool FrameToFrameLoopClosure::process_loop_candidate(const LoopCandidate& lc)
+std::optional<size_t> FrameToFrameLoopClosure::process_loop_candidate(const LoopCandidate& lc)
 {
     using gtsam::symbol_shorthand::X;
 
@@ -1078,7 +1084,7 @@ bool FrameToFrameLoopClosure::process_loop_candidate(const LoopCandidate& lc)
     {
         MRPT_LOG_WARN_STREAM(
             "Failed to generate point clouds for LC " << lc.frame_i << " <-> " << lc.frame_j);
-        return false;
+        return std::nullopt;
     }
 
     // Initial guess from current graph
@@ -1089,7 +1095,7 @@ bool FrameToFrameLoopClosure::process_loop_candidate(const LoopCandidate& lc)
     auto& pts = state_.perThreadState_.at(threadIdx);
 
 #ifdef MOLA_HAS_KISS_MATCHER
-    if (params_.use_kiss_matcher && pts.kissMatcher.has_value())
+    if (params_.use_kiss_matcher && pts.kissMatcher != nullptr)
     {
         mrpt::system::CTimeLoggerEntry tle_km(profiler_, "kiss_matcher_initial_guess");
 
@@ -1122,7 +1128,8 @@ bool FrameToFrameLoopClosure::process_loop_candidate(const LoopCandidate& lc)
 
         if (!src_pts.empty() && !tgt_pts.empty())
         {
-            const auto sol = pts.kissMatcher->estimate(src_pts, tgt_pts);
+            const auto sol = static_cast<kiss_matcher::KISSMatcher*>(pts.kissMatcher.get())
+                                 ->estimate(src_pts, tgt_pts);
             if (sol.valid)
             {
                 mrpt::math::CMatrixDouble44 T = mrpt::math::CMatrixDouble44::Identity();
@@ -1170,11 +1177,12 @@ bool FrameToFrameLoopClosure::process_loop_candidate(const LoopCandidate& lc)
 
     if (icp_result.quality < params_.min_icp_goodness)
     {
-        return false;
+        return std::nullopt;
     }
 
     // Add ICP edge to graph
-    const auto deltaPose = mrpt::gtsam_wrappers::toPose3(icp_result.optimal_tf.mean);
+    const size_t newFactorIdx = state_.graphFG.size();
+    const auto   deltaPose    = mrpt::gtsam_wrappers::toPose3(icp_result.optimal_tf.mean);
 
     gtsam::Vector6 sigmas;
     const auto     covDiag = icp_result.optimal_tf.cov.asEigen().diagonal().array().sqrt();
@@ -1195,7 +1203,7 @@ bool FrameToFrameLoopClosure::process_loop_candidate(const LoopCandidate& lc)
 
     accepted_lc_edges_.emplace_back(lc.frame_i, lc.frame_j);
 
-    return true;
+    return newFactorIdx;
 }
 
 mp2p_icp::metric_map_t::Ptr FrameToFrameLoopClosure::generate_frame_pointcloud(
