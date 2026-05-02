@@ -17,6 +17,11 @@ endif()
 # Tell CMake we'll use C++ for use in its tests/flags
 project(mola_sm_loop_closure LANGUAGES CXX)
 
+if(CMAKE_BUILD_TYPE STREQUAL "Coverage")
+  add_compile_options(--coverage)
+  add_link_options(--coverage)
+endif()
+
 # MOLA CMake scripts: "mola_xxx()"
 find_package(mola_common REQUIRED)
 
