@@ -89,6 +89,31 @@ if(mp2p_icp_VERSION VERSION_GREATER_EQUAL "2.6.0")
   target_compile_definitions(${PROJECT_NAME} PRIVATE MP2P_ICP_HAS_LOG_FUNCTOR)
 endif()
 
+# Optional: KISS-Matcher for global-registration initial guesses in F2F loop closure.
+# Enabled automatically when the git submodule is populated.
+set(_KISS_MATCHER_CMAKE
+  "${CMAKE_CURRENT_SOURCE_DIR}/third_party/kiss-matcher/cpp/kiss_matcher/CMakeLists.txt")
+if(EXISTS "${_KISS_MATCHER_CMAKE}")
+  message(STATUS "KISS-Matcher submodule found: enabling MOLA_HAS_KISS_MATCHER")
+  # Use system packages instead of FetchContent downloads where possible
+  set(USE_SYSTEM_EIGEN3 ON  CACHE BOOL "Use system Eigen3 for KISS-Matcher" FORCE)
+  set(USE_SYSTEM_TBB    ON  CACHE BOOL "Use system TBB for KISS-Matcher"   FORCE)
+  set(USE_SYSTEM_ROBIN  OFF CACHE BOOL "Use system ROBIN for KISS-Matcher"  FORCE)
+  # Redirect ROBIN FetchContent to our bundled submodule (avoids network fetches)
+  set(FETCHCONTENT_SOURCE_DIR_ROBIN
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/robin" CACHE PATH "" FORCE)
+  add_subdirectory(
+    third_party/kiss-matcher/cpp/kiss_matcher
+    ${CMAKE_CURRENT_BINARY_DIR}/third_party/kiss_matcher_build
+    EXCLUDE_FROM_ALL
+  )
+  # Static libs linked into our .so must be compiled with -fPIC
+  set_target_properties(kiss_matcher_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  set_target_properties(robin            PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  target_compile_definitions(${PROJECT_NAME} PUBLIC MOLA_HAS_KISS_MATCHER)
+  target_link_libraries(${PROJECT_NAME} PRIVATE kiss_matcher::kiss_matcher_core)
+endif()
+
 # mola_add_library() expects headers under "ROOT/include", so do this manually here:
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/module/include>

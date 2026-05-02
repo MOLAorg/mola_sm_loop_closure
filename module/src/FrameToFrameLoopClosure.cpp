@@ -229,6 +229,10 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, planar_world_initial_sigma_ang, double);
     YAML_LOAD_OPT(params_, planar_world_annealing_rounds, size_t);
 
+    YAML_LOAD_OPT(params_, use_kiss_matcher, bool);
+    YAML_LOAD_OPT(params_, kiss_matcher_resolution, double);
+    YAML_LOAD_OPT(params_, kiss_matcher_layer, std::string);
+
     YAML_LOAD_OPT(params_, largest_delta_for_reconsider, double);
     YAML_LOAD_OPT(params_, max_sensor_range, double);
 
@@ -294,6 +298,25 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
         return params_.icp_parameters.generateDebugFiles &&
                log.icpResult.quality >= params_.min_icp_goodness_to_save_icplog;
     };
+#endif
+
+#ifdef MOLA_HAS_KISS_MATCHER
+    if (params_.use_kiss_matcher)
+    {
+        const kiss_matcher::KISSMatcherConfig km_cfg(
+            static_cast<float>(params_.kiss_matcher_resolution));
+        for (auto& pts : state_.perThreadState_) pts.kissMatcher.emplace(km_cfg);
+        MRPT_LOG_INFO_STREAM(
+            "KISS-Matcher enabled: resolution=" << params_.kiss_matcher_resolution << " m, layer='"
+                                                << params_.kiss_matcher_layer << "'");
+    }
+#else
+    if (params_.use_kiss_matcher)
+    {
+        MRPT_LOG_WARN(
+            "use_kiss_matcher=true but this build lacks KISS-Matcher support "
+            "(populate the third_party/kiss-matcher submodule and rebuild); ignoring.");
+    }
 #endif
 
     state_.initialized = true;
@@ -733,7 +756,38 @@ void FrameToFrameLoopClosure::add_manual_loop_closure_factors()
             continue;
         }
 
-        // Relative pose: identity since we are assuming this is roughly a loop-closure:
+#ifdef MOLA_HAS_KISS_MATCHER
+        // When KISS-Matcher is available, use it (+ ICP) to compute the actual
+        // relative pose rather than assuming an identity transform.
+        if (params_.use_kiss_matcher)
+        {
+            LoopCandidate lc;
+            lc.frame_i = fi;
+            lc.frame_j = fj;
+            lc.distance =
+                (state_.get_pose(fi).translation() - state_.get_pose(fj).translation()).norm();
+            lc.score = 1.0;
+
+            if (process_loop_candidate(lc))
+            {
+                addedCount++;
+                MRPT_LOG_INFO_STREAM(
+                    "Manual LC (KISS-Matcher+ICP) added: frame "
+                    << fi << " (t=" << mlc.timestamp_i << ") <-> frame " << fj
+                    << " (t=" << mlc.timestamp_j << ")");
+                continue;
+            }
+            MRPT_LOG_WARN_STREAM(
+                "Manual LC: KISS-Matcher+ICP failed for frames "
+                << fi << "<->" << fj
+                << " (ICP quality too low); falling back to identity constraint "
+                   "with sigma_xyz="
+                << mlc.sigma_xyz << " m");
+        }
+#endif
+
+        // Fallback (or when KISS-Matcher is disabled): identity pose constraint
+        // with a tight XYZ sigma and unconstrained angles.
         const auto deltaPose = gtsam::Pose3::Identity();
 
         // Tight sigma on XYZ, very loose on angles (leave orientation free)
@@ -762,9 +816,9 @@ void FrameToFrameLoopClosure::add_manual_loop_closure_factors()
         addedCount++;
 
         MRPT_LOG_INFO_STREAM(
-            "Manual LC added: frame " << fi << " (t=" << mlc.timestamp_i << ") <-> frame " << fj
-                                      << " (t=" << mlc.timestamp_j
-                                      << ")  sigma_xyz=" << mlc.sigma_xyz << " m");
+            "Manual LC (identity) added: frame "
+            << fi << " (t=" << mlc.timestamp_i << ") <-> frame " << fj << " (t=" << mlc.timestamp_j
+            << ")  sigma_xyz=" << mlc.sigma_xyz << " m");
     }
 
     MRPT_LOG_INFO_STREAM("Added " << addedCount << " manual loop closure factor(s).");
@@ -1030,10 +1084,74 @@ bool FrameToFrameLoopClosure::process_loop_candidate(const LoopCandidate& lc)
     // Initial guess from current graph
     const auto pose_i    = state_.get_pose(lc.frame_i);
     const auto pose_j    = state_.get_pose(lc.frame_j);
-    const auto initGuess = (pose_j - pose_i).asTPose();
+    auto       initGuess = (pose_j - pose_i).asTPose();
+
+    auto& pts = state_.perThreadState_.at(threadIdx);
+
+#ifdef MOLA_HAS_KISS_MATCHER
+    if (params_.use_kiss_matcher && pts.kissMatcher.has_value())
+    {
+        mrpt::system::CTimeLoggerEntry tle_km(profiler_, "kiss_matcher_initial_guess");
+
+        auto extractEigen = [&](const mp2p_icp::metric_map_t& pc) -> std::vector<Eigen::Vector3f>
+        {
+            std::vector<Eigen::Vector3f> out;
+            auto                         it = pc.layers.find(params_.kiss_matcher_layer);
+            if (it == pc.layers.end())
+            {
+                return out;
+            }
+            const auto ptsMap = std::dynamic_pointer_cast<mrpt::maps::CPointsMap>(it->second);
+            if (!ptsMap)
+            {
+                return out;
+            }
+            const auto& xs = ptsMap->getPointsBufferRef_x();
+            const auto& ys = ptsMap->getPointsBufferRef_y();
+            const auto& zs = ptsMap->getPointsBufferRef_z();
+            out.reserve(xs.size());
+            for (size_t k = 0; k < xs.size(); k++)
+            {
+                out.emplace_back(xs[k], ys[k], zs[k]);
+            }
+            return out;
+        };
+
+        const auto src_pts = extractEigen(*pc_j);
+        const auto tgt_pts = extractEigen(*pc_i);
+
+        if (!src_pts.empty() && !tgt_pts.empty())
+        {
+            const auto sol = pts.kissMatcher->estimate(src_pts, tgt_pts);
+            if (sol.valid)
+            {
+                mrpt::math::CMatrixDouble44 T = mrpt::math::CMatrixDouble44::Identity();
+                for (int r = 0; r < 3; r++)
+                {
+                    for (int c = 0; c < 3; c++)
+                    {
+                        T(r, c) = sol.rotation(r, c);
+                    }
+                }
+                T(0, 3)   = sol.translation(0);
+                T(1, 3)   = sol.translation(1);
+                T(2, 3)   = sol.translation(2);
+                initGuess = mrpt::poses::CPose3D(T).asTPose();
+                MRPT_LOG_DEBUG_STREAM(
+                    "KISS-Matcher valid guess for LC " << lc.frame_i << "<->" << lc.frame_j
+                                                       << " T=" << initGuess);
+            }
+            else
+            {
+                MRPT_LOG_DEBUG_STREAM(
+                    "KISS-Matcher invalid solution for LC " << lc.frame_i << "<->" << lc.frame_j
+                                                            << "; using graph-based guess");
+            }
+        }
+    }
+#endif
 
     // Run ICP
-    auto& pts = state_.perThreadState_.at(threadIdx);
 
     update_dynamic_variables(lc.frame_j, threadIdx);
 

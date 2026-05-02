@@ -14,6 +14,10 @@
 
 #pragma once
 
+#ifdef MOLA_HAS_KISS_MATCHER
+#include <kiss_matcher/KISSMatcher.hpp>
+#endif
+
 #include <gtsam/nonlinear/Marginals.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/Values.h>
@@ -206,6 +210,21 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         double planar_world_initial_sigma_ang = 0.02;  // [rad] sigma at round 0 (~1 deg)
         size_t planar_world_annealing_rounds  = 2;  // rounds until constraint vanishes
 
+        // ===== KISS-Matcher initial guess =====
+        /** If true, use KISS-Matcher to compute a global-registration initial
+         *  guess before running mp2p_icp::ICP on each loop-closure candidate.
+         *  Requires the kiss-matcher git submodule to be populated. */
+        bool use_kiss_matcher = false;
+
+        /** Voxel size [m] passed to KISSMatcherConfig.  Controls feature
+         *  extraction radius (normal_radius ≈ 3×, fpfh_radius ≈ 5×). */
+        double kiss_matcher_resolution = 1.0;
+
+        /** Name of the metric-map layer extracted from each keyframe's
+         *  mp2p_icp::metric_map_t and fed into KISS-Matcher.  Must contain
+         *  an mrpt::maps::CPointsMap-derived object. */
+        std::string kiss_matcher_layer = "points_to_register_points";
+
         // ===== Manual Loop Closure Hints =====
         struct ManualLoopConstraint
         {
@@ -229,6 +248,10 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
 
         // Shared ICP pipeline (obs generators, filter, parameter source):
         lc_common::PerThreadIcpPipeline pipeline;
+
+#ifdef MOLA_HAS_KISS_MATCHER
+        std::optional<kiss_matcher::KISSMatcher> kissMatcher;
+#endif
     };
 
     struct State

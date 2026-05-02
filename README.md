@@ -51,23 +51,26 @@ mola-sm-lc-cli -i in.simplemap -o out.simplemap \
 ## Key YAML knobs
 
 **SimplemapLoopClosure**
-- `submap_max_absolute_length` / `submap_min_absolute_length` — controls submap granularity.
+- `submap_max_absolute_length` / `submap_min_absolute_length` : controls submap granularity.
 - `assume_planar_world: true` enables annealed soft planar constraints (z, roll, pitch).
-  - `planar_world_initial_sigma_z`, `planar_world_initial_sigma_ang`, `planar_world_annealing_rounds` — tune the annealing schedule.
+  - `planar_world_initial_sigma_z`, `planar_world_initial_sigma_ang`, `planar_world_annealing_rounds` : tune the annealing schedule.
   - `planar_world_hard_flatten: true` restores the old hard-flattening behaviour.
-- `use_gnss: true` / `gnss_add_horizontality: true` — GNSS-assisted global alignment.
+- `use_gnss: true` / `gnss_add_horizontality: true` : GNSS-assisted global alignment.
   - `gnss_factor_strategy: "submap"` (default, scalable) or `"per_kf"` (sensor-pose-aware, larger graph).
-  - `gnss_max_uncertainty_horiz` (default `20.0` m) — reject GPS readings whose horizontal ENU uncertainty (√(σ_E²+σ_N²)) exceeds this threshold.
-  - `gnss_max_uncertainty_vert` (default `40.0` m) — reject GPS readings whose vertical ENU uncertainty (σ_U) exceeds this threshold.
+  - `gnss_max_uncertainty_horiz` (default `20.0` m) : reject GPS readings whose horizontal ENU uncertainty (√(σ_E²+σ_N²)) exceeds this threshold.
+  - `gnss_max_uncertainty_vert` (default `40.0` m) : reject GPS readings whose vertical ENU uncertainty (σ_U) exceeds this threshold.
   - Stats on accepted/rejected GNSS readings are printed at the INFO log level after processing.
-- `use_imu_gravity: true` / `imu_gravity_sigma_deg` — IMU-derived gravity-alignment factors added in stage 1.
+- `use_imu_gravity: true` / `imu_gravity_sigma_deg` : IMU-derived gravity-alignment factors added in stage 1.
 
 **FrameToFrameLoopClosure**
-- `lc_candidate_strategy` — `DISTANCE_STRATIFIED` (default), `PROXIMITY_ONLY`, or `MULTI_OBJECTIVE`.
-- `assume_planar_world: true` — planar-world annealing (subset of SM options; IMU-gravity options are not exposed by `FrameToFrameLoopClosure::Parameters`).
-- `use_gnss: true` — per-keyframe GNSS factors (`FactorGnssEnu`).
-  - `gnss_max_uncertainty_horiz` (default `20.0` m) — reject GPS readings whose horizontal ENU uncertainty exceeds this threshold.
-  - `gnss_max_uncertainty_vert` (default `40.0` m) — reject GPS readings whose vertical ENU uncertainty exceeds this threshold.
+- `lc_candidate_strategy` : `DISTANCE_STRATIFIED` (default), `PROXIMITY_ONLY`, or `MULTI_OBJECTIVE`.
+- `assume_planar_world: true` : planar-world annealing (subset of SM options; IMU-gravity options are not exposed by `FrameToFrameLoopClosure::Parameters`).
+- `use_gnss: true` : per-keyframe GNSS factors (`FactorGnssEnu`).
+  - `gnss_max_uncertainty_horiz` (default `20.0` m) : reject GPS readings whose horizontal ENU uncertainty exceeds this threshold.
+  - `gnss_max_uncertainty_vert` (default `40.0` m) : reject GPS readings whose vertical ENU uncertainty exceeds this threshold.
+- `use_kiss_matcher: true` : use [KISS-Matcher](https://github.com/mit-spark/kiss-matcher) global registration to seed the ICP initial guess for each loop-closure candidate (default: `false`; requires the `third_party/kiss-matcher` submodule to be populated).
+  - `kiss_matcher_resolution` (default `1.0` m) : voxel size for KISS-Matcher feature extraction; controls `normal_radius ≈ 3×` and `fpfh_radius ≈ 5×`.
+  - `kiss_matcher_layer` (default `"points_to_register_points"`) : name of the `mp2p_icp::metric_map_t` layer whose points are fed into KISS-Matcher.
 
 See the [online tutorial](https://docs.mola-slam.org/latest/tutorial-ouster-mapping-lc.html) for a step-by-step example.
 
