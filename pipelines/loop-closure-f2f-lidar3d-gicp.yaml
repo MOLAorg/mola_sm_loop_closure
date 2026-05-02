@@ -75,6 +75,14 @@ params:
   scene_lc_color_a: 0.8
   scene_keyframe_point_size: 7.0
 
+  # ===== KISS-Matcher initial guess =====
+  # When enabled, KISS-Matcher runs a global registration between each LC
+  # candidate pair before mp2p_icp::ICP, providing a better initial guess.
+  # Requires the kiss-matcher git submodule and rebuilding with it populated.
+  use_kiss_matcher: "${USE_KISS_MATCHER|false}"
+  kiss_matcher_resolution: "${KISS_MATCHER_RESOLUTION|1.0}" # [m] voxel size for feature extraction
+  kiss_matcher_layer: "${KISS_MATCHER_LAYER|points_to_register_points}" # metric-map layer to feed KISS-Matcher
+
   # ===== Planar World Annealing =====
   # When enabled, a planarity constraint (z≈0, roll≈0, pitch≈0) is added for
   # each keyframe. It starts strong at LC round 0 and is exponentially relaxed
@@ -95,10 +103,14 @@ params:
   # manual_loop_constraints:
   # - timestamp_i: 1700000100.250   # UNIX time of first keyframe
   #   timestamp_j: 1700000345.875   # UNIX time of second keyframe
-  #   sigma_xyz: 0.10               # [m] positional sigma
+  #   sigma_xyz: 0.10               # [m] positional sigma (fallback if KISS-Matcher+ICP fails)
   # - timestamp_i: 1700000210.500
   #   timestamp_j: 1700000512.000
   #   sigma_xyz: 0.20
+  #
+  # When use_kiss_matcher=true, each manual hint is fed through KISS-Matcher+ICP
+  # to compute the actual relative transform instead of assuming identity.
+  # sigma_xyz is only used as a fallback if ICP quality is below min_icp_goodness.
 
 # ===== ICP Settings =====
 # (Your existing ICP pipeline configuration goes here)
@@ -249,4 +261,4 @@ observations_filter:
   - class_name: mp2p_icp_filters::FilterDeleteLayer
     params:
       pointcloud_layer_to_remove:
-        ["raw", "deskewed", "points_to_register_points"]
+        ["raw", "deskewed"] # "points_to_register_points"

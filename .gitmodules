@@ -1,0 +1,6 @@
+[submodule "third_party/kiss-matcher"]
+	path = third_party/kiss-matcher
+	url = https://github.com/mit-spark/kiss-matcher
+[submodule "third_party/robin"]
+	path = third_party/robin
+	url = https://github.com/MIT-SPARK/ROBIN

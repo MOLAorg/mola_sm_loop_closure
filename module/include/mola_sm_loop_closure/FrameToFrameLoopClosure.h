@@ -206,6 +206,21 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         double planar_world_initial_sigma_ang = 0.02;  // [rad] sigma at round 0 (~1 deg)
         size_t planar_world_annealing_rounds  = 2;  // rounds until constraint vanishes
 
+        // ===== KISS-Matcher initial guess =====
+        /** If true, use KISS-Matcher to compute a global-registration initial
+         *  guess before running mp2p_icp::ICP on each loop-closure candidate.
+         *  Requires the kiss-matcher git submodule to be populated. */
+        bool use_kiss_matcher = false;
+
+        /** Voxel size [m] passed to KISSMatcherConfig.  Controls feature
+         *  extraction radius (normal_radius ≈ 3×, fpfh_radius ≈ 5×). */
+        double kiss_matcher_resolution = 1.0;
+
+        /** Name of the metric-map layer extracted from each keyframe's
+         *  mp2p_icp::metric_map_t and fed into KISS-Matcher.  Must contain
+         *  an mrpt::maps::CPointsMap-derived object. */
+        std::string kiss_matcher_layer = "points_to_register_points";
+
         // ===== Manual Loop Closure Hints =====
         struct ManualLoopConstraint
         {
@@ -229,6 +244,8 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
 
         // Shared ICP pipeline (obs generators, filter, parameter source):
         lc_common::PerThreadIcpPipeline pipeline;
+
+        std::shared_ptr<void> kissMatcher;  // holds kiss_matcher::KISSMatcher when enabled
     };
 
     struct State
@@ -323,8 +340,9 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
     std::vector<LoopCandidate> find_loop_candidates(
         const std::set<std::pair<frame_id_t, frame_id_t>>& alreadyChecked) const;
 
-    /** Process a single loop closure candidate with ICP */
-    bool process_loop_candidate(const LoopCandidate& lc);
+    /** Process a single loop closure candidate with ICP.
+     *  Returns the factor index in graphFG on success, or nullopt on failure. */
+    std::optional<size_t> process_loop_candidate(const LoopCandidate& lc);
 
     /** Optimize the graph and return the largest pose change */
     double optimize_graph();
