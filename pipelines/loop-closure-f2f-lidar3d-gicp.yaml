@@ -63,16 +63,24 @@ params:
   # ===== 3D Scene Visualization Output =====
   save_3d_scene_files: "${SAVE_3D_SCENES|false}"
   save_3d_scene_files_per_iteration: "${SAVE_3D_SCENES_PER_ITER|false}"
+  # Live preview: single .3Dscene file overwritten each LC iteration for use with
+  # the SceneViewer3D auto-reload feature. Shows the current trajectory (blue),
+  # candidate LC edges being evaluated (orange), and accepted good edges (green).
+  save_3d_scene_live_preview: "${SAVE_3D_SCENE_LIVE_PREVIEW|false}"
   scene_path_line_width: 2.0
   scene_lc_line_width: 4.0
   scene_path_color_r: 0.0 # blue path
   scene_path_color_g: 0.0
   scene_path_color_b: 1.0
   scene_path_color_a: 0.7
-  scene_lc_color_r: 1.0 # red LC edges
-  scene_lc_color_g: 0.0
+  scene_lc_color_r: 0.0 # green: accepted LC edges
+  scene_lc_color_g: 0.9
   scene_lc_color_b: 0.0
-  scene_lc_color_a: 0.8
+  scene_lc_color_a: 0.9
+  scene_lc_candidate_color_r: 1.0 # orange: pending candidate LC edges
+  scene_lc_candidate_color_g: 0.5
+  scene_lc_candidate_color_b: 0.0
+  scene_lc_candidate_color_a: 0.7
   scene_keyframe_point_size: 7.0
 
   # ===== KISS-Matcher initial guess =====

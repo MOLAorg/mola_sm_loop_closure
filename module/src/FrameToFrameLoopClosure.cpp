@@ -38,9 +38,12 @@
 #include <mrpt/obs/CObservationGPS.h>
 #include <mrpt/obs/CObservationPointCloud.h>
 #include <mrpt/obs/CObservationVelodyneScan.h>
+#include <mrpt/opengl/CGridPlaneXY.h>
 #include <mrpt/opengl/CPointCloud.h>
 #include <mrpt/opengl/CSetOfLines.h>
 #include <mrpt/opengl/Scene.h>
+#include <mrpt/opengl/Viewport.h>
+#include <mrpt/opengl/opengl_fonts.h>
 #include <mrpt/poses/CPose3DInterpolator.h>
 #include <mrpt/poses/Lie/SO.h>
 #include <mrpt/poses/gtsam_wrappers.h>
@@ -50,7 +53,10 @@
 #include <kiss_matcher/KISSMatcher.hpp>
 #endif
 
+#include <cerrno>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 
 using namespace mola;
 
@@ -247,6 +253,7 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
 
     YAML_LOAD_OPT(params_, save_3d_scene_files, bool);
     YAML_LOAD_OPT(params_, save_3d_scene_files_per_iteration, bool);
+    YAML_LOAD_OPT(params_, save_3d_scene_live_preview, bool);
     YAML_LOAD_OPT(params_, scene_path_line_width, float);
     YAML_LOAD_OPT(params_, scene_lc_line_width, float);
     YAML_LOAD_OPT(params_, scene_path_color_r, float);
@@ -257,6 +264,10 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, scene_lc_color_g, float);
     YAML_LOAD_OPT(params_, scene_lc_color_b, float);
     YAML_LOAD_OPT(params_, scene_lc_color_a, float);
+    YAML_LOAD_OPT(params_, scene_lc_candidate_color_r, float);
+    YAML_LOAD_OPT(params_, scene_lc_candidate_color_g, float);
+    YAML_LOAD_OPT(params_, scene_lc_candidate_color_b, float);
+    YAML_LOAD_OPT(params_, scene_lc_candidate_color_a, float);
     YAML_LOAD_OPT(params_, scene_keyframe_point_size, float);
 
     // Load manual loop closure hints
@@ -482,8 +493,22 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
         const auto frameGroup           = static_cast<double>(params_.min_frames_between_lc);
         size_t     acceptedSinceLastOpt = 0;
 
-        for (const auto& lc : candidates)
+        LivePreviewStats liveStats;
+        liveStats.lcRound         = lcRound;
+        liveStats.totalRounds     = params_.max_lc_optimization_rounds;
+        liveStats.acceptedLCs     = accepted_lcs;
+        liveStats.candidatesTotal = candidates.size();
+        liveStats.candidatesDone  = 0;
+
+        if (params_.save_3d_scene_live_preview)
         {
+            save_3d_scene_live_preview(candidates, liveStats);
+        }
+
+        for (size_t ci = 0; ci < candidates.size(); ci++)
+        {
+            const auto& lc = candidates[ci];
+
             // Decimate the frame IDs so we are effectively counting "blocks" of frames for what
             // concerns already-checked:
             const auto frameGroup_i = mrpt::round(static_cast<double>(lc.frame_i) / frameGroup);
@@ -500,6 +525,7 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
 
             alreadyChecked.insert(IDs);
             checkedCount++;
+            liveStats.candidatesDone = checkedCount;
 
             const auto lc_result = process_loop_candidate(lc);
             if (lc_result.has_value())
@@ -507,6 +533,15 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
                 anyGraphChange = true;
                 accepted_lcs++;
                 acceptedSinceLastOpt++;
+
+                if (params_.save_3d_scene_live_preview)
+                {
+                    const std::vector<LoopCandidate> remaining(
+                        candidates.begin() + ci + 1, candidates.end());
+                    liveStats.acceptedLCs    = accepted_lcs;
+                    liveStats.candidatesDone = checkedCount;
+                    save_3d_scene_live_preview(remaining, liveStats);
+                }
 
                 // Intermediate optimization: re-optimize after every N accepted LCs
                 // so that later (larger-gap) candidates benefit from corrected poses.
@@ -518,6 +553,15 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
                                                            << " accepted LCs");
                     optimize_graph();
                     acceptedSinceLastOpt = 0;
+
+                    if (params_.save_3d_scene_live_preview)
+                    {
+                        const std::vector<LoopCandidate> remaining(
+                            candidates.begin() + ci + 1, candidates.end());
+                        liveStats.acceptedLCs    = accepted_lcs;
+                        liveStats.candidatesDone = checkedCount;
+                        save_3d_scene_live_preview(remaining, liveStats);
+                    }
                 }
             }
         }
@@ -544,6 +588,13 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
                                                    << "m), reconsidering all candidates");
                 alreadyChecked.clear();
             }
+        }
+
+        if (params_.save_3d_scene_live_preview && checkedCount > 0)
+        {
+            liveStats.acceptedLCs    = accepted_lcs;
+            liveStats.candidatesDone = checkedCount;
+            save_3d_scene_live_preview({}, liveStats);
         }
     }
 
@@ -1532,7 +1583,7 @@ void FrameToFrameLoopClosure::save_3d_scene_files(const std::string& suffix) con
         lines->setLineWidth(params_.scene_path_line_width);
         lines->setColor_u8(mrpt::img::TColorf(
                                params_.scene_path_color_r, params_.scene_path_color_g,
-                               params_.scene_path_color_b, params_.scene_path_color_a * 255)
+                               params_.scene_path_color_b, params_.scene_path_color_a)
                                .asTColor());
 
         for (size_t i = 1; i < sm.size(); i++)
@@ -1618,6 +1669,162 @@ void FrameToFrameLoopClosure::build_planarity_factors(double sigmaZ, double sigm
     ASSERT_(state_.sm);
     lc_common::build_planarity_factors(
         state_.planarityFG, state_.graphValues, state_.sm->size(), sigmaZ, sigmaAng);
+}
+
+void FrameToFrameLoopClosure::save_3d_scene_live_preview(
+    const std::vector<LoopCandidate>& pendingCandidates, const LivePreviewStats& stats) const
+{
+    ASSERT_(state_.sm);
+    const auto& sm = *state_.sm;
+
+    mrpt::opengl::Scene scene;
+
+    // Ground grid spanning the trajectory bounding box
+    {
+        constexpr float GRID_SPACING = 5.0f;
+        constexpr float MARGIN       = 10.0f;
+
+        float xMin = std::numeric_limits<float>::max();
+        float xMax = -std::numeric_limits<float>::max();
+        float yMin = std::numeric_limits<float>::max();
+        float yMax = -std::numeric_limits<float>::max();
+
+        for (size_t i = 0; i < sm.size(); i++)
+        {
+            const auto p = state_.get_pose(i).translation();
+            xMin         = std::min(xMin, static_cast<float>(p.x));
+            xMax         = std::max(xMax, static_cast<float>(p.x));
+            yMin         = std::min(yMin, static_cast<float>(p.y));
+            yMax         = std::max(yMax, static_cast<float>(p.y));
+        }
+
+        // Snap outward to the nearest grid line
+        xMin = std::floor((xMin - MARGIN) / GRID_SPACING) * GRID_SPACING;
+        xMax = std::ceil((xMax + MARGIN) / GRID_SPACING) * GRID_SPACING;
+        yMin = std::floor((yMin - MARGIN) / GRID_SPACING) * GRID_SPACING;
+        yMax = std::ceil((yMax + MARGIN) / GRID_SPACING) * GRID_SPACING;
+
+        auto grid = mrpt::opengl::CGridPlaneXY::Create(xMin, xMax, yMin, yMax, 0.0f, GRID_SPACING);
+        grid->setColor(0.5f, 0.5f, 0.5f, 0.5f);
+        scene.insert(grid);
+    }
+
+    // Trajectory path edges
+    {
+        auto lines = mrpt::opengl::CSetOfLines::Create();
+        lines->setLineWidth(params_.scene_path_line_width);
+        lines->setColor_u8(mrpt::img::TColorf(
+                               params_.scene_path_color_r, params_.scene_path_color_g,
+                               params_.scene_path_color_b, params_.scene_path_color_a)
+                               .asTColor());
+        for (size_t i = 1; i < sm.size(); i++)
+        {
+            lines->appendLine(
+                state_.get_pose(i - 1).translation(), state_.get_pose(i).translation());
+        }
+        scene.insert(lines);
+    }
+
+    // Keyframe positions
+    {
+        auto pts = mrpt::opengl::CPointCloud::Create();
+        pts->setPointSize(params_.scene_keyframe_point_size);
+        pts->setColor_u8(mrpt::img::TColorf(
+                             params_.scene_path_color_r, params_.scene_path_color_g,
+                             params_.scene_path_color_b, params_.scene_path_color_a)
+                             .asTColor());
+        for (size_t i = 0; i < sm.size(); i++)
+        {
+            pts->insertPoint(state_.get_pose(i).translation());
+        }
+        scene.insert(pts);
+    }
+
+    // Accepted LC edges (green)
+    if (!accepted_lc_edges_.empty())
+    {
+        auto lines = mrpt::opengl::CSetOfLines::Create();
+        lines->setLineWidth(params_.scene_lc_line_width);
+        lines->setColor_u8(mrpt::img::TColorf(
+                               params_.scene_lc_color_r, params_.scene_lc_color_g,
+                               params_.scene_lc_color_b, params_.scene_lc_color_a)
+                               .asTColor());
+        for (const auto& [fi, fj] : accepted_lc_edges_)
+        {
+            lines->appendLine(state_.get_pose(fi).translation(), state_.get_pose(fj).translation());
+        }
+        scene.insert(lines);
+    }
+
+    // Pending candidate LC edges (orange)
+    if (!pendingCandidates.empty())
+    {
+        auto lines = mrpt::opengl::CSetOfLines::Create();
+        lines->setLineWidth(params_.scene_lc_line_width);
+        lines->setColor_u8(
+            mrpt::img::TColorf(
+                params_.scene_lc_candidate_color_r, params_.scene_lc_candidate_color_g,
+                params_.scene_lc_candidate_color_b, params_.scene_lc_candidate_color_a)
+                .asTColor());
+        for (const auto& lc : pendingCandidates)
+        {
+            lines->appendLine(
+                state_.get_pose(lc.frame_i).translation(),
+                state_.get_pose(lc.frame_j).translation());
+        }
+        scene.insert(lines);
+    }
+
+    // Text overlay on the main viewport
+    {
+        auto vp = scene.getViewport("main");
+
+        mrpt::opengl::TFontParams fp;
+        fp.vfont_name  = "sans";
+        fp.vfont_scale = 14.0f;
+        fp.draw_shadow = true;
+
+        fp.color = mrpt::img::TColorf(1.0f, 1.0f, 1.0f);
+        vp->addTextMessage(0.02, -20.0, "FrameToFrameLoopClosure - live preview", 0, fp);
+
+        fp.color = mrpt::img::TColorf(0.9f, 0.9f, 0.3f);
+        vp->addTextMessage(
+            0.02, -42.0, mrpt::format("LC round: %zu / %zu", stats.lcRound + 1, stats.totalRounds),
+            1, fp);
+
+        fp.color = mrpt::img::TColorf(
+            params_.scene_lc_candidate_color_r, params_.scene_lc_candidate_color_g,
+            params_.scene_lc_candidate_color_b);
+        vp->addTextMessage(
+            0.02, -64.0,
+            mrpt::format(
+                "Candidates evaluated: %zu / %zu  (pending: %zu)", stats.candidatesDone,
+                stats.candidatesTotal, pendingCandidates.size()),
+            2, fp);
+
+        fp.color = mrpt::img::TColorf(
+            params_.scene_lc_color_r, params_.scene_lc_color_g, params_.scene_lc_color_b);
+        vp->addTextMessage(
+            0.02, -86.0, mrpt::format("Accepted loop closures: %zu", stats.acceptedLCs), 3, fp);
+
+        fp.color = mrpt::img::TColorf(0.7f, 0.7f, 0.7f);
+        vp->addTextMessage(0.02, -108.0, mrpt::format("Keyframes: %zu", sm.size()), 4, fp);
+    }
+
+    const auto fn    = params_.debug_files_prefix + "live_preview.3Dscene";
+    const auto tmpFn = fn + ".tmp";
+    if (!scene.saveToFile(tmpFn))
+    {
+        MRPT_LOG_WARN_STREAM("Failed to save live preview 3D scene: " << tmpFn);
+        return;
+    }
+
+    if (::rename(tmpFn.c_str(), fn.c_str()) != 0)
+    {
+        MRPT_LOG_WARN_STREAM(
+            "Failed to atomically publish live preview scene: " << fn
+                                                                << " error=" << strerror(errno));
+    }
 }
 
 void FrameToFrameLoopClosure::save_trajectory_as_tum(
