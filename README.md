@@ -1,6 +1,7 @@
 [![CI ROS](https://github.com/MOLAorg/mola_sm_loop_closure/actions/workflows/ros-build.yml/badge.svg)](https://github.com/MOLAorg/mola_sm_loop_closure/actions/workflows/ros-build.yml)
 [![CI Check clang-format](https://github.com/MOLAorg/mola_sm_loop_closure/actions/workflows/check-clang-format.yml/badge.svg)](https://github.com/MOLAorg/mola_sm_loop_closure/actions/workflows/check-clang-format.yml)
 [![Docs](https://img.shields.io/badge/docs-latest-brightgreen.svg)](https://docs.mola-slam.org/mola_sm_loop_closure/)
+[![codecov](https://codecov.io/gh/MOLAorg/mola_sm_loop_closure/graph/badge.svg?token=K0DYJAI45R)](https://codecov.io/gh/MOLAorg/mola_sm_loop_closure)
 
 
 | Distro | Build dev | Build releases | Stable version |
