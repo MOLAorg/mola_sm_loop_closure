@@ -15,6 +15,7 @@
 // MRPT:
 #include <mola_georeferencing/simplemap_georeference.h>
 #include <mola_gtsam_factors/FactorGnssEnu.h>
+#include <mola_gtsam_factors/MeasuredGravityFactor.h>
 #include <mola_gtsam_factors/gtsam_detect_version.h>
 #include <mola_sm_loop_closure/common/gnss_factor_helpers.h>
 #include <mola_sm_loop_closure/common/graph_builders.h>
@@ -345,12 +346,13 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
 
     // Anchor for X(0) — added first so its FG index is 0.
     {
-        const auto                         p0 = state_.kfGraphValues.at<gtsam::Pose3>(X(0));
+        const auto p0          = state_.kfGraphValues.at<gtsam::Pose3>(X(0));
+        auto       anchorNoise = gtsam::noiseModel::Isotropic::Sigma(6, 1e-6);
         gtsam::NonlinearFactor::shared_ptr x0prior;
 #if GTSAM_USES_BOOST
-        x0prior = boost::make_shared<gtsam::PriorFactor<gtsam::Pose3>>(X(0), p0);
+        x0prior = boost::make_shared<gtsam::PriorFactor<gtsam::Pose3>>(X(0), p0, anchorNoise);
 #else
-        x0prior = std::make_shared<gtsam::PriorFactor<gtsam::Pose3>>(X(0), p0);
+        x0prior = std::make_shared<gtsam::PriorFactor<gtsam::Pose3>>(X(0), p0, anchorNoise);
 #endif
         state_.knownInlierFactorIndices.push_back(state_.kfGraphFG.size());
         state_.kfGraphFG.push_back(x0prior);
@@ -455,29 +457,42 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         save_current_key_frame_poses_as_tum(params_.debug_files_prefix + "_initial_pre_gnss.tum"s);
 
         // IMU gravity-alignment factors (stage 1, alongside GNSS).
+        // NOTE: add_imu_gravity_factors() from mola_georeferencing uses P(i)/T(0) symbol keys
+        // (designed for the standalone georeferencing graph). Here we work with X(i) keys, so we
+        // inline the equivalent logic using X(i) directly and a single fixed T(0)=Identity anchor.
         if (params_.use_imu_gravity)
         {
             const auto imuFrames = mola::extract_imu_acc_frames_from_sm(*state_.sm);
             if (!imuFrames.frames.empty())
             {
-                std::set<size_t> existingPoseKeys;
-                for (const auto& kv : state_.kfGraphValues)
+                using gtsam::symbol_shorthand::T;
+
+                // Insert T(0)=Identity as a fixed anchor for the ENU->map transform.
+                // In the SimplemapLoopClosure context the map frame is approximately the initial
+                // odometry frame, so we lock T(0) tightly and constrain only X(i) roll/pitch via
+                // MeasuredGravityFactor(T(0), X(i)).
+                if (!state_.kfGraphValues.exists(T(0)))
                 {
-                    const gtsam::Symbol s(kv.key);
-                    if (s.chr() == 'x') existingPoseKeys.insert(s.index());
+                    state_.kfGraphValues.insert(T(0), gtsam::Pose3::Identity());
+                    auto tightNoise = gtsam::noiseModel::Isotropic::Sigma(6, 1e-6);
+                    state_.knownInlierFactorIndices.push_back(state_.kfGraphFG.size());
+                    state_.kfGraphFG.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
+                        T(0), gtsam::Pose3::Identity(), tightNoise);
                 }
 
-                mola::AddIMUGravityFactorParams imuP;
-                imuP.imuGravitySigmaDeg = params_.imu_gravity_sigma_deg;
+                auto accNoise = gtsam::noiseModel::Isotropic::Sigma(
+                    3, mrpt::DEG2RAD(params_.imu_gravity_sigma_deg));
 
                 const std::size_t before = state_.kfGraphFG.size();
-                mola::add_imu_gravity_factors(
-                    state_.kfGraphFG, state_.kfGraphValues, imuFrames, existingPoseKeys, imuP);
-                const std::size_t after = state_.kfGraphFG.size();
-                for (std::size_t k = before; k < after; ++k)
+                for (const auto& frame : imuFrames.frames)
                 {
-                    state_.knownInlierFactorIndices.push_back(k);
+                    const auto sensorOnVehicle =
+                        mrpt::gtsam_wrappers::toPose3(frame.sensorPoseOnVehicle);
+                    state_.knownInlierFactorIndices.push_back(state_.kfGraphFG.size());
+                    state_.kfGraphFG.emplace_shared<mola::factors::MeasuredGravityFactor>(
+                        T(0), X(frame.kf_index), sensorOnVehicle, frame.normalizedAcc, accNoise);
                 }
+                const std::size_t after = state_.kfGraphFG.size();
                 MRPT_LOG_INFO_STREAM(
                     "[sm_lc] Added " << (after - before) << " IMU gravity factors over "
                                      << imuFrames.frames.size() << " IMU keyframes");
