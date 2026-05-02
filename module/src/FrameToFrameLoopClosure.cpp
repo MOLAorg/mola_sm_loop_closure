@@ -1354,6 +1354,8 @@ double FrameToFrameLoopClosure::optimize_graph()
 
     ASSERT_(!state_.graphFG.empty());
 
+    MRPT_LOG_INFO_STREAM("Executing GNC optimization...");
+
     const auto result = lc_common::run_gnc(
         state_.graphFG, state_.planarityFG, state_.graphValues, state_.knownInlierFactorIndices,
         this);

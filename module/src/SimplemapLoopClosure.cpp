@@ -1992,6 +1992,8 @@ double SimplemapLoopClosure::optimize_graph()
 {
     double largestDelta = 0;
 
+    MRPT_LOG_INFO_STREAM("Executing GNC optimization...");
+
     const auto result = lc_common::run_gnc(
         state_.kfGraphFG, state_.planarityFG, state_.kfGraphValues, state_.knownInlierFactorIndices,
         this);
