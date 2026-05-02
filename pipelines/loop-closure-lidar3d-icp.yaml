@@ -36,6 +36,8 @@ params:
   largest_delta_for_reconsider_all: 10.0 # [m]
 
   use_gnss: "${USE_GNSS|true}"
+  gnss_max_uncertainty_horiz: ${LC_GNSS_MAX_UNCERTAINTY_HORIZ|20.0} # [m] Reject reading if horizontal uncertainty > this
+  gnss_max_uncertainty_vert: ${LC_GNSS_MAX_UNCERTAINTY_VERT|40.0} # [m] Reject reading if vertical uncertainty > this
   gnss_edges_uncertainty_multiplier: "${GNSS_EDGES_UNCERTAINTY_MULTIPLIER|true}"
 
   # IMU-derived gravity-alignment factors (added in stage 1, alongside GNSS).

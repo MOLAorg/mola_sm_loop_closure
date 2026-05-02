@@ -171,6 +171,8 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, gnss_add_horizontality, bool);
     YAML_LOAD_OPT(params_, gnss_horizontality_sigma_rpy, double);
     YAML_LOAD_OPT(params_, gnss_edges_uncertainty_multiplier, double);
+    YAML_LOAD_OPT(params_, gnss_max_uncertainty_horiz, double);
+    YAML_LOAD_OPT(params_, gnss_max_uncertainty_vert, double);
 
     YAML_LOAD_OPT(params_, min_distance_between_frames, double);
     YAML_LOAD_OPT(params_, max_distance_for_lc_candidate, double);
@@ -643,6 +645,8 @@ void FrameToFrameLoopClosure::add_gnss_factors()
     p.horizontality_sigma_rpy = params_.gnss_horizontality_sigma_rpy;
     p.minimum_uncertainty_xyz = params_.gnss_minimum_uncertainty_xyz;
     p.uncertainty_multiplier  = params_.gnss_edges_uncertainty_multiplier;
+    p.max_uncertainty_horiz   = params_.gnss_max_uncertainty_horiz;
+    p.max_uncertainty_vert    = params_.gnss_max_uncertainty_vert;
 
     lc_common::add_gnss_factors_per_kf(
         state_.graphFG, *state_.sm, state_.globalGeoRef, p, state_.knownInlierFactorIndices, this);

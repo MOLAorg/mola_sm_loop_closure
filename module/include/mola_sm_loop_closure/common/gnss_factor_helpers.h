@@ -28,6 +28,8 @@ struct GnssFactorParams
     double horizontality_sigma_rpy = 0.01;  // [rad] roll/pitch-constraint sigma
     double minimum_uncertainty_xyz = 0.10;  // [m] per-axis floor on GPS sigma
     double uncertainty_multiplier  = 1.0;  // applied to sigma before the floor
+    double max_uncertainty_horiz   = 20.0;  // [m] reject reading if sqrt(sigE²+sigN²) > this
+    double max_uncertainty_vert    = 40.0;  // [m] reject reading if sigU > this
 };
 
 /** Add per-keyframe FactorGnssEnu factors to \a fg from GNSS observations in

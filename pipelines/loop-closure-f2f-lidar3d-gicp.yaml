@@ -10,7 +10,9 @@
 params:
   # ===== GNSS Optimization Parameters =====
   use_gnss: "${USE_GNSS|true}"
-  gnss_minimum_uncertainty_xyz: ${LC_GNSS_MINIMUM_XYZ_SIGMA|0.10} # [m] Minimum GPS uncertainty
+  gnss_minimum_uncertainty_xyz: ${LC_GNSS_MINIMUM_XYZ_SIGMA|0.10} # [m] Minimum GPS uncertainty (floor)
+  gnss_max_uncertainty_horiz: ${LC_GNSS_MAX_UNCERTAINTY_HORIZ|20.0} # [m] Reject reading if horizontal uncertainty > this
+  gnss_max_uncertainty_vert: ${LC_GNSS_MAX_UNCERTAINTY_VERT|40.0} # [m] Reject reading if vertical uncertainty > this
   gnss_add_horizontality: false # Add constraints for flat terrain
   gnss_horizontality_sigma_rpy: 0.10 # [rad] roll/pitch constraint if enabled
   gnss_edges_uncertainty_multiplier: "${GNSS_EDGES_UNCERTAINTY_MULTIPLIER|1.0}"

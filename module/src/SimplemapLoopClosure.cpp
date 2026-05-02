@@ -167,6 +167,8 @@ void SimplemapLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, gnss_add_horizontality, bool);
     YAML_LOAD_OPT(params_, gnss_horizontality_sigma_rpy, double);
     YAML_LOAD_OPT(params_, gnss_minimum_uncertainty_xyz, double);
+    YAML_LOAD_OPT(params_, gnss_max_uncertainty_horiz, double);
+    YAML_LOAD_OPT(params_, gnss_max_uncertainty_vert, double);
     YAML_LOAD_OPT(params_, use_imu_gravity, bool);
     YAML_LOAD_OPT(params_, imu_gravity_sigma_deg, double);
     MRPT_CHECK_NORMAL_NUMBER(params_.gnss_minimum_uncertainty_xyz);
@@ -2150,6 +2152,8 @@ void SimplemapLoopClosure::add_gnss_factors_per_kf()
     p.add_horizontality       = params_.gnss_add_horizontality;
     p.horizontality_sigma_rpy = params_.gnss_horizontality_sigma_rpy;
     p.minimum_uncertainty_xyz = params_.gnss_minimum_uncertainty_xyz;
+    p.max_uncertainty_horiz   = params_.gnss_max_uncertainty_horiz;
+    p.max_uncertainty_vert    = params_.gnss_max_uncertainty_vert;
     lc_common::add_gnss_factors_per_kf(
         state_.kfGraphFG, *state_.sm, state_.globalGeoRef, p, state_.knownInlierFactorIndices,
         this);

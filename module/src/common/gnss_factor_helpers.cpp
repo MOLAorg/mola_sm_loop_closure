@@ -49,12 +49,23 @@ std::size_t mola::lc_common::add_gnss_factors_per_kf(
                                              params.horizontality_sigma_rpy, 1e3, 1e3, 1e3, 1e3)
                                                 .finished());
 
-    std::size_t added = 0;
+    std::size_t added    = 0;
+    std::size_t rejected = 0;
     for (const auto& gf : gnssFrames.frames)
     {
         const auto frameId = static_cast<size_t>(gf.kf_index);
         if (frameId >= sm.size())
         {
+            continue;
+        }
+
+        // Reject readings with excessive uncertainty
+        const double horizUncertainty =
+            std::sqrt(gf.sigma_E * gf.sigma_E + gf.sigma_N * gf.sigma_N);
+        if (horizUncertainty > params.max_uncertainty_horiz ||
+            gf.sigma_U > params.max_uncertainty_vert)
+        {
+            rejected++;
             continue;
         }
 
@@ -89,10 +100,13 @@ std::size_t mola::lc_common::add_gnss_factors_per_kf(
 
     if (logger)
     {
+        const std::size_t total = gnssFrames.frames.size();
         logger->logFmt(
             mrpt::system::LVL_INFO,
-            "[gnss_factor_helpers] Added %zu factors over %zu GNSS keyframes", added,
-            gnssFrames.frames.size());
+            "[gnss_factor_helpers] GNSS readings: %zu accepted, %zu rejected (horiz>%.1fm or "
+            "vert>%.1fm), %zu total. Added %zu factors.",
+            total - rejected, rejected, params.max_uncertainty_horiz, params.max_uncertainty_vert,
+            total, added);
     }
 
     return added;

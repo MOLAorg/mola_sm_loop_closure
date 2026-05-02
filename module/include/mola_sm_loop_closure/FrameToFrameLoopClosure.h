@@ -73,6 +73,8 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         bool   gnss_add_horizontality            = false;
         double gnss_horizontality_sigma_rpy      = 0.01;  // [rad]
         double gnss_edges_uncertainty_multiplier = 1.0;
+        double gnss_max_uncertainty_horiz = 20.0;  // [m] reject if sqrt(sigE²+sigN²) > this
+        double gnss_max_uncertainty_vert  = 40.0;  // [m] reject if sigU > this
 
         // Loop closure candidate selection
         double min_distance_between_frames   = 20.0;  // [m] minimum separation for LC

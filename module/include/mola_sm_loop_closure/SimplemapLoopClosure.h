@@ -84,13 +84,15 @@ class SimplemapLoopClosure : public mola::LoopClosureInterface
         bool use_gnss = true;
         /// "submap" (default, scalable for very large maps) or "per_kf"
         /// (sensor-pose aware, more accurate, larger factor graph).
-        std::string gnss_factor_strategy                             = "submap";
-        bool        gnss_add_horizontality                           = false;
-        double      gnss_horizontality_sigma_rpy                     = 0.01;  // [rad]
-        double      gnss_minimum_uncertainty_xyz                     = 0.10;  // [m]
-        bool        use_imu_gravity                                  = true;
-        double      imu_gravity_sigma_deg                            = 3.0;  // [deg]
-        uint32_t    max_number_lc_candidates                         = 150;  // 0: no limit
+        std::string gnss_factor_strategy         = "submap";
+        bool        gnss_add_horizontality       = false;
+        double      gnss_horizontality_sigma_rpy = 0.01;  // [rad]
+        double      gnss_minimum_uncertainty_xyz = 0.10;  // [m]
+        double      gnss_max_uncertainty_horiz = 20.0;  // [m] reject if sqrt(sigE²+sigN²) > this
+        double      gnss_max_uncertainty_vert  = 40.0;  // [m] reject if sigU > this
+        bool        use_imu_gravity            = true;
+        double      imu_gravity_sigma_deg      = 3.0;  // [deg]
+        uint32_t    max_number_lc_candidates   = 150;  // 0: no limit
         double      min_lc_uncertainty_ratio_to_draw_several_samples = 2.0;
         double      largest_delta_for_reconsider_all                 = 10.0;
         uint32_t    max_number_lc_candidates_per_submap              = 4;
