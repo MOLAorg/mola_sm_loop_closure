@@ -434,7 +434,9 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
     }
 
     // Loop closure detection and optimization
-    size_t                                      accepted_lcs = 0;
+    size_t                                      accepted_lcs    = 0;
+    size_t                                      lastGncInliers  = 0;
+    size_t                                      lastGncOutliers = 0;
     std::set<std::pair<frame_id_t, frame_id_t>> alreadyChecked;
 
     for (size_t lcRound = 0; lcRound < params_.max_lc_optimization_rounds; lcRound++)
@@ -553,7 +555,13 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
                     MRPT_LOG_INFO_STREAM(
                         "Intermediate optimization after " << acceptedSinceLastOpt
                                                            << " accepted LCs");
-                    optimize_graph();
+                    {
+                        const auto optRes     = optimize_graph();
+                        liveStats.gncInliers  = optRes.numLcInliers;
+                        liveStats.gncOutliers = optRes.numLcOutliers;
+                        lastGncInliers        = optRes.numLcInliers;
+                        lastGncOutliers       = optRes.numLcOutliers;
+                    }
                     acceptedSinceLastOpt = 0;
 
                     if (params_.save_3d_scene_live_preview)
@@ -576,7 +584,12 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
         if (anyGraphChange && acceptedSinceLastOpt > 0)
         {
             // Final optimization for remaining accepted LCs in this round
-            const double largestDelta = optimize_graph();
+            const auto   optRes       = optimize_graph();
+            const double largestDelta = optRes.largestDelta;
+            liveStats.gncInliers      = optRes.numLcInliers;
+            liveStats.gncOutliers     = optRes.numLcOutliers;
+            lastGncInliers            = optRes.numLcInliers;
+            lastGncOutliers           = optRes.numLcOutliers;
 
             if (params_.save_3d_scene_files && params_.save_3d_scene_files_per_iteration)
             {
@@ -600,7 +613,10 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
         }
     }
 
-    MRPT_LOG_INFO_STREAM("Total accepted loop closures: " << accepted_lcs);
+    MRPT_LOG_INFO_STREAM(
+        "Total accepted loop closures: " << accepted_lcs << " (GNC: " << lastGncInliers
+                                         << " inliers, " << lastGncOutliers
+                                         << " outliers rejected)");
 
     if (params_.save_trajectory_files)
     {
@@ -1400,7 +1416,7 @@ void FrameToFrameLoopClosure::evict_pc_cache()
     }
 }
 
-double FrameToFrameLoopClosure::optimize_graph()
+FrameToFrameLoopClosure::OptGraphResult FrameToFrameLoopClosure::optimize_graph()
 {
     mrpt::system::CTimeLoggerEntry tle(profiler_, "optimize_graph");
 
@@ -1442,7 +1458,7 @@ double FrameToFrameLoopClosure::optimize_graph()
                                        << ", largest delta: " << result.largestDelta << " m");
     mrpt::system::COutputLogger::logging_levels_to_colors().at(mrpt::system::LVL_INFO) = bckCol;
 
-    return result.largestDelta;
+    return {result.largestDelta, result.numLcInliers, result.numLcOutliers};
 }
 
 mrpt::poses::CPose3D FrameToFrameLoopClosure::frame_pose_in_simplemap(frame_id_t frameId) const
@@ -1806,7 +1822,11 @@ void FrameToFrameLoopClosure::save_3d_scene_live_preview(
         fp.color = mrpt::img::TColorf(
             params_.scene_lc_color_r, params_.scene_lc_color_g, params_.scene_lc_color_b);
         vp->addTextMessage(
-            0.02, -86.0, mrpt::format("Accepted loop closures: %zu", stats.acceptedLCs), 3, fp);
+            0.02, -86.0,
+            mrpt::format(
+                "Accepted loop closures: %zu (GNC: %zu inliers, %zu outliers rejected)",
+                stats.acceptedLCs, stats.gncInliers, stats.gncOutliers),
+            3, fp);
 
         fp.color = mrpt::img::TColorf(0.7f, 0.7f, 0.7f);
         vp->addTextMessage(0.02, -108.0, mrpt::format("Keyframes: %zu", sm.size()), 4, fp);

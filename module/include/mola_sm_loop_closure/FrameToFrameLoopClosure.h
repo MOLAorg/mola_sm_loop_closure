@@ -353,7 +353,13 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
     std::optional<size_t> process_loop_candidate(const LoopCandidate& lc);
 
     /** Optimize the graph and return the largest pose change */
-    double optimize_graph();
+    struct OptGraphResult
+    {
+        double largestDelta  = 0;
+        size_t numLcInliers  = 0;
+        size_t numLcOutliers = 0;
+    };
+    OptGraphResult optimize_graph();
 
     /** Save trajectory to TUM format file */
     void save_trajectory_as_tum(const std::string& filename, bool saveCovariancesToo = false) const;
@@ -372,6 +378,8 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         size_t acceptedLCs     = 0;
         size_t candidatesTotal = 0;
         size_t candidatesDone  = 0;  ///< how many have been evaluated so far this round
+        size_t gncInliers      = 0;  ///< LC inliers from latest GNC run
+        size_t gncOutliers     = 0;  ///< LC outliers rejected by latest GNC run
     };
 
     /** Overwrite the single live-preview .3Dscene file.
