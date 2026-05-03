@@ -136,6 +136,9 @@ icp_settings:
       - iteration: 80
         minimum_quality: 0.03
 
+    # Important: Evaluate quality as ratio of matched pairs using the FINAL annealing-like adaptive threshold.
+    force_final_pairings_for_quality: true
+
     #debugPrintIterationProgress: true  # Print iteration progress
     #generateDebugFiles: true  # Can be override with env var "MP2P_ICP_GENERATE_DEBUG_FILES=1"
     saveIterationDetails: true # Store partial solutions and pairings for each ICP iteration

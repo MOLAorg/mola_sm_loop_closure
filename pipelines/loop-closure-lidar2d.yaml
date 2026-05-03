@@ -85,6 +85,9 @@ icp_settings:
     minAbsStep_trans: 1e-4
     minAbsStep_rot: 5e-5
 
+    # Important: Evaluate quality as ratio of matched pairs using the FINAL annealing-like adaptive threshold.
+    force_final_pairings_for_quality: true
+
     quality_checkpoints:
       - iteration: 150
         minimum_quality: 0.03
