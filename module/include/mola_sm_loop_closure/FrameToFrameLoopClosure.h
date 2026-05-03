@@ -232,6 +232,9 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
             double timestamp_i = 0.0;  ///< UNIX timestamp (mrpt::Clock::toDouble()) for frame i
             double timestamp_j = 0.0;  ///< UNIX timestamp (mrpt::Clock::toDouble()) for frame j
             double sigma_xyz = 0.10;  ///< [m] sigma for X, Y, Z; angles are left free (large sigma)
+            /** If true, mark this constraint as a known GNC inlier, bypassing
+             *  outlier rejection.  Use only when the constraint is highly trusted. */
+            bool trust_as_inlier = false;
         };
 
         /// List of manually specified loop closure constraints loaded from config.

@@ -112,13 +112,17 @@ params:
   # - timestamp_i: 1700000100.250   # UNIX time of first keyframe
   #   timestamp_j: 1700000345.875   # UNIX time of second keyframe
   #   sigma_xyz: 0.10               # [m] positional sigma (fallback if KISS-Matcher+ICP fails)
+  #   trust_as_inlier: false        # if true, bypass GNC outlier rejection for this constraint
   # - timestamp_i: 1700000210.500
   #   timestamp_j: 1700000512.000
   #   sigma_xyz: 0.20
+  #   trust_as_inlier: true         # mark as known inlier: always accepted by GNC optimizer
   #
   # When use_kiss_matcher=true, each manual hint is fed through KISS-Matcher+ICP
   # to compute the actual relative transform instead of assuming identity.
   # sigma_xyz is only used as a fallback if ICP quality is below min_icp_goodness.
+  # trust_as_inlier (default: false): when true, the constraint is added to the set
+  # of known GNC inliers and will not be downweighted by the robust optimizer.
 
 # ===== ICP Settings =====
 # (Your existing ICP pipeline configuration goes here)

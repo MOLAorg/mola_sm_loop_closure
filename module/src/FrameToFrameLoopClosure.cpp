@@ -288,6 +288,8 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
             mlc.timestamp_i = entry.at("timestamp_i").as<double>();
             mlc.timestamp_j = entry.at("timestamp_j").as<double>();
             mlc.sigma_xyz   = entry.at("sigma_xyz").as<double>();
+            if (entry.count("trust_as_inlier") != 0)
+                mlc.trust_as_inlier = entry.at("trust_as_inlier").as<bool>();
 
             params_.manual_loop_constraints.push_back(mlc);
         }
@@ -826,7 +828,7 @@ void FrameToFrameLoopClosure::add_manual_loop_closure_factors()
 
             if (const auto km_result = process_loop_candidate(lc); km_result.has_value())
             {
-                state_.knownInlierFactorIndices.push_back(*km_result);
+                if (mlc.trust_as_inlier) state_.knownInlierFactorIndices.push_back(*km_result);
                 addedCount++;
                 MRPT_LOG_INFO_STREAM(
                     "Manual LC (KISS-Matcher+ICP) added: frame "
@@ -856,8 +858,7 @@ void FrameToFrameLoopClosure::add_manual_loop_closure_factors()
 
         auto edgeNoise = gtsam::noiseModel::Diagonal::Sigmas(sigmas);
 
-        // Mark as known inlier (manual constraints are trusted)
-        state_.knownInlierFactorIndices.push_back(state_.graphFG.size());
+        if (mlc.trust_as_inlier) state_.knownInlierFactorIndices.push_back(state_.graphFG.size());
 
 #if GTSAM_USES_BOOST
         auto factor = boost::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(

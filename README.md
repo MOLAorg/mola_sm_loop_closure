@@ -69,6 +69,10 @@ mola-sm-lc-cli -i in.simplemap -o out.simplemap \
 - `use_gnss: true` : per-keyframe GNSS factors (`FactorGnssEnu`).
   - `gnss_max_uncertainty_horiz` (default `20.0` m) : reject GPS readings whose horizontal ENU uncertainty exceeds this threshold.
   - `gnss_max_uncertainty_vert` (default `40.0` m) : reject GPS readings whose vertical ENU uncertainty exceeds this threshold.
+- `manual_loop_constraints` : list of hand-specified loop closure edges (by UNIX timestamp pair). Each entry supports:
+  - `timestamp_i`, `timestamp_j` : UNIX timestamps identifying the two keyframes.
+  - `sigma_xyz` : positional uncertainty [m].
+  - `trust_as_inlier` (default `false`): if `true`, the constraint is added to the GNC set of known inliers and will not be downweighted by the robust optimizer.
 - `use_kiss_matcher: true` : use [KISS-Matcher](https://github.com/mit-spark/kiss-matcher) global registration to seed the ICP initial guess for each loop-closure candidate (default: `false`; requires the `third_party/kiss-matcher` submodule to be populated).
   - `kiss_matcher_resolution` (default `1.0` m) : voxel size for KISS-Matcher feature extraction; controls `normal_radius ≈ 3×` and `fpfh_radius ≈ 5×`.
   - `kiss_matcher_layer` (default `"points_to_register_points"`) : name of the `mp2p_icp::metric_map_t` layer whose points are fed into KISS-Matcher.
