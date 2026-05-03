@@ -1080,10 +1080,42 @@ auto FrameToFrameLoopClosure::
             finalCandidates.begin(), finalCandidates.end(),
             [](const LoopCandidate& a, const LoopCandidate& b) { return a.score > b.score; });
     }
+    else if (
+        params_.lc_candidate_strategy == Parameters::CandidateSelectionStrategy::MULTI_OBJECTIVE)
+    {
+        // Greedy diversity-aware selection:
+        //   1. Pick the highest-scored remaining candidate.
+        //   2. Record its distance in selectedDistances.
+        //   3. Re-score all remaining candidates (diversity term now penalizes
+        //      distances already represented).
+        //   4. Repeat until max_lc_candidates are chosen or none remain.
+        //
+        // Scoring all candidates upfront with an empty selectedDistances would
+        // make the diversity objective a no-op, so we do it incrementally here.
+        while (finalCandidates.size() < params_.max_lc_candidates && !candidates.empty())
+        {
+            auto bestIt = std::max_element(
+                candidates.begin(), candidates.end(),
+                [](const LoopCandidate& a, const LoopCandidate& b) { return a.score < b.score; });
+
+            finalCandidates.push_back(*bestIt);
+            selectedDistances.push_back(bestIt->distance);
+            candidates.erase(bestIt);
+
+            // Re-score remaining candidates with updated selectedDistances.
+            for (auto& lc : candidates)
+            {
+                lc.score = score_multi_objective(
+                    lc.distance, minDist, maxDist, lc.frame_i, lc.frame_j, sm.size(),
+                    selectedDistances, params_.lc_weight_proximity,
+                    params_.lc_weight_frame_separation, params_.lc_weight_diversity,
+                    params_.lc_weight_coverage);
+            }
+        }
+    }
     else
     {
-        // Strategy: Simple top-K selection by score
-
+        // PROXIMITY_ONLY: simple top-K selection by score.
         std::sort(
             candidates.begin(), candidates.end(),
             [](const LoopCandidate& a, const LoopCandidate& b) { return a.score > b.score; });
