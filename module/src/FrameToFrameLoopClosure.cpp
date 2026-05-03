@@ -503,6 +503,10 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
         liveStats.acceptedLCs     = accepted_lcs;
         liveStats.candidatesTotal = candidates.size();
         liveStats.candidatesDone  = 0;
+        // Carry forward GNC stats from previous rounds so the live preview
+        // caption does not reset to "0 inliers, 0 outliers" at each round start.
+        liveStats.gncInliers  = lastGncInliers;
+        liveStats.gncOutliers = lastGncOutliers;
 
         if (params_.save_3d_scene_live_preview)
         {
