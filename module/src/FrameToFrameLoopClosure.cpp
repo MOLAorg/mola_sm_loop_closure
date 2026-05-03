@@ -1086,6 +1086,56 @@ auto FrameToFrameLoopClosure::
     }
 
     // ========================================================================
+    // STEP 1b: Deduplicate by block-pair ID within this call.
+    //
+    // find_loop_candidates() filters out block-pairs already in alreadyChecked
+    // (from previous rounds), but multiple (i,j) pairs can round to the same
+    // (frameGroup_i, frameGroup_j) block and all pass that check.  If more than
+    // one such pair survives into the final candidate list, the evaluation loop
+    // in process() will skip all but the first (because it inserts the block-pair
+    // into alreadyChecked after the first evaluation).  Deduplicate here --
+    // keeping the highest-scored candidate per block pair -- so that
+    // max_lc_candidates truly reflects the number that will be evaluated.
+    {
+        auto dedup = [&frameGroup](std::vector<LoopCandidate>& vec)
+        {
+            std::map<std::pair<frame_id_t, frame_id_t>, size_t> best;  // blockPair -> index
+            for (size_t k = 0; k < vec.size(); k++)
+            {
+                const auto bg_i = static_cast<frame_id_t>(
+                    mrpt::round(static_cast<double>(vec[k].frame_i) / frameGroup));
+                const auto bg_j = static_cast<frame_id_t>(
+                    mrpt::round(static_cast<double>(vec[k].frame_j) / frameGroup));
+                const auto key = std::make_pair(std::min(bg_i, bg_j), std::max(bg_i, bg_j));
+                auto       it  = best.find(key);
+                if (it == best.end() || vec[k].score > vec[it->second].score)
+                {
+                    best[key] = k;
+                }
+            }
+            std::vector<LoopCandidate> out;
+            out.reserve(best.size());
+            for (const auto& kv : best)
+            {
+                out.push_back(vec[kv.second]);
+            }
+            vec = std::move(out);
+        };
+
+        if (useStratification)
+        {
+            for (auto& bin : binnedCandidates)
+            {
+                dedup(bin);
+            }
+        }
+        else
+        {
+            dedup(candidates);
+        }
+    }
+
+    // ========================================================================
     // STEP 2: Select final candidates based on strategy
     // ========================================================================
 
