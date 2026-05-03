@@ -26,6 +26,7 @@
 #include <mrpt/containers/yaml.h>
 #include <mrpt/core/WorkerThreadsPool.h>
 #include <mrpt/maps/CSimpleMap.h>
+#include <mrpt/math/TPoint3D.h>
 #include <mrpt/opengl/CSetOfObjects.h>
 #include <mrpt/system/CTimeLogger.h>
 #include <mrpt/topography/data_types.h>
@@ -338,10 +339,11 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
 
     struct LoopCandidate
     {
-        frame_id_t frame_i  = 0;
-        frame_id_t frame_j  = 0;
-        double     distance = 0.0;  // estimated distance between frames
-        double     score    = 0.0;  // candidate quality score
+        frame_id_t           frame_i         = 0;
+        frame_id_t           frame_j         = 0;
+        double               distance        = 0.0;  // estimated distance between frames
+        double               score           = 0.0;  // candidate quality score
+        mrpt::math::TPoint3D spatialMidpoint = {0, 0, 0};  // (pose_i + pose_j) / 2
     };
 
     /** Find potential loop closure candidates */
