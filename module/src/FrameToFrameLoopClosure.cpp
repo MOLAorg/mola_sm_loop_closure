@@ -97,41 +97,82 @@ double score_stratified(
     return 0.6 * proximityScore + 0.4 * separationScore;
 }
 
-/**
- * Compute score using multi-objective strategy
+/** Input arguments for score_multi_objective(). Grouped into a struct to
+ *  avoid a long parameter list and to make call sites self-documenting.
  */
-double score_multi_objective(
-    double distance, [[maybe_unused]] double minDist, [[maybe_unused]] double maxDist,
-    size_t frameI, size_t frameJ, size_t totalFrames, const std::vector<double>& selectedDistances,
-    double wProx, double wSep, double wDiv, double wCov)
+struct MultiObjectiveArgs
+{
+    // Candidate being scored
+    double               distance;  // inter-frame distance [m]
+    size_t               frameI;
+    size_t               frameJ;
+    size_t               totalFrames;
+    mrpt::math::TPoint3D spatialMidpoint;  // (pose_i + pose_j) / 2
+
+    // Accumulators updated by the greedy selection loop
+    const std::vector<double>*               selectedDistances;  // objective 3
+    const std::vector<mrpt::math::TPoint3D>* selectedMidpoints;  // objective 4
+
+    // Weights (need not sum to 1; they are normalized internally)
+    double wProx;
+    double wSep;
+    double wDiv;
+    double wCov;
+};
+
+/**
+ * Compute score using multi-objective strategy.
+ *
+ * Objectives:
+ *  1. Proximity     -- prefer spatially close keyframe pairs.
+ *  2. Frame sep.    -- prefer temporally distant pairs.
+ *  3. Dist. diversity -- penalize pairs whose inter-frame distance is already
+ *                        well-represented in the selected set.
+ *  4. Spatial coverage -- penalize pairs whose geometric midpoint falls near
+ *                         already-selected midpoints, so the set covers
+ *                         different map areas.
+ */
+double score_multi_objective(const MultiObjectiveArgs& a)
 {
     // 1. Proximity score
-    const double proximityScore = 1.0 / (1.0 + distance);
+    const double proximityScore = 1.0 / (1.0 + a.distance);
 
     // 2. Frame separation score
-    const auto   frameSep        = static_cast<double>(frameJ - frameI);
-    const auto   maxFrameSep     = static_cast<double>(totalFrames);
+    const auto   frameSep        = static_cast<double>(a.frameJ - a.frameI);
+    const auto   maxFrameSep     = static_cast<double>(a.totalFrames);
     const double separationScore = frameSep / maxFrameSep;
 
-    // 3. Distance diversity score
+    // 3. Distance diversity: penalize inter-frame distances similar to those
+    //    already selected. Characteristic scale: 5 m.
     double diversityScore = 1.0;
-    for (const auto existingDist : selectedDistances)
+    for (const double existingDist : *a.selectedDistances)
     {
-        const double distDiff = std::abs(distance - existingDist);
-        const double penalty  = std::exp(-distDiff / 5.0);  // 5m characteristic scale
+        const double distDiff = std::abs(a.distance - existingDist);
+        const double penalty  = std::exp(-distDiff / 5.0);
         diversityScore *= (1.0 - 0.3 * penalty);
     }
 
-    // 4. Geometric coverage score (trajectory mid-point coverage)
-    const double midPoint      = static_cast<double>(frameI + frameJ) / 2.0;
-    const double coverageScore = std::abs(std::sin(M_PI * midPoint / maxFrameSep));
+    // 4. Spatial coverage: penalize candidates whose geometric midpoint is
+    //    close to an already-selected midpoint, encouraging the set to cover
+    //    different map areas. Characteristic scale: 20 m.
+    //    Score is 1.0 when no candidates have been selected yet.
+    double coverageScore = 1.0;
+    for (const auto& existingMidpt : *a.selectedMidpoints)
+    {
+        const double dx      = a.spatialMidpoint.x - existingMidpt.x;
+        const double dy      = a.spatialMidpoint.y - existingMidpt.y;
+        const double dz      = a.spatialMidpoint.z - existingMidpt.z;
+        const double midDist = std::sqrt(dx * dx + dy * dy + dz * dz);
+        const double penalty = std::exp(-midDist / 20.0);
+        coverageScore *= (1.0 - 0.5 * penalty);
+    }
 
-    // Normalize weights (in case they don't sum to 1.0)
-    const double wSum = wProx + wSep + wDiv + wCov;
-    const double w1   = wProx / wSum;
-    const double w2   = wSep / wSum;
-    const double w3   = wDiv / wSum;
-    const double w4   = wCov / wSum;
+    // Normalize weights in case they do not sum to 1.0.
+    const double wSum = a.wProx + a.wSep + a.wDiv + a.wCov;
+    const double w1   = a.wProx / wSum;
+    const double w2   = a.wSep / wSum;
+    const double w3   = a.wDiv / wSum;
+    const double w4   = a.wCov / wSum;
 
     return w1 * proximityScore + w2 * separationScore + w3 * diversityScore + w4 * coverageScore;
 }
@@ -916,8 +957,10 @@ auto FrameToFrameLoopClosure::
     const double minDist    = params_.min_distance_between_frames;
     const double maxDist    = params_.max_distance_for_lc_candidate;
 
-    // For multi-objective strategy: track selected distances for diversity scoring
-    std::vector<double> selectedDistances;
+    // For multi-objective strategy: track selected distances and spatial
+    // midpoints so the greedy selection step can update scores incrementally.
+    std::vector<double>               selectedDistances;
+    std::vector<mrpt::math::TPoint3D> selectedMidpoints;
 
     // Determine if we need distance binning
     const bool useStratification =
@@ -982,6 +1025,11 @@ auto FrameToFrameLoopClosure::
             lc.frame_j  = j;
             lc.distance = distance;
 
+            // Precompute spatial midpoint (used by MULTI_OBJECTIVE coverage term).
+            const auto ti      = pose_i.translation();
+            const auto tj      = pose_j.translation();
+            lc.spatialMidpoint = {0.5 * (ti.x + tj.x), 0.5 * (ti.y + tj.y), 0.5 * (ti.z + tj.z)};
+
             // Compute score based on selected strategy
             switch (params_.lc_candidate_strategy)
             {
@@ -994,11 +1042,24 @@ auto FrameToFrameLoopClosure::
                     break;
 
                 case Parameters::CandidateSelectionStrategy::MULTI_OBJECTIVE:
-                    lc.score = score_multi_objective(
-                        distance, minDist, maxDist, i, j, sm.size(), selectedDistances,
-                        params_.lc_weight_proximity, params_.lc_weight_frame_separation,
-                        params_.lc_weight_diversity, params_.lc_weight_coverage);
+                {
+                    // selectedDistances and selectedMidpoints are empty here;
+                    // the greedy step in STEP 2 will update them and re-score.
+                    MultiObjectiveArgs args;
+                    args.distance          = distance;
+                    args.frameI            = i;
+                    args.frameJ            = j;
+                    args.totalFrames       = sm.size();
+                    args.spatialMidpoint   = lc.spatialMidpoint;
+                    args.selectedDistances = &selectedDistances;
+                    args.selectedMidpoints = &selectedMidpoints;
+                    args.wProx             = params_.lc_weight_proximity;
+                    args.wSep              = params_.lc_weight_frame_separation;
+                    args.wDiv              = params_.lc_weight_diversity;
+                    args.wCov              = params_.lc_weight_coverage;
+                    lc.score               = score_multi_objective(args);
                     break;
+                }
             }
 
             // Add to appropriate container
@@ -1085,13 +1146,13 @@ auto FrameToFrameLoopClosure::
     {
         // Greedy diversity-aware selection:
         //   1. Pick the highest-scored remaining candidate.
-        //   2. Record its distance in selectedDistances.
-        //   3. Re-score all remaining candidates (diversity term now penalizes
-        //      distances already represented).
+        //   2. Record its distance and spatial midpoint.
+        //   3. Re-score all remaining candidates so the diversity and coverage
+        //      terms now penalize already-represented distances and map areas.
         //   4. Repeat until max_lc_candidates are chosen or none remain.
         //
-        // Scoring all candidates upfront with an empty selectedDistances would
-        // make the diversity objective a no-op, so we do it incrementally here.
+        // Scoring all candidates upfront with empty accumulators would make
+        // the diversity and coverage objectives no-ops, so we do it here.
         while (finalCandidates.size() < params_.max_lc_candidates && !candidates.empty())
         {
             auto bestIt = std::max_element(
@@ -1100,16 +1161,25 @@ auto FrameToFrameLoopClosure::
 
             finalCandidates.push_back(*bestIt);
             selectedDistances.push_back(bestIt->distance);
+            selectedMidpoints.push_back(bestIt->spatialMidpoint);
             candidates.erase(bestIt);
 
-            // Re-score remaining candidates with updated selectedDistances.
+            // Re-score remaining candidates with updated accumulators.
             for (auto& lc : candidates)
             {
-                lc.score = score_multi_objective(
-                    lc.distance, minDist, maxDist, lc.frame_i, lc.frame_j, sm.size(),
-                    selectedDistances, params_.lc_weight_proximity,
-                    params_.lc_weight_frame_separation, params_.lc_weight_diversity,
-                    params_.lc_weight_coverage);
+                MultiObjectiveArgs args;
+                args.distance          = lc.distance;
+                args.frameI            = lc.frame_i;
+                args.frameJ            = lc.frame_j;
+                args.totalFrames       = sm.size();
+                args.spatialMidpoint   = lc.spatialMidpoint;
+                args.selectedDistances = &selectedDistances;
+                args.selectedMidpoints = &selectedMidpoints;
+                args.wProx             = params_.lc_weight_proximity;
+                args.wSep              = params_.lc_weight_frame_separation;
+                args.wDiv              = params_.lc_weight_diversity;
+                args.wCov              = params_.lc_weight_coverage;
+                lc.score               = score_multi_objective(args);
             }
         }
     }
