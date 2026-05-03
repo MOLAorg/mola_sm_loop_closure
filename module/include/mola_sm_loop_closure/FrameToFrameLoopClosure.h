@@ -185,17 +185,22 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         // 3D scene visualization output
         bool  save_3d_scene_files               = false;
         bool  save_3d_scene_files_per_iteration = false;
+        bool  save_3d_scene_live_preview        = false;
         float scene_path_line_width             = 2.0f;
         float scene_lc_line_width               = 4.0f;
         float scene_path_color_r                = 0.0f;
         float scene_path_color_g                = 0.0f;
         float scene_path_color_b                = 1.0f;  // blue
         float scene_path_color_a                = 0.7f;
-        float scene_lc_color_r                  = 1.0f;  // red
-        float scene_lc_color_g                  = 0.0f;
+        float scene_lc_color_r                  = 0.0f;  // green (accepted)
+        float scene_lc_color_g                  = 0.9f;
         float scene_lc_color_b                  = 0.0f;
-        float scene_lc_color_a                  = 0.8f;
-        float scene_keyframe_point_size         = 7.0f;
+        float scene_lc_color_a                  = 0.9f;
+        float scene_lc_candidate_color_r        = 1.0f;  // orange (pending)
+        float scene_lc_candidate_color_g        = 0.5f;
+        float scene_lc_candidate_color_b        = 0.0f;
+        float scene_lc_candidate_color_a        = 0.7f;
+        float scene_keyframe_point_size         = 3.0f;
 
         // ===== Planar World Annealing =====
         /** If true, add planar-world constraints (z≈0, roll≈0, pitch≈0) that
@@ -356,6 +361,22 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
 
     /** Save 3D scene visualization files (original poses before LC) */
     void save_3d_scene_initial_files() const;
+
+    struct LivePreviewStats
+    {
+        size_t lcRound         = 0;
+        size_t totalRounds     = 0;
+        size_t acceptedLCs     = 0;
+        size_t candidatesTotal = 0;
+        size_t candidatesDone  = 0;  ///< how many have been evaluated so far this round
+    };
+
+    /** Overwrite the single live-preview .3Dscene file.
+     *  \param pendingCandidates Candidates not yet evaluated this round (drawn in orange).
+     *  \param stats Stats displayed as text overlay.
+     *  Accepted edges are taken from accepted_lc_edges_ (drawn in green). */
+    void save_3d_scene_live_preview(
+        const std::vector<LoopCandidate>& pendingCandidates, const LivePreviewStats& stats) const;
 
     /** Update dynamic variables for ICP pipeline */
     void update_dynamic_variables(frame_id_t frameId, size_t threadIdx);
