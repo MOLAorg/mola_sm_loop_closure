@@ -16,6 +16,7 @@
 
   <author email="joseluisblancoc@gmail.com">Jose-Luis Blanco-Claraco</author>
 
+  <!-- Direct build deps -->
   <depend>gtsam</depend>
   <depend>mola_common</depend>
   <depend>mola_georeferencing</depend>
@@ -27,8 +28,12 @@
   <depend>mrpt_libgui</depend>
   <depend>mrpt_libmaps</depend>
   <depend>mrpt_libtclap</depend>
+  <depend>tbb</depend>
 
   <doc_depend>doxygen</doc_depend>
+
+  <!-- For KISS-MATCHER -->
+  <build_depend>liblz4-dev</build_depend>
 
   <!-- BUILD TOOLS -->
   <buildtool_depend>cmake</buildtool_depend>
