@@ -1948,6 +1948,25 @@ void FrameToFrameLoopClosure::save_3d_scene_live_preview(
         scene.insert(lines);
     }
 
+    // GPS/GNSS readings as ENU point cloud (cyan, size 3, alpha 50%)
+    size_t gnssPointCount = 0;
+    if (params_.use_gnss)
+    {
+        const auto gnssFrames = extract_gnss_frames_from_sm(*state_.sm, state_.globalGeoRef);
+        if (!gnssFrames.frames.empty())
+        {
+            auto pts = mrpt::opengl::CPointCloud::Create();
+            pts->setPointSize(3.0f);
+            pts->setColor_u8(mrpt::img::TColor(0, 220, 220, 128));  // cyan, alpha=50%
+            for (const auto& gf : gnssFrames.frames)
+            {
+                pts->insertPoint(gf.enu);
+            }
+            gnssPointCount = gnssFrames.frames.size();
+            scene.insert(pts);
+        }
+    }
+
     // Text overlay on the main viewport
     {
         auto vp = scene.getViewport("main");
@@ -1986,6 +2005,13 @@ void FrameToFrameLoopClosure::save_3d_scene_live_preview(
 
         fp.color = mrpt::img::TColorf(0.7f, 0.7f, 0.7f);
         vp->addTextMessage(0.02, -108.0, mrpt::format("Keyframes: %zu", sm.size()), 4, fp);
+
+        if (params_.use_gnss)
+        {
+            fp.color = mrpt::img::TColorf(0.0f, 0.86f, 0.86f);  // cyan
+            vp->addTextMessage(
+                0.02, -130.0, mrpt::format("GPS/GNSS readings (ENU): %zu", gnssPointCount), 5, fp);
+        }
     }
 
     const auto fn    = params_.debug_files_prefix + "live_preview.3Dscene";
