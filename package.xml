@@ -34,6 +34,7 @@
 
   <!-- For KISS-MATCHER -->
   <build_depend>liblz4-dev</build_depend>
+  <build_depend>libflann-dev</build_depend>
 
   <!-- BUILD TOOLS -->
   <buildtool_depend>cmake</buildtool_depend>
