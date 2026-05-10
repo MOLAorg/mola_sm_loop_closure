@@ -25,7 +25,7 @@ params:
   max_lc_optimization_rounds: "${MAX_LC_OPTIMIZATION_ROUNDS|5}" # Maximum LC+optimization rounds to run
   lc_optimize_every_n: "${LC_OPTIMIZE_EVERY_N|5}" # Re-optimize after N accepted LCs (0=disable, closes inner loops first)
 
-  lc_candidate_strategy: "${LC_SELECTION_METHOD|DISTANCE_STRATIFIED}" # or PROXIMITY_ONLY, MULTI_OBJECTIVE
+  lc_candidate_strategy: "${LC_SELECTION_METHOD|MULTI_OBJECTIVE}" # or PROXIMITY_ONLY, MULTI_OBJECTIVE
   lc_verbose_candidate_selection: "${LC_SELECTION_VERBOSE|0}"
 
   # For DISTANCE_STRATIFIED:
