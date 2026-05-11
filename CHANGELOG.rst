@@ -2,8 +2,8 @@
 Changelog for package mola_sm_loop_closure
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+1.2.0 (2026-05-11)
+------------------
 * f2f pipeline: switch to multi-objective as default strategy
 * Merge pull request `#15 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/15>`_ from MOLAorg/simplify-ci
   CI: simplify clang-format helpers and use ros: docker images for stable builds
