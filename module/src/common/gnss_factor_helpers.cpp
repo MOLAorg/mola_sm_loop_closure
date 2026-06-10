@@ -18,6 +18,9 @@
 #include <mola_sm_loop_closure/common/gnss_factor_helpers.h>
 #include <mrpt/poses/gtsam_wrappers.h>
 
+#include <algorithm>
+#include <limits>
+
 std::size_t mola::lc_common::add_gnss_factors_per_kf(
     gtsam::NonlinearFactorGraph& fg, const mrpt::maps::CSimpleMap& sm,
     std::optional<mrpt::topography::TGeodeticCoords>& geoRef, const GnssFactorParams& params,
@@ -48,6 +51,13 @@ std::size_t mola::lc_common::add_gnss_factors_per_kf(
         gtsam::noiseModel::Diagonal::Sigmas((gtsam::Vector6() << params.horizontality_sigma_rpy,
                                              params.horizontality_sigma_rpy, 1e3, 1e3, 1e3, 1e3)
                                                 .finished());
+
+    // Track the spatial spread and uncertainty of the accepted observations so
+    // we can detect a degenerate configuration after the loop.
+    mrpt::math::TPoint3D bbMin;
+    mrpt::math::TPoint3D bbMax;
+    double               minSigma    = std::numeric_limits<double>::max();
+    std::size_t          acceptedObs = 0;
 
     std::size_t added    = 0;
     std::size_t rejected = 0;
@@ -80,6 +90,24 @@ std::size_t mola::lc_common::add_gnss_factors_per_kf(
         auto robustNoise = gtsam::noiseModel::Robust::Create(
             gtsam::noiseModel::mEstimator::Huber::Create(1.5), noiseOrg);
 
+        // Accumulate spread / uncertainty of accepted observations:
+        if (acceptedObs == 0)
+        {
+            bbMin = gf.enu;
+            bbMax = gf.enu;
+        }
+        else
+        {
+            bbMin.x = std::min(bbMin.x, gf.enu.x);
+            bbMin.y = std::min(bbMin.y, gf.enu.y);
+            bbMin.z = std::min(bbMin.z, gf.enu.z);
+            bbMax.x = std::max(bbMax.x, gf.enu.x);
+            bbMax.y = std::max(bbMax.y, gf.enu.y);
+            bbMax.z = std::max(bbMax.z, gf.enu.z);
+        }
+        minSigma = std::min({minSigma, sigE, sigN, sigU});
+        acceptedObs++;
+
         const auto observedENU = mrpt::gtsam_wrappers::toPoint3(gf.enu);
         const auto sensorPointOnVeh =
             mrpt::gtsam_wrappers::toPoint3(gf.obs->sensorPose.translation());
@@ -96,6 +124,27 @@ std::size_t mola::lc_common::add_gnss_factors_per_kf(
                 X(frameId), gtsam::Pose3::Identity(), horizNoise);
             added++;
         }
+    }
+
+    // Strong degeneracy check: the spatial spread of the accepted GNSS
+    // observations must be large compared to their uncertainty, otherwise the
+    // global-attitude estimation is ill-conditioned (the map roll/pitch becomes
+    // unobservable and can take absurd values). We require the ENU bounding-box
+    // diagonal to be > 3x the minimum per-axis sigma.
+    if (acceptedObs >= 2)
+    {
+        const double bboxDiagonal = (bbMax - bbMin).norm();
+        ASSERTMSG_(
+            bboxDiagonal > 3.0 * minSigma,
+            mrpt::format(
+                "Degenerate GNSS configuration: the ENU bounding-box diagonal "
+                "(%.3f m) of the %zu accepted GNSS observations is not larger "
+                "than 3x their minimum per-axis sigma (3 * %.3f = %.3f m). The "
+                "global map attitude (roll/pitch/yaw) is unobservable and would "
+                "take absurd values. Provide GNSS observations with a larger "
+                "spatial spread, or relax the gnss_max_uncertainty_* thresholds "
+                "so that more (well-distributed) fixes are accepted.",
+                bboxDiagonal, acceptedObs, minSigma, 3.0 * minSigma));
     }
 
     if (logger)
