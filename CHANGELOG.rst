@@ -2,8 +2,8 @@
 Changelog for package mola_sm_loop_closure
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+1.2.2 (2026-06-17)
+------------------
 * update robin and kiss-matcher submodules
 * Contributors: Jose Luis Blanco-Claraco
 
