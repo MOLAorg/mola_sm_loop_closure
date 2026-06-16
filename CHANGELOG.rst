@@ -2,6 +2,11 @@
 Changelog for package mola_sm_loop_closure
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* update robin and kiss-matcher submodules
+* Contributors: Jose Luis Blanco-Claraco
+
 1.2.1 (2026-06-16)
 ------------------
 * fix: pmc FTBFS on Debian builds
