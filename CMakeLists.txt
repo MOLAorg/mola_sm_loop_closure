@@ -114,6 +114,11 @@ if(EXISTS "${_KISS_MATCHER_CMAKE}" AND EXISTS "${_ROBIN_DIR}")
   # Static libs linked into our .so must be compiled with -fPIC
   set_target_properties(kiss_matcher_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
   set_target_properties(robin            PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  # pmc uses -Wno-format (disabling -Wformat), which conflicts with Debian's
+  # injected -Wformat-security (which requires -Wformat). Silence it explicitly.
+  if(TARGET pmc)
+    target_compile_options(pmc PRIVATE -Wno-format-security)
+  endif()
   target_compile_definitions(${PROJECT_NAME} PRIVATE MOLA_HAS_KISS_MATCHER)
   target_link_libraries(${PROJECT_NAME} PRIVATE kiss_matcher::kiss_matcher_core)
 elseif(EXISTS "${_KISS_MATCHER_CMAKE}" AND NOT EXISTS "${_ROBIN_DIR}")
