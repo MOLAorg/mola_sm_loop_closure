@@ -21,6 +21,8 @@
 #include <mrpt/system/COutputLogger.h>
 
 #include <cstdint>
+#include <functional>
+#include <optional>
 #include <vector>
 
 namespace mola
@@ -45,6 +47,33 @@ struct ProposedLoopEdge
 
     /// Detector confidence in [0,1] (e.g. ICP goodness).
     double quality = 0;
+};
+
+/** Options for the streaming / incremental LoopClosureInterface::analyze(). */
+struct LoopClosureAnalyzeOptions
+{
+    /** If set, only consider candidate pairs whose LATER keyframe index is
+     *  >= this value, i.e. pairs that involve at least one keyframe added since
+     *  the previous call. Pairs fully below this index are assumed already
+     *  evaluated, which skips the bulk of the ICP work as the map grows.
+     *  Leave unset for a full scan of all pairs.
+     *
+     *  Caveat: if the consumer's re-optimization moves old keyframes enough
+     *  that a previously-implausible old/old pair becomes a loop, the hint
+     *  hides it; do an occasional full scan (unset) to recover such loops. */
+    std::optional<uint32_t> first_new_keyframe;
+
+    /** If set, invoked for each accepted edge the moment it is found, so the
+     *  consumer can merge loops early instead of waiting for analyze() to
+     *  return. Called from the analyze() thread; must be thread-safe and must
+     *  not call back into this engine. The edge is also included in the
+     *  returned vector. */
+    std::function<void(const ProposedLoopEdge&)> on_edge_found;
+
+    /** If set, polled in the candidate loop before each (expensive) ICP; return
+     *  true to stop early and return the edges found so far. Lets the consumer
+     *  cancel a long-running scan on new data or shutdown. */
+    std::function<bool()> should_abort;
 };
 
 class LoopClosureInterface : public mrpt::rtti::CObject, public mrpt::system::COutputLogger
@@ -75,11 +104,16 @@ class LoopClosureInterface : public mrpt::rtti::CObject, public mrpt::system::CO
      *  caller owns the snapshot and merges the returned edges into its own
      *  optimizer.
      *
+     *  Optionally streams accepted edges early, restricts the search to
+     *  newly-added keyframes, and can be aborted mid-scan (see
+     *  LoopClosureAnalyzeOptions).
+     *
      *  Not every engine supports this; the base implementation throws. The
      *  snapshot must outlive the call; the engine must not retain references to
      *  it afterwards.
      */
-    virtual std::vector<ProposedLoopEdge> analyze(const mrpt::maps::CSimpleMap& snapshot);
+    virtual std::vector<ProposedLoopEdge> analyze(
+        const mrpt::maps::CSimpleMap& snapshot, const LoopClosureAnalyzeOptions& opts = {});
 
     /** @} */
 };

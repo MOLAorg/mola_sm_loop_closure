@@ -945,8 +945,8 @@ void FrameToFrameLoopClosure::add_manual_loop_closure_factors()
 
 auto FrameToFrameLoopClosure::
     find_loop_candidates(  // NOLINT(readability-function-cognitive-complexity)
-        const std::set<std::pair<frame_id_t, frame_id_t>>& alreadyChecked) const
-    -> std::vector<FrameToFrameLoopClosure::LoopCandidate>
+        const std::set<std::pair<frame_id_t, frame_id_t>>& alreadyChecked,
+        frame_id_t minLaterFrame) const -> std::vector<FrameToFrameLoopClosure::LoopCandidate>
 {
     mrpt::system::CTimeLoggerEntry tle(profiler_, "find_loop_candidates");
 
@@ -987,7 +987,11 @@ auto FrameToFrameLoopClosure::
     {
         const auto pose_i = state_.get_pose(i);
 
-        for (size_t j = i + params_.min_frames_between_lc; j < sm.size(); j++)
+        // Incremental scans skip pairs whose later frame predates the newest
+        // batch (both endpoints already evaluated in a previous call).
+        const size_t jStart = std::max<size_t>(i + params_.min_frames_between_lc, minLaterFrame);
+
+        for (size_t j = jStart; j < sm.size(); j++)
         {
             // Check if already evaluated
             const auto frameGroup_i = mrpt::round(static_cast<double>(i) / frameGroup);
@@ -1466,7 +1470,7 @@ std::optional<size_t> FrameToFrameLoopClosure::process_loop_candidate(const Loop
 }
 
 std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
-    const mrpt::maps::CSimpleMap& snapshot)
+    const mrpt::maps::CSimpleMap& snapshot, const LoopClosureAnalyzeOptions& opts)
 {
     using gtsam::symbol_shorthand::X;
 
@@ -1510,14 +1514,25 @@ std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
     }
 
     const std::set<std::pair<frame_id_t, frame_id_t>> alreadyChecked;
-    const auto candidates = find_loop_candidates(alreadyChecked);
+    const frame_id_t minLaterFrame = opts.first_new_keyframe.value_or(0);
+    const auto       candidates    = find_loop_candidates(alreadyChecked, minLaterFrame);
 
-    MRPT_LOG_INFO_STREAM("analyze(): " << candidates.size() << " loop closure candidates");
+    MRPT_LOG_INFO_STREAM(
+        "analyze(): " << candidates.size() << " loop closure candidates"
+                      << (minLaterFrame != 0 ? " (incremental)" : ""));
 
     std::vector<ProposedLoopEdge> out;
     out.reserve(candidates.size());
+    bool aborted = false;
     for (const auto& lc : candidates)
     {
+        // Poll for cancellation before the expensive ICP step.
+        if (opts.should_abort && opts.should_abort())
+        {
+            aborted = true;
+            break;
+        }
+
         const auto edge = run_lc_icp(lc);
         if (!edge)
         {
@@ -1528,10 +1543,18 @@ std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
         pe.to            = lc.frame_j;
         pe.relative_pose = edge->relPose;
         pe.quality       = edge->quality;
+
+        // Stream the edge to the consumer early, before the scan finishes.
+        if (opts.on_edge_found)
+        {
+            opts.on_edge_found(pe);
+        }
         out.push_back(pe);
     }
 
-    MRPT_LOG_INFO_STREAM("analyze(): accepted " << out.size() << " loop closure edges");
+    MRPT_LOG_INFO_STREAM(
+        "analyze(): accepted " << out.size() << " loop closure edges"
+                               << (aborted ? " (aborted early)" : ""));
 
     // Do not retain the caller's snapshot past this call.
     state_.sm = nullptr;

@@ -69,7 +69,9 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
      *  factor graph and without mutating the map. See LoopClosureInterface.
      *  Not thread-safe (drives the per-thread ICP pipelines and PC cache); call
      *  it from a single thread per instance. */
-    std::vector<ProposedLoopEdge> analyze(const mrpt::maps::CSimpleMap& snapshot) override;
+    std::vector<ProposedLoopEdge> analyze(
+        const mrpt::maps::CSimpleMap&    snapshot,
+        const LoopClosureAnalyzeOptions& opts = {}) override;
 
     struct Parameters
     {
@@ -353,9 +355,12 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         mrpt::math::TPoint3D spatialMidpoint = {0, 0, 0};  // (pose_i + pose_j) / 2
     };
 
-    /** Find potential loop closure candidates */
+    /** Find potential loop closure candidates.
+     *  \param minLaterFrame If >0, only generate pairs whose later frame index
+     *         is >= this value (used for incremental, new-keyframe-only scans). */
     std::vector<LoopCandidate> find_loop_candidates(
-        const std::set<std::pair<frame_id_t, frame_id_t>>& alreadyChecked) const;
+        const std::set<std::pair<frame_id_t, frame_id_t>>& alreadyChecked,
+        frame_id_t                                         minLaterFrame = 0) const;
 
     /** Result of running ICP on one loop-closure candidate: the relative pose
      *  edge (i -> j) with the same diagonal, additive-noise-inflated covariance

@@ -23,7 +23,7 @@ LoopClosureInterface::LoopClosureInterface()  = default;
 LoopClosureInterface::~LoopClosureInterface() = default;
 
 std::vector<ProposedLoopEdge> LoopClosureInterface::analyze(
-    const mrpt::maps::CSimpleMap& /*snapshot*/)
+    const mrpt::maps::CSimpleMap& /*snapshot*/, const LoopClosureAnalyzeOptions& /*opts*/)
 {
     THROW_EXCEPTION("analyze() is not implemented by this loop-closure engine.");
 }

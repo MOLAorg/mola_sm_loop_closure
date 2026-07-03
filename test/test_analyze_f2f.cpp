@@ -8,10 +8,12 @@
 #include <mola_yaml/yaml_helpers.h>
 #include <mrpt/maps/CSimpleMap.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 static std::string getenv_or_empty(const char* name)
 {
@@ -49,16 +51,7 @@ TEST(MolaSmLcAnalyze, F2F_warehouse)
     }
     lc.initialize(cfg);
 
-    const auto edges = lc.analyze(sm);
-
-    // Detector-only: the input map must be untouched.
-    EXPECT_EQ(sm.size(), framesBefore) << "analyze() must not mutate the input map";
-
-    // The warehouse sequence has loop-closure candidates; with the gate opened
-    // above, analyze() must return at least one well-formed edge.
-    EXPECT_GE(edges.size(), 1U);
-
-    for (const auto& e : edges)
+    const auto check_well_formed = [&](const mola::ProposedLoopEdge& e)
     {
         EXPECT_LT(e.from, framesBefore);
         EXPECT_LT(e.to, framesBefore);
@@ -72,5 +65,63 @@ TEST(MolaSmLcAnalyze, F2F_warehouse)
             EXPECT_TRUE(std::isfinite(var)) << "non-finite covariance at " << i;
             EXPECT_GT(var, 0.0) << "non-positive covariance at " << i;
         }
+    };
+
+    // --- Full scan --------------------------------------------------------
+    const auto edges = lc.analyze(sm);
+
+    // Detector-only: the input map must be untouched.
+    EXPECT_EQ(sm.size(), framesBefore) << "analyze() must not mutate the input map";
+
+    // The warehouse sequence has loop-closure candidates; with the gate opened
+    // above, analyze() must return at least one well-formed edge.
+    ASSERT_GE(edges.size(), 1U);
+    for (const auto& e : edges)
+    {
+        check_well_formed(e);
+    }
+
+    // --- Streaming callback ----------------------------------------------
+    // Edges delivered via on_edge_found must match the returned vector exactly.
+    {
+        std::vector<mola::ProposedLoopEdge> streamed;
+        mola::LoopClosureAnalyzeOptions     opts;
+        opts.on_edge_found = [&](const mola::ProposedLoopEdge& e) { streamed.push_back(e); };
+
+        const auto edges2 = lc.analyze(sm, opts);
+        ASSERT_EQ(streamed.size(), edges2.size());
+        for (size_t i = 0; i < edges2.size(); i++)
+        {
+            EXPECT_EQ(streamed[i].from, edges2[i].from);
+            EXPECT_EQ(streamed[i].to, edges2[i].to);
+        }
+    }
+
+    // --- Incremental (new-keyframe-only) scan ----------------------------
+    // With first_new_keyframe set, every edge must touch a new keyframe (its
+    // later index >= the threshold), and it must not exceed the full scan.
+    {
+        const uint32_t                  firstNew = static_cast<uint32_t>(framesBefore / 2);
+        mola::LoopClosureAnalyzeOptions opts;
+        opts.first_new_keyframe = firstNew;
+
+        const auto incEdges = lc.analyze(sm, opts);
+        EXPECT_LE(incEdges.size(), edges.size());
+        for (const auto& e : incEdges)
+        {
+            check_well_formed(e);
+            EXPECT_GE(std::max(e.from, e.to), firstNew)
+                << "incremental edge must involve a new keyframe";
+        }
+    }
+
+    // --- Abort functor ----------------------------------------------------
+    // A functor that always aborts must stop before accepting any edge.
+    {
+        mola::LoopClosureAnalyzeOptions opts;
+        opts.should_abort = [] { return true; };
+
+        const auto abortedEdges = lc.analyze(sm, opts);
+        EXPECT_TRUE(abortedEdges.empty()) << "should_abort must stop the scan immediately";
     }
 }
