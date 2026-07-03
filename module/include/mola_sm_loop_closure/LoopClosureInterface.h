@@ -16,11 +16,37 @@
 
 #include <mrpt/containers/yaml.h>
 #include <mrpt/maps/CSimpleMap.h>
+#include <mrpt/poses/CPose3DPDFGaussian.h>
 #include <mrpt/rtti/CObject.h>
 #include <mrpt/system/COutputLogger.h>
 
+#include <cstdint>
+#include <vector>
+
 namespace mola
 {
+/** A loop-closure edge proposed by a detector, decoupled from any factor graph.
+ *
+ * Producers return these from LoopClosureInterface::analyze() without owning or
+ * mutating the input map; the consumer (e.g. the central mapper) decides
+ * whether and how to merge them into its own optimizer.
+ */
+struct ProposedLoopEdge
+{
+    /// Source keyframe index in the analyzed simplemap.
+    uint32_t from = 0;
+
+    /// Target keyframe index in the analyzed simplemap.
+    uint32_t to = 0;
+
+    /// Relative pose of `to` as seen from `from` (i.e. pose_to = pose_from (+)
+    /// relative_pose), with its covariance.
+    mrpt::poses::CPose3DPDFGaussian relative_pose;
+
+    /// Detector confidence in [0,1] (e.g. ICP goodness).
+    double quality = 0;
+};
+
 class LoopClosureInterface : public mrpt::rtti::CObject, public mrpt::system::COutputLogger
 {
     DEFINE_VIRTUAL_MRPT_OBJECT(LoopClosureInterface, mola)
@@ -42,6 +68,20 @@ class LoopClosureInterface : public mrpt::rtti::CObject, public mrpt::system::CO
 
     /** Find and apply loop closures in the input/output simplemap */
     virtual void process(mrpt::maps::CSimpleMap& sm) = 0;
+
+    /** Detector-only counterpart of process(): find loop-closure candidates in
+     *  a read-only map snapshot and return the proposed edges, WITHOUT building
+     *  or optimizing an internal factor graph and WITHOUT mutating the map. The
+     *  caller owns the snapshot and merges the returned edges into its own
+     *  optimizer.
+     *
+     *  Not every engine supports this; the base implementation throws. The
+     *  snapshot must outlive the call; the engine must not retain references to
+     *  it afterwards.
+     */
+    virtual std::vector<ProposedLoopEdge> analyze(const mrpt::maps::CSimpleMap& snapshot);
+
+    /** @} */
 };
 
 }  // namespace mola

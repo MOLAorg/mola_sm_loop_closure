@@ -64,6 +64,13 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
     /** Find and apply loop closures in the input/output simplemap */
     void process(mrpt::maps::CSimpleMap& sm) override;
 
+    /** Detector-only loop closure: find candidates in a read-only snapshot and
+     *  return the ICP-estimated edges, without building/optimizing the internal
+     *  factor graph and without mutating the map. See LoopClosureInterface.
+     *  Not thread-safe (drives the per-thread ICP pipelines and PC cache); call
+     *  it from a single thread per instance. */
+    std::vector<ProposedLoopEdge> analyze(const mrpt::maps::CSimpleMap& snapshot) override;
+
     struct Parameters
     {
         mp2p_icp::Parameters icp_parameters;
@@ -349,6 +356,21 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
     /** Find potential loop closure candidates */
     std::vector<LoopCandidate> find_loop_candidates(
         const std::set<std::pair<frame_id_t, frame_id_t>>& alreadyChecked) const;
+
+    /** Result of running ICP on one loop-closure candidate: the relative pose
+     *  edge (i -> j) with the same diagonal, additive-noise-inflated covariance
+     *  used for the graph BetweenFactor, plus the ICP goodness. */
+    struct LcIcpEdge
+    {
+        mrpt::poses::CPose3DPDFGaussian relPose;  ///< i -> j, diagonal cov
+        gtsam::Vector6                  sigmas;  ///< gtsam Pose3 tangent order
+        double                          quality = 0;  ///< ICP goodness [0,1]
+    };
+
+    /** Run ICP for a single candidate and build its edge (no graph mutation).
+     *  Returns nullopt if point clouds are missing or ICP goodness is below
+     *  min_icp_goodness. Shared by process_loop_candidate() and analyze(). */
+    std::optional<LcIcpEdge> run_lc_icp(const LoopCandidate& lc);
 
     /** Process a single loop closure candidate with ICP.
      *  Returns the factor index in graphFG on success, or nullopt on failure. */
