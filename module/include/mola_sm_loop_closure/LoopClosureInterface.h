@@ -111,6 +111,10 @@ class LoopClosureInterface : public mrpt::rtti::CObject, public mrpt::system::CO
      *  Not every engine supports this; the base implementation throws. The
      *  snapshot must outlive the call; the engine must not retain references to
      *  it afterwards.
+     *
+     *  An instance used for analyze() should not also be used for process():
+     *  the two entry points drive shared internal state independently and are
+     *  not meant to be interleaved on the same object.
      */
     virtual std::vector<ProposedLoopEdge> analyze(
         const mrpt::maps::CSimpleMap& snapshot, const LoopClosureAnalyzeOptions& opts = {});

@@ -717,6 +717,11 @@ void FrameToFrameLoopClosure::build_initial_graph()
     ASSERT_(state_.sm);
     const auto& sm = *state_.sm;
 
+    // Start from a pristine graph: gtsam Values::insert() throws on duplicate
+    // keys, so guard against stale state left by a prior analyze()/process().
+    state_.graphValues.clear();
+    state_.graphFG.resize(0);
+
     // Add all frame poses to values
     for (size_t i = 0; i < sm.size(); i++)
     {
