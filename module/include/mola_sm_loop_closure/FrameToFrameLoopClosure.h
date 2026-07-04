@@ -272,6 +272,11 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
 
         const mrpt::maps::CSimpleMap* sm = nullptr;
 
+        /// True while running the detector-only analyze() over a caller-owned
+        /// snapshot: point-cloud generation must then leave observations intact
+        /// (no unload) since we must not mutate the borrowed map.
+        bool readOnlySnapshot = false;
+
         // Per-thread ICP instances
         std::vector<PerThreadState> perThreadState_{
             std::max(1u, std::thread::hardware_concurrency())};

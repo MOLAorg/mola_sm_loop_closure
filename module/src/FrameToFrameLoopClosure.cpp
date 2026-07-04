@@ -388,7 +388,8 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
     using namespace std::string_literals;
 
     ASSERT_(state_.initialized);
-    state_.sm = &sm;
+    state_.sm               = &sm;
+    state_.readOnlySnapshot = false;
     state_.pcCacheClear();
     accepted_lc_edges_.clear();
 
@@ -1487,15 +1488,21 @@ std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
 
     // Detector-only pass: we own no graph and must not mutate the map. Set up
     // just enough state for candidate search + per-candidate ICP.
-    state_.sm = &sm;
+    state_.sm               = &sm;
+    state_.readOnlySnapshot = true;
 
-    // Always clear the borrowed snapshot pointer on exit (including on an early
-    // return or exception), so no dangling pointer survives into later calls.
+    // Always clear the borrowed snapshot pointer and read-only flag on exit
+    // (including on an early return or exception), so no dangling pointer or
+    // stale flag survives into later calls.
     struct SnapshotGuard
     {
-        const mrpt::maps::CSimpleMap** slot;
-        ~SnapshotGuard() { *slot = nullptr; }
-    } snapshotGuard{&state_.sm};
+        State* st;
+        ~SnapshotGuard()
+        {
+            st->sm               = nullptr;
+            st->readOnlySnapshot = false;
+        }
+    } snapshotGuard{&state_};
 
     state_.pcCacheClear();
     accepted_lc_edges_.clear();
@@ -1624,8 +1631,9 @@ mp2p_icp::metric_map_t::Ptr FrameToFrameLoopClosure::generate_frame_pointcloud(
     // Apply filters
     mp2p_icp_filters::apply_filter_pipeline(pts.pipeline.pc_filter, *observation, profiler_);
 
-    // Unload raw observation data to free RAM (only effective for externally-stored data)
-    if (params_.unload_observations_after_use)
+    // Unload raw observation data to free RAM (only effective for externally-stored data).
+    // Skipped in the read-only analyze() flow, which must not mutate the snapshot.
+    if (params_.unload_observations_after_use && !state_.readOnlySnapshot)
     {
         for (const auto& obs : *sf)
         {
