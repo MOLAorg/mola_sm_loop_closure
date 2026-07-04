@@ -13,6 +13,7 @@
 */
 
 #include <mola_sm_loop_closure/LoopClosureInterface.h>
+#include <mrpt/core/exceptions.h>
 
 using namespace mola;
 
@@ -20,3 +21,9 @@ IMPLEMENTS_VIRTUAL_SERIALIZABLE(LoopClosureInterface, mrpt::rtti::CObject, mola)
 
 LoopClosureInterface::LoopClosureInterface()  = default;
 LoopClosureInterface::~LoopClosureInterface() = default;
+
+std::vector<ProposedLoopEdge> LoopClosureInterface::analyze(
+    const mrpt::maps::CSimpleMap& /*snapshot*/, const LoopClosureAnalyzeOptions& /*opts*/)
+{
+    THROW_EXCEPTION("analyze() is not implemented by this loop-closure engine.");
+}

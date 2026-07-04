@@ -717,6 +717,11 @@ void FrameToFrameLoopClosure::build_initial_graph()
     ASSERT_(state_.sm);
     const auto& sm = *state_.sm;
 
+    // Start from a pristine graph: gtsam Values::insert() throws on duplicate
+    // keys, so guard against stale state left by a prior analyze()/process().
+    state_.graphValues.clear();
+    state_.graphFG.resize(0);
+
     // Add all frame poses to values
     for (size_t i = 0; i < sm.size(); i++)
     {
@@ -945,8 +950,8 @@ void FrameToFrameLoopClosure::add_manual_loop_closure_factors()
 
 auto FrameToFrameLoopClosure::
     find_loop_candidates(  // NOLINT(readability-function-cognitive-complexity)
-        const std::set<std::pair<frame_id_t, frame_id_t>>& alreadyChecked) const
-    -> std::vector<FrameToFrameLoopClosure::LoopCandidate>
+        const std::set<std::pair<frame_id_t, frame_id_t>>& alreadyChecked,
+        frame_id_t minLaterFrame) const -> std::vector<FrameToFrameLoopClosure::LoopCandidate>
 {
     mrpt::system::CTimeLoggerEntry tle(profiler_, "find_loop_candidates");
 
@@ -987,7 +992,11 @@ auto FrameToFrameLoopClosure::
     {
         const auto pose_i = state_.get_pose(i);
 
-        for (size_t j = i + params_.min_frames_between_lc; j < sm.size(); j++)
+        // Incremental scans skip pairs whose later frame predates the newest
+        // batch (both endpoints already evaluated in a previous call).
+        const size_t jStart = std::max<size_t>(i + params_.min_frames_between_lc, minLaterFrame);
+
+        for (size_t j = jStart; j < sm.size(); j++)
         {
             // Check if already evaluated
             const auto frameGroup_i = mrpt::round(static_cast<double>(i) / frameGroup);
@@ -1290,11 +1299,10 @@ auto FrameToFrameLoopClosure::
     return finalCandidates;
 }
 
-std::optional<size_t> FrameToFrameLoopClosure::process_loop_candidate(const LoopCandidate& lc)
+std::optional<FrameToFrameLoopClosure::LcIcpEdge> FrameToFrameLoopClosure::run_lc_icp(
+    const LoopCandidate& lc)
 {
-    using gtsam::symbol_shorthand::X;
-
-    mrpt::system::CTimeLoggerEntry tle(profiler_, "process_loop_candidate");
+    mrpt::system::CTimeLoggerEntry tle(profiler_, "run_lc_icp");
 
     const size_t threadIdx = lc_candidate_counter_.fetch_add(1, std::memory_order_relaxed) %
                              state_.perThreadState_.size();
@@ -1404,21 +1412,57 @@ std::optional<size_t> FrameToFrameLoopClosure::process_loop_candidate(const Loop
         return std::nullopt;
     }
 
-    // Add ICP edge to graph
-    const size_t newFactorIdx = state_.graphFG.size();
-    const auto   deltaPose    = mrpt::gtsam_wrappers::toPose3(icp_result.optimal_tf.mean);
+    // Edge noise: ICP covariance diagonal inflated by an additive floor. This
+    // is the same recipe the graph BetweenFactor uses, so both the graph path
+    // (process_loop_candidate) and the detector path (analyze) see identical
+    // uncertainty.
+    // covDiag is in MRPT order: x, y, z, yaw, pitch, roll.
+    const auto covDiag = icp_result.optimal_tf.cov.asEigen().diagonal().array().sqrt();
 
-    gtsam::Vector6 sigmas;
-    const auto     covDiag = icp_result.optimal_tf.cov.asEigen().diagonal().array().sqrt();
+    LcIcpEdge edge;
+    edge.quality = icp_result.quality;
 
-    sigmas << covDiag[5] + mrpt::DEG2RAD(params_.icp_edge_additional_noise_ang),
+    // gtsam Pose3 tangent order: [rot_x rot_y rot_z, x y z].
+    edge.sigmas << covDiag[5] + mrpt::DEG2RAD(params_.icp_edge_additional_noise_ang),
         covDiag[4] + mrpt::DEG2RAD(params_.icp_edge_additional_noise_ang),
         covDiag[3] + mrpt::DEG2RAD(params_.icp_edge_additional_noise_ang),
         covDiag[0] + params_.icp_edge_additional_noise_xyz,
         covDiag[1] + params_.icp_edge_additional_noise_xyz,
         covDiag[2] + params_.icp_edge_additional_noise_xyz;
 
-    auto edgeNoise = gtsam::noiseModel::Diagonal::Sigmas(sigmas);
+    // Mirror the same inflated diagonal into an MRPT covariance (order x, y, z,
+    // yaw, pitch, roll) so callers that don't speak gtsam get the identical
+    // edge uncertainty.
+    const auto sq     = [](double v) { return v * v; };
+    edge.relPose.mean = icp_result.optimal_tf.mean;
+    edge.relPose.cov.setZero();
+    edge.relPose.cov(0, 0) = sq(edge.sigmas[3]);  // x
+    edge.relPose.cov(1, 1) = sq(edge.sigmas[4]);  // y
+    edge.relPose.cov(2, 2) = sq(edge.sigmas[5]);  // z
+    edge.relPose.cov(3, 3) = sq(edge.sigmas[2]);  // yaw
+    edge.relPose.cov(4, 4) = sq(edge.sigmas[1]);  // pitch
+    edge.relPose.cov(5, 5) = sq(edge.sigmas[0]);  // roll
+
+    return edge;
+}
+
+std::optional<size_t> FrameToFrameLoopClosure::process_loop_candidate(const LoopCandidate& lc)
+{
+    using gtsam::symbol_shorthand::X;
+
+    mrpt::system::CTimeLoggerEntry tle(profiler_, "process_loop_candidate");
+
+    const auto edge = run_lc_icp(lc);
+    if (!edge)
+    {
+        return std::nullopt;
+    }
+
+    // Add ICP edge to graph
+    const size_t newFactorIdx = state_.graphFG.size();
+    const auto   deltaPose    = mrpt::gtsam_wrappers::toPose3(edge->relPose.mean);
+
+    auto edgeNoise = gtsam::noiseModel::Diagonal::Sigmas(edge->sigmas);
 
     // LC edges use plain Gaussian noise (no robust kernel here).
     // The GNC optimizer handles outlier rejection for these edges.
@@ -1428,6 +1472,101 @@ std::optional<size_t> FrameToFrameLoopClosure::process_loop_candidate(const Loop
     accepted_lc_edges_.emplace_back(lc.frame_i, lc.frame_j);
 
     return newFactorIdx;
+}
+
+std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
+    const mrpt::maps::CSimpleMap& snapshot, const LoopClosureAnalyzeOptions& opts)
+{
+    using gtsam::symbol_shorthand::X;
+
+    const auto& sm = snapshot;
+
+    ASSERT_(state_.initialized);
+
+    mrpt::system::CTimeLoggerEntry tle(profiler_, "analyze");
+
+    // Detector-only pass: we own no graph and must not mutate the map. Set up
+    // just enough state for candidate search + per-candidate ICP.
+    state_.sm = &sm;
+
+    // Always clear the borrowed snapshot pointer on exit (including on an early
+    // return or exception), so no dangling pointer survives into later calls.
+    struct SnapshotGuard
+    {
+        const mrpt::maps::CSimpleMap** slot;
+        ~SnapshotGuard() { *slot = nullptr; }
+    } snapshotGuard{&state_.sm};
+
+    state_.pcCacheClear();
+    accepted_lc_edges_.clear();
+
+    MRPT_LOG_INFO_STREAM("analyze(): scanning simplemap with " << sm.size() << " frames");
+
+    // Precompute which frames have mapping-capable observations (used by
+    // find_loop_candidates to avoid lazy-loading raw frames per pair). This is a
+    // read-only flow over a caller-owned snapshot, so unlike process() we must
+    // not unload/modify the observations here.
+    state_.frameHasMappingObs.assign(sm.size(), false);
+    for (size_t i = 0; i < sm.size(); i++)
+    {
+        const auto& kf               = sm.get(i);
+        state_.frameHasMappingObs[i] = kf.sf && frame_has_mapping_observations(*kf.sf);
+    }
+
+    // Seed only the initial poses (no odometry/GNSS factors, no optimization):
+    // candidate search and ICP initial guesses read these via State::get_pose().
+    state_.graphValues.clear();
+    state_.graphFG.resize(0);
+    for (size_t i = 0; i < sm.size(); i++)
+    {
+        state_.graphValues.insert(X(i), mrpt::gtsam_wrappers::toPose3(frame_pose_in_simplemap(i)));
+    }
+
+    const std::set<std::pair<frame_id_t, frame_id_t>> alreadyChecked;
+    const frame_id_t minLaterFrame = opts.first_new_keyframe.value_or(0);
+    const auto       candidates    = find_loop_candidates(alreadyChecked, minLaterFrame);
+
+    MRPT_LOG_INFO_STREAM(
+        "analyze(): " << candidates.size() << " loop closure candidates"
+                      << (minLaterFrame != 0 ? " (incremental)" : ""));
+
+    std::vector<ProposedLoopEdge> out;
+    out.reserve(candidates.size());
+    bool aborted = false;
+    for (const auto& lc : candidates)
+    {
+        // Poll for cancellation before the expensive ICP step.
+        if (opts.should_abort && opts.should_abort())
+        {
+            aborted = true;
+            break;
+        }
+
+        const auto edge = run_lc_icp(lc);
+        if (!edge)
+        {
+            continue;
+        }
+        ProposedLoopEdge pe;
+        pe.from          = lc.frame_i;
+        pe.to            = lc.frame_j;
+        pe.relative_pose = edge->relPose;
+        pe.quality       = edge->quality;
+
+        // Stream the edge to the consumer early, before the scan finishes.
+        if (opts.on_edge_found)
+        {
+            opts.on_edge_found(pe);
+        }
+        out.push_back(pe);
+    }
+
+    MRPT_LOG_INFO_STREAM(
+        "analyze(): accepted " << out.size() << " loop closure edges"
+                               << (aborted ? " (aborted early)" : ""));
+
+    // state_.sm is cleared by snapshotGuard on scope exit.
+    return out;
 }
 
 mp2p_icp::metric_map_t::Ptr FrameToFrameLoopClosure::generate_frame_pointcloud(

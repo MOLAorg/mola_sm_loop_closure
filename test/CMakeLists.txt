@@ -28,3 +28,12 @@ ament_add_gtest(test_cli_f2f_gicp test_cli_f2f_gicp.cpp
   TIMEOUT 300
 )
 target_link_libraries(test_cli_f2f_gicp)
+
+# Direct API test for the detector-only analyze() path:
+ament_add_gtest(test_analyze_f2f test_analyze_f2f.cpp
+  ENV LC_PIPELINE_YAML=${LC_PIPELINE_YAML}
+  ENV LC_INPUT_SIMPLEMAP=${WAREHOUSE_SIMPLEMAP}
+  ENV MOLA_DESKEW_METHOD=MotionCompensationMethod::None
+  TIMEOUT 300
+)
+target_link_libraries(test_analyze_f2f ${PROJECT_NAME})
