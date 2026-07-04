@@ -1488,25 +1488,29 @@ std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
     // Detector-only pass: we own no graph and must not mutate the map. Set up
     // just enough state for candidate search + per-candidate ICP.
     state_.sm = &sm;
+
+    // Always clear the borrowed snapshot pointer on exit (including on an early
+    // return or exception), so no dangling pointer survives into later calls.
+    struct SnapshotGuard
+    {
+        const mrpt::maps::CSimpleMap** slot;
+        ~SnapshotGuard() { *slot = nullptr; }
+    } snapshotGuard{&state_.sm};
+
     state_.pcCacheClear();
     accepted_lc_edges_.clear();
 
     MRPT_LOG_INFO_STREAM("analyze(): scanning simplemap with " << sm.size() << " frames");
 
     // Precompute which frames have mapping-capable observations (used by
-    // find_loop_candidates to avoid lazy-loading raw frames per pair).
+    // find_loop_candidates to avoid lazy-loading raw frames per pair). This is a
+    // read-only flow over a caller-owned snapshot, so unlike process() we must
+    // not unload/modify the observations here.
     state_.frameHasMappingObs.assign(sm.size(), false);
     for (size_t i = 0; i < sm.size(); i++)
     {
         const auto& kf               = sm.get(i);
         state_.frameHasMappingObs[i] = kf.sf && frame_has_mapping_observations(*kf.sf);
-        if (params_.unload_observations_after_use && kf.sf)
-        {
-            for (const auto& obs : *kf.sf)
-            {
-                obs->unload();
-            }
-        }
     }
 
     // Seed only the initial poses (no odometry/GNSS factors, no optimization):
@@ -1561,9 +1565,7 @@ std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
         "analyze(): accepted " << out.size() << " loop closure edges"
                                << (aborted ? " (aborted early)" : ""));
 
-    // Do not retain the caller's snapshot past this call.
-    state_.sm = nullptr;
-
+    // state_.sm is cleared by snapshotGuard on scope exit.
     return out;
 }
 
