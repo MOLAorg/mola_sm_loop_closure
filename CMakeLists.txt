@@ -75,7 +75,6 @@ mola_add_library(
     mola::mola_yaml
     mola::mp2p_icp
     mola::mp2p_icp_filters
-    mrpt::gui
     mrpt::maps
 #	PRIVATE_LINK_LIBRARIES
   CMAKE_DEPENDENCIES
