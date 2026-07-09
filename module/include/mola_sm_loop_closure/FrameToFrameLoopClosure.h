@@ -86,6 +86,17 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         double gnss_max_uncertainty_horiz = 20.0;  // [m] reject if sqrt(sigE²+sigN²) > this
         double gnss_max_uncertainty_vert  = 40.0;  // [m] reject if sigU > this
 
+        /** If true, add per-keyframe IMU gravity-alignment factors
+         *  (mola::factors::MeasuredGravityFactor) constraining roll/pitch against the
+         *  measured accelerometer direction. Independent of use_gnss: this works with or
+         *  without GNSS, correcting orientation drift from accelerometer data alone.
+         *  Disabled by default: only enable it if the input simplemap actually carries
+         *  per-keyframe IMU accelerometer data (see mola::extract_imu_acc_frames_from_sm()). */
+        bool use_imu_gravity = false;
+
+        /** Sigma [deg] for the IMU gravity-alignment factors (see use_imu_gravity). */
+        double imu_gravity_sigma_deg = 3.0;
+
         // Loop closure candidate selection
         double min_distance_between_frames   = 20.0;  // [m] minimum separation for LC
         double max_distance_for_lc_candidate = 50.0;  // [m] maximum distance to consider
@@ -350,6 +361,10 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
 
     /** Add GNSS factors to the graph */
     void add_gnss_factors();
+
+    /** Adds per-keyframe IMU gravity-alignment factors (see Parameters::use_imu_gravity). */
+    /// Returns true if at least one IMU gravity-alignment factor was added.
+    bool add_imu_gravity_factors();
 
     struct LoopCandidate
     {
