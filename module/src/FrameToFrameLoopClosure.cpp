@@ -19,6 +19,7 @@
 #include <gtsam/slam/BetweenFactor.h>
 #include <mola_georeferencing/simplemap_georeference.h>
 #include <mola_gtsam_factors/FactorGnssEnu.h>
+#include <mola_gtsam_factors/MeasuredGravityFactor.h>
 #include <mola_gtsam_factors/gtsam_detect_version.h>
 #include <mola_sm_loop_closure/FrameToFrameLoopClosure.h>
 #include <mola_sm_loop_closure/common/debug_flags.h>
@@ -224,6 +225,9 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, gnss_edges_uncertainty_multiplier, double);
     YAML_LOAD_OPT(params_, gnss_max_uncertainty_horiz, double);
     YAML_LOAD_OPT(params_, gnss_max_uncertainty_vert, double);
+
+    YAML_LOAD_OPT(params_, use_imu_gravity, bool);
+    YAML_LOAD_OPT(params_, imu_gravity_sigma_deg, double);
 
     YAML_LOAD_OPT(params_, min_distance_between_frames, double);
     YAML_LOAD_OPT(params_, max_distance_for_lc_candidate, double);
@@ -451,6 +455,20 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
         {
             save_trajectory_as_tum(
                 params_.debug_files_prefix + "after_gnss.tum"s,
+                params_.save_trajectory_files_with_cov);
+        }
+    }
+
+    // Add IMU gravity-alignment factors if requested (works with or without GNSS)
+    if (params_.use_imu_gravity && add_imu_gravity_factors())
+    {
+        MRPT_LOG_INFO("Running optimization after IMU gravity-alignment factors...");
+        optimize_graph();
+
+        if (params_.save_trajectory_files)
+        {
+            save_trajectory_as_tum(
+                params_.debug_files_prefix + "after_imu_gravity.tum"s,
                 params_.save_trajectory_files_with_cov);
         }
     }
@@ -798,6 +816,59 @@ void FrameToFrameLoopClosure::add_gnss_factors()
 
     lc_common::add_gnss_factors_per_kf(
         state_.graphFG, *state_.sm, state_.globalGeoRef, p, state_.knownInlierFactorIndices, this);
+}
+
+bool FrameToFrameLoopClosure::add_imu_gravity_factors()
+{
+    using gtsam::symbol_shorthand::T;
+    using gtsam::symbol_shorthand::X;
+
+    mrpt::system::CTimeLoggerEntry tle(profiler_, "add_imu_gravity_factors");
+
+    ASSERT_(state_.sm);
+
+    const auto imuFrames = mola::extract_imu_acc_frames_from_sm(*state_.sm);
+    if (imuFrames.frames.empty())
+    {
+        MRPT_LOG_WARN(
+            "use_imu_gravity=true but no per-keyframe IMU accelerometer data was found in the "
+            "input simplemap; skipping IMU gravity-alignment factors.");
+        return false;
+    }
+
+    // T(0) is a fixed anchor for the ENU->map transform, as required by
+    // MeasuredGravityFactor's signature. Frame poses here already live in the map frame (X(i)
+    // keys, see build_initial_graph()), so T(0) is simply locked at Identity.
+    if (!state_.graphValues.exists(T(0)))
+    {
+        state_.graphValues.insert(T(0), gtsam::Pose3::Identity());
+        auto tightNoise = gtsam::noiseModel::Isotropic::Sigma(6, 1e-6);
+        state_.knownInlierFactorIndices.push_back(state_.graphFG.size());
+        state_.graphFG.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
+            T(0), gtsam::Pose3::Identity(), tightNoise);
+    }
+
+    ASSERTMSG_(
+        params_.imu_gravity_sigma_deg > 0,
+        "params_.imu_gravity_sigma_deg must be a positive angle in degrees");
+
+    auto accNoise =
+        gtsam::noiseModel::Isotropic::Sigma(3, mrpt::DEG2RAD(params_.imu_gravity_sigma_deg));
+
+    const std::size_t before = state_.graphFG.size();
+    for (const auto& frame : imuFrames.frames)
+    {
+        const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPose3(frame.sensorPoseOnVehicle);
+        state_.knownInlierFactorIndices.push_back(state_.graphFG.size());
+        state_.graphFG.emplace_shared<mola::factors::MeasuredGravityFactor>(
+            T(0), X(frame.kf_index), sensorOnVehicle, frame.normalizedAcc, accNoise);
+    }
+    const std::size_t after = state_.graphFG.size();
+    MRPT_LOG_INFO_STREAM(
+        "Added " << (after - before) << " IMU gravity factors over " << imuFrames.frames.size()
+                 << " IMU keyframes");
+
+    return after > before;
 }
 
 void FrameToFrameLoopClosure::add_manual_loop_closure_factors()
