@@ -118,6 +118,21 @@ if(EXISTS "${_KISS_MATCHER_CMAKE}" AND EXISTS "${_ROBIN_DIR}")
   if(TARGET pmc)
     target_compile_options(pmc PRIVATE -Wno-format-security)
   endif()
+  # Treat KISS-Matcher's (and dependencies') headers as system headers so
+  # their internal warnings (shadowing, macro redefinition, etc.) don't
+  # pollute the build of our own code that includes them.
+  # Portable across CMake versions (Humble ships CMake 3.22): apply the
+  # SYSTEM keyword to our own target's view of their include directories,
+  # rather than relying on the SYSTEM target property (CMake >= 3.25 only).
+  foreach(_dep_target kiss_matcher_core robin pmc)
+    if(TARGET ${_dep_target})
+      get_target_property(_dep_includes ${_dep_target} INTERFACE_INCLUDE_DIRECTORIES)
+      if(_dep_includes)
+        target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${_dep_includes})
+      endif()
+    endif()
+  endforeach()
+  unset(_dep_includes)
   target_compile_definitions(${PROJECT_NAME} PRIVATE MOLA_HAS_KISS_MATCHER)
   target_link_libraries(${PROJECT_NAME} PRIVATE kiss_matcher::kiss_matcher_core)
 elseif(EXISTS "${_KISS_MATCHER_CMAKE}" AND NOT EXISTS "${_ROBIN_DIR}")
