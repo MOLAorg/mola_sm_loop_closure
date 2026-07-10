@@ -258,7 +258,9 @@ observations_filter:
   - class_name: mp2p_icp_filters::FilterAdjustTimestamps
     params:
       pointcloud_layer: "raw"
-      silently_ignore_no_timestamps: false
+      # Datasets without per-point timestamps (e.g. KITTI) set this true so the
+      # filter skips instead of throwing (same env var as FilterDeskew below).
+      silently_ignore_no_timestamps: "${MOLA_DESKEW_IGNORE_NO_TIMESTAMPS|false}"
       method: "TimestampAdjustMethod::MiddleIsZero"
 
   - class_name: mp2p_icp_filters::FilterDeskew
