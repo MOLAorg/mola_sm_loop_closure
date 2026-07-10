@@ -1702,6 +1702,22 @@ mp2p_icp::metric_map_t::Ptr FrameToFrameLoopClosure::generate_frame_pointcloud(
     // Apply filters
     mp2p_icp_filters::apply_filter_pipeline(pts.pipeline.pc_filter, *observation, profiler_);
 
+    // Some keyframes filter down to an empty cloud (e.g. a near-empty or
+    // heavily-occluded scan, or a dataset whose extremes fall outside the
+    // range/bounding-box filters): the ICP registration layers then end up
+    // missing or empty. Treat such a frame as unusable and return an empty
+    // result so the caller skips this loop-closure candidate, instead of
+    // aborting the whole background scan when align() later fails to find its
+    // input layers.
+    if (observation->size_points_only() == 0)
+    {
+        MRPT_LOG_WARN_STREAM(
+            "Frame " << frameId
+                     << ": generated an empty point cloud; skipping it as a loop-closure "
+                        "candidate.");
+        return {};
+    }
+
     // Unload raw observation data to free RAM (only effective for externally-stored data).
     // Skipped in the read-only analyze() flow, which must not mutate the snapshot.
     if (params_.unload_observations_after_use && !state_.readOnlySnapshot)
