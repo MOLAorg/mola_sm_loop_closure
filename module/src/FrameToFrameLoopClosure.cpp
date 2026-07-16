@@ -1620,7 +1620,23 @@ std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
             break;
         }
 
-        const auto edge = run_lc_icp(lc);
+        // A single degenerate candidate (e.g. a keyframe whose filtered scan
+        // lacks the ICP registration layer, or an ICP that fails to converge)
+        // must not abort the whole background loop-closure scan: log and skip
+        // it so the remaining candidates are still evaluated.
+        std::optional<LcIcpEdge> edge;
+        try
+        {
+            edge = run_lc_icp(lc);
+        }
+        catch (const std::exception& e)
+        {
+            MRPT_LOG_WARN_STREAM(
+                "Loop-closure candidate "
+                << lc.frame_i << " <-> " << lc.frame_j
+                << " skipped due to error: " << first_n_lines(e.what(), 2));
+            continue;
+        }
         if (!edge)
         {
             continue;
