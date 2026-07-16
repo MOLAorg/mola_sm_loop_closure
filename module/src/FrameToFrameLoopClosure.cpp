@@ -287,6 +287,7 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, use_kiss_matcher, bool);
     YAML_LOAD_OPT(params_, kiss_matcher_resolution, double);
     YAML_LOAD_OPT(params_, kiss_matcher_layer, std::string);
+    YAML_LOAD_OPT(params_, kiss_matcher_min_inliers, uint32_t);
 
     YAML_LOAD_OPT(params_, largest_delta_for_reconsider, double);
     YAML_LOAD_OPT(params_, max_sensor_range, double);
@@ -1432,9 +1433,13 @@ std::optional<FrameToFrameLoopClosure::LcIcpEdge> FrameToFrameLoopClosure::run_l
 
         if (!src_pts.empty() && !tgt_pts.empty())
         {
-            const auto sol = static_cast<kiss_matcher::KISSMatcher*>(pts.kissMatcher.get())
-                                 ->estimate(src_pts, tgt_pts);
-            if (sol.valid)
+            auto*      km  = static_cast<kiss_matcher::KISSMatcher*>(pts.kissMatcher.get());
+            const auto sol = km->estimate(src_pts, tgt_pts);
+            // KISS-Matcher's `valid` flag only requires one surviving inlier;
+            // gate on the actual final-inlier count so grossly wrong global
+            // registrations (which mislead ICP) fall back to the graph guess.
+            const auto nInliers = km->getNumFinalInliers();
+            if (sol.valid && nInliers >= params_.kiss_matcher_min_inliers)
             {
                 mrpt::math::CMatrixDouble44 T = mrpt::math::CMatrixDouble44::Identity();
                 for (int r = 0; r < 3; r++)
@@ -1450,13 +1455,15 @@ std::optional<FrameToFrameLoopClosure::LcIcpEdge> FrameToFrameLoopClosure::run_l
                 initGuess = mrpt::poses::CPose3D(T).asTPose();
                 MRPT_LOG_DEBUG_STREAM(
                     "KISS-Matcher valid guess for LC " << lc.frame_i << "<->" << lc.frame_j
+                                                       << " inliers=" << nInliers
                                                        << " T=" << initGuess);
             }
             else
             {
                 MRPT_LOG_DEBUG_STREAM(
-                    "KISS-Matcher invalid solution for LC " << lc.frame_i << "<->" << lc.frame_j
-                                                            << "; using graph-based guess");
+                    "KISS-Matcher rejected for LC "
+                    << lc.frame_i << "<->" << lc.frame_j << " (valid=" << sol.valid
+                    << " inliers=" << nInliers << "); using graph-based guess");
             }
         }
     }
