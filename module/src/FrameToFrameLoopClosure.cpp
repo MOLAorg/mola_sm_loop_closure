@@ -1600,7 +1600,11 @@ std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
         state_.graphValues.insert(X(i), mrpt::gtsam_wrappers::toPose3(frame_pose_in_simplemap(i)));
     }
 
-    const std::set<std::pair<frame_id_t, frame_id_t>> alreadyChecked;
+    // Seed with pairs the caller already closed so candidate selection skips
+    // them and spends its budget on as-yet-unclosed loops (drives the finalize
+    // cascade toward new revisit regions each round).
+    const std::set<std::pair<frame_id_t, frame_id_t>> alreadyChecked(
+        opts.exclude_pairs.begin(), opts.exclude_pairs.end());
     const frame_id_t minLaterFrame = opts.first_new_keyframe.value_or(0);
     const auto       candidates    = find_loop_candidates(alreadyChecked, minLaterFrame);
 
