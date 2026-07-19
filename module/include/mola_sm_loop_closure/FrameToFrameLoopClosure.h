@@ -32,8 +32,8 @@
 #include <mrpt/topography/data_types.h>
 #include <mrpt/typemeta/TEnumType.h>
 
-#include <atomic>
 #include <list>
+#include <mutex>
 #include <set>
 #include <unordered_map>
 #include <vector>
@@ -193,6 +193,16 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
          */
         bool unload_observations_after_use = true;
 
+        // Parallel per-candidate ICP evaluation
+        /** If true, evaluate loop-closure candidates concurrently across worker
+         *  threads (each with its own ICP pipeline slot). Candidates are
+         *  independent pairwise registrations, so this speeds up both live scans
+         *  and the finalize pass roughly linearly with core count. */
+        bool parallel_icp_enabled = true;
+        /** Number of worker threads for candidate ICP. 0 = one per per-thread
+         *  ICP slot (hardware concurrency). Clamped to the number of slots. */
+        size_t num_icp_threads = 0;
+
         // Sensor parameters
         double max_sensor_range = 100.0;  // [m]
 
@@ -284,6 +294,25 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         lc_common::PerThreadIcpPipeline pipeline;
 
         std::shared_ptr<void> kissMatcher;  // holds kiss_matcher::KISSMatcher when enabled
+
+        // Per-thread LRU point-cloud cache. Kept per-thread (not shared) so that
+        // candidate ICP runs concurrently without racing on a shared cloud's
+        // lazily-built KD-tree. Budget below is per-thread (params_.pc_cache_max_bytes).
+        struct CachedPC
+        {
+            mp2p_icp::metric_map_t::Ptr pc;
+            size_t                      approxBytes = 0;
+        };
+        std::unordered_map<frame_id_t, CachedPC> pcCache;
+        std::list<frame_id_t>                    pcLruOrder;  // front = most recent
+        size_t                                   pcCacheTotalBytes = 0;
+
+        void cacheClear()
+        {
+            pcCache.clear();
+            pcLruOrder.clear();
+            pcCacheTotalBytes = 0;
+        }
     };
 
     struct State
@@ -326,22 +355,13 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         // Planarity factor graph (rebuilt each LC round when assume_planar_world=true)
         gtsam::NonlinearFactorGraph planarityFG;
 
-        // LRU point cloud cache
-        struct CachedPC
-        {
-            mp2p_icp::metric_map_t::Ptr pc;
-            size_t                      approxBytes = 0;
-        };
-
-        std::unordered_map<frame_id_t, CachedPC> pcCache;
-        std::list<frame_id_t>                    pcLruOrder;  // front = most recent
-        size_t                                   pcCacheTotalBytes = 0;
-
+        /// Clears every per-thread point-cloud cache (called between scans).
         void pcCacheClear()
         {
-            pcCache.clear();
-            pcLruOrder.clear();
-            pcCacheTotalBytes = 0;
+            for (auto& pts : perThreadState_)
+            {
+                pts.cacheClear();
+            }
         }
     };
 
@@ -349,9 +369,6 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
 
     mrpt::system::CTimeLogger profiler_{true, "frame_to_frame_lc"};
     mrpt::WorkerThreadsPool   threads_{state_.perThreadState_.size()};
-
-    // Round-robin counter for distributing candidates across per-thread state slots.
-    std::atomic<size_t> lc_candidate_counter_{0};
 
     // Private methods
     mrpt::poses::CPose3D frame_pose_in_simplemap(frame_id_t frameId) const;
@@ -362,8 +379,8 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
     /** Get point cloud for a frame, using the LRU cache */
     mp2p_icp::metric_map_t::Ptr get_cached_pointcloud(frame_id_t frameId, size_t threadIdx);
 
-    /** Evict oldest entries from the PC cache until under the size limit */
-    void evict_pc_cache();
+    /** Evict oldest entries from a per-thread PC cache until under the limit */
+    void evict_pc_cache(PerThreadState& pts);
 
     /** Build initial graph with odometry and GNSS factors */
     void build_initial_graph();
@@ -404,7 +421,13 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
     /** Run ICP for a single candidate and build its edge (no graph mutation).
      *  Returns nullopt if point clouds are missing or ICP goodness is below
      *  min_icp_goodness. Shared by process_loop_candidate() and analyze(). */
-    std::optional<LcIcpEdge> run_lc_icp(const LoopCandidate& lc);
+    /// Registers one candidate pair with ICP using per-thread slot `threadIdx`
+    /// (its own ICP pipeline + KISS-Matcher instance), so calls with distinct
+    /// slots run concurrently. `profile` gates the per-candidate time-logger
+    /// sections, which must be off when several candidates run in parallel
+    /// (CTimeLogger forbids the same section name from multiple threads).
+    std::optional<LcIcpEdge> run_lc_icp(
+        const LoopCandidate& lc, size_t threadIdx, bool profile = true);
 
     /** Process a single loop closure candidate with ICP.
      *  Returns the factor index in graphFG on success, or nullopt on failure. */
