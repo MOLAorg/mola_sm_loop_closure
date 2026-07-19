@@ -45,6 +45,14 @@ params:
   threshold_sigma_initial: "${LC_ICP_INITIAL_SIGMA|1.0}"
   threshold_sigma_final: "${LC_ICP_FINAL_SIGMA|0.05}"
 
+  # Evaluate loop-closure candidates concurrently (each worker uses its own ICP
+  # pipeline slot). Candidates are independent pairwise registrations, so this
+  # speeds up both live scans and the finalize pass ~linearly with core count.
+  parallel_icp_enabled: "${LC_PARALLEL_ICP|true}"
+  # 0 = auto (~cores/4). Each ICP already uses TBB internally, so one outer
+  # thread per core just oversubscribes; speedup flattens by ~cores/4.
+  num_icp_threads: "${LC_NUM_ICP_THREADS|0}"
+
   # ===== Odometry Edge Parameters =====
   input_odometry_noise_xyz: "${INPUT_ODOMETRY_NOISE_XYZ_PER_M|0.04}" # [m] Odometry translational noise (per meter of travel if scaled)
   input_odometry_noise_ang: "${INPUT_ODOMETRY_NOISE_ANG_DEG_PER_M|0.05}" # [deg] Odometry angular noise (per meter of travel if scaled)

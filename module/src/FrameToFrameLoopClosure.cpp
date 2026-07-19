@@ -54,10 +54,14 @@
 #include <kiss_matcher/KISSMatcher.hpp>
 #endif
 
+#include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <future>
+#include <mutex>
 
 using namespace mola;
 
@@ -235,6 +239,9 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, min_frames_between_lc, size_t);
     YAML_LOAD_OPT(params_, max_lc_optimization_rounds, size_t);
     YAML_LOAD_OPT(params_, lc_optimize_every_n, size_t);
+
+    YAML_LOAD_OPT(params_, parallel_icp_enabled, bool);
+    YAML_LOAD_OPT(params_, num_icp_threads, size_t);
 
     if (params_.min_frames_between_lc == 0)
     {
@@ -1373,12 +1380,16 @@ auto FrameToFrameLoopClosure::
 }
 
 std::optional<FrameToFrameLoopClosure::LcIcpEdge> FrameToFrameLoopClosure::run_lc_icp(
-    const LoopCandidate& lc)
+    const LoopCandidate& lc, size_t threadIdx, bool profile)
 {
-    mrpt::system::CTimeLoggerEntry tle(profiler_, "run_lc_icp");
+    // Per-candidate profiling is disabled when candidates run in parallel, since
+    // CTimeLogger forbids the same section name being timed from several threads.
+    std::optional<mrpt::system::CTimeLoggerEntry> tle;
+    if (profile)
+    {
+        tle.emplace(profiler_, "run_lc_icp");
+    }
 
-    const size_t threadIdx = lc_candidate_counter_.fetch_add(1, std::memory_order_relaxed) %
-                             state_.perThreadState_.size();
     ASSERT_(threadIdx < state_.perThreadState_.size());
 
     // Get point clouds for both frames (using LRU cache)
@@ -1402,7 +1413,11 @@ std::optional<FrameToFrameLoopClosure::LcIcpEdge> FrameToFrameLoopClosure::run_l
 #ifdef MOLA_HAS_KISS_MATCHER
     if (params_.use_kiss_matcher && pts.kissMatcher != nullptr)
     {
-        mrpt::system::CTimeLoggerEntry tle_km(profiler_, "kiss_matcher_initial_guess");
+        std::optional<mrpt::system::CTimeLoggerEntry> tle_km;
+        if (profile)
+        {
+            tle_km.emplace(profiler_, "kiss_matcher_initial_guess");
+        }
 
         auto extractEigen = [&](const mp2p_icp::metric_map_t& pc) -> std::vector<Eigen::Vector3f>
         {
@@ -1531,7 +1546,8 @@ std::optional<size_t> FrameToFrameLoopClosure::process_loop_candidate(const Loop
 
     mrpt::system::CTimeLoggerEntry tle(profiler_, "process_loop_candidate");
 
-    const auto edge = run_lc_icp(lc);
+    // Self-optimizing path is sequential: use slot 0 and keep profiling on.
+    const auto edge = run_lc_icp(lc, /*threadIdx=*/0);
     if (!edge)
     {
         return std::nullopt;
@@ -1621,24 +1637,35 @@ std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
 
     std::vector<ProposedLoopEdge> out;
     out.reserve(candidates.size());
-    bool aborted = false;
-    for (const auto& lc : candidates)
-    {
-        // Poll for cancellation before the expensive ICP step.
-        if (opts.should_abort && opts.should_abort())
-        {
-            aborted = true;
-            break;
-        }
+    std::atomic<bool> aborted{false};
 
-        // A single degenerate candidate (e.g. a keyframe whose filtered scan
-        // lacks the ICP registration layer, or an ICP that fails to converge)
-        // must not abort the whole background loop-closure scan: log and skip
-        // it so the remaining candidates are still evaluated.
+    // Loop-closure candidates are independent pairwise registrations, so their
+    // ICP tests can run concurrently. Resolve the worker count: one per-thread
+    // ICP slot (each with its own pipeline + KISS-Matcher instance), optionally
+    // capped by num_icp_threads, and never more than the candidate count.
+    size_t nThreads = 1;
+    if (params_.parallel_icp_enabled)
+    {
+        const size_t slots = state_.perThreadState_.size();
+        // Auto (0): use ~1/4 of the cores. mp2p_icp already parallelizes each ICP
+        // internally with TBB, so one outer thread per core just oversubscribes
+        // the shared TBB pool; the measured speedup flattens out by ~cores/4.
+        nThreads = params_.num_icp_threads == 0 ? std::max<size_t>(1, slots / 4)
+                                                : std::min(params_.num_icp_threads, slots);
+        nThreads = std::clamp<size_t>(nThreads, 1, std::max<size_t>(1, candidates.size()));
+    }
+
+    // Evaluate one candidate on ICP slot `slot`; returns the accepted edge (if
+    // any). A single degenerate candidate (e.g. a scan missing the registration
+    // layer, or an ICP that fails to converge) must never abort the whole scan:
+    // log and skip so the remaining candidates are still evaluated.
+    auto evalCandidate = [&](const LoopCandidate& lc, size_t slot,
+                             bool profile) -> std::optional<ProposedLoopEdge>
+    {
         std::optional<LcIcpEdge> edge;
         try
         {
-            edge = run_lc_icp(lc);
+            edge = run_lc_icp(lc, slot, profile);
         }
         catch (const std::exception& e)
         {
@@ -1646,24 +1673,99 @@ std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
                 "Loop-closure candidate "
                 << lc.frame_i << " <-> " << lc.frame_j
                 << " skipped due to error: " << first_n_lines(e.what(), 2));
-            continue;
+            return std::nullopt;
         }
         if (!edge)
         {
-            continue;
+            return std::nullopt;
         }
         ProposedLoopEdge pe;
         pe.from          = lc.frame_i;
         pe.to            = lc.frame_j;
         pe.relative_pose = edge->relPose;
         pe.quality       = edge->quality;
+        return pe;
+    };
 
-        // Stream the edge to the consumer early, before the scan finishes.
-        if (opts.on_edge_found)
+    if (nThreads <= 1)
+    {
+        // Sequential path (keeps per-candidate profiling).
+        for (const auto& lc : candidates)
         {
-            opts.on_edge_found(pe);
+            // Poll for cancellation before the expensive ICP step.
+            if (opts.should_abort && opts.should_abort())
+            {
+                aborted = true;
+                break;
+            }
+            auto pe = evalCandidate(lc, /*slot=*/0, /*profile=*/true);
+            if (!pe)
+            {
+                continue;
+            }
+            // Stream the edge to the consumer early, before the scan finishes.
+            if (opts.on_edge_found)
+            {
+                opts.on_edge_found(*pe);
+            }
+            out.push_back(*pe);
         }
-        out.push_back(pe);
+    }
+    else
+    {
+        // Parallel path: each worker owns one ICP slot and pulls candidates from
+        // a shared atomic index. Edge streaming/collection is serialized under a
+        // mutex; the accepted-edge ORDER is therefore not deterministic, which
+        // the robust (GNC/Huber) graph downstream tolerates. Per-candidate
+        // profiling is off (CTimeLogger forbids one section across threads).
+        std::atomic<size_t> nextIdx{0};
+        std::mutex          outMtx;
+        auto                worker = [&](size_t slot)
+        {
+            while (!aborted.load(std::memory_order_relaxed))
+            {
+                if (opts.should_abort && opts.should_abort())
+                {
+                    aborted = true;
+                    break;
+                }
+                const size_t idx = nextIdx.fetch_add(1, std::memory_order_relaxed);
+                if (idx >= candidates.size())
+                {
+                    break;
+                }
+                auto pe = evalCandidate(candidates[idx], slot, /*profile=*/false);
+                if (!pe)
+                {
+                    continue;
+                }
+                std::lock_guard<std::mutex> lk(outMtx);
+                if (opts.on_edge_found)
+                {
+                    opts.on_edge_found(*pe);
+                }
+                out.push_back(*pe);
+            }
+        };
+
+        // Silence the profiler across the parallel region: several helpers
+        // (point-cloud generation, filter pipeline) time shared sections that
+        // CTimeLogger does not allow to be entered from multiple threads.
+        const bool profWasEnabled = profiler_.isEnabled();
+        profiler_.enable(false);
+
+        std::vector<std::future<void>> futs;
+        futs.reserve(nThreads);
+        for (size_t k = 0; k < nThreads; k++)
+        {
+            futs.emplace_back(threads_.enqueue(worker, k));
+        }
+        for (auto& f : futs)
+        {
+            f.get();
+        }
+
+        profiler_.enable(profWasEnabled);
     }
 
     MRPT_LOG_INFO_STREAM(
@@ -1770,17 +1872,20 @@ mp2p_icp::metric_map_t::Ptr FrameToFrameLoopClosure::get_cached_pointcloud(
         return generate_frame_pointcloud(frameId, threadIdx);
     }
 
+    // Each thread owns its own cache slot, so no locking is needed and two
+    // candidates never share a cloud (which would race its lazy KD-tree).
+    auto& pts = state_.perThreadState_.at(threadIdx);
+
     // Cache hit?
-    auto it = state_.pcCache.find(frameId);
-    if (it != state_.pcCache.end())
+    auto it = pts.pcCache.find(frameId);
+    if (it != pts.pcCache.end())
     {
-        // Move to front of LRU list
-        state_.pcLruOrder.remove(frameId);
-        state_.pcLruOrder.push_front(frameId);
+        pts.pcLruOrder.remove(frameId);  // move to front of LRU list
+        pts.pcLruOrder.push_front(frameId);
         return it->second.pc;
     }
 
-    // Cache miss: generate the point cloud
+    // Cache miss: generate the point cloud.
     auto pc = generate_frame_pointcloud(frameId, threadIdx);
     if (!pc)
     {
@@ -1794,10 +1899,10 @@ mp2p_icp::metric_map_t::Ptr FrameToFrameLoopClosure::get_cached_pointcloud(
         if (map)
         {
             // Use the number of points * approximate bytes per point
-            auto pts = std::dynamic_pointer_cast<mrpt::maps::CPointsMap>(map);
-            if (pts)
+            auto ptsMap = std::dynamic_pointer_cast<mrpt::maps::CPointsMap>(map);
+            if (ptsMap)
             {
-                approxBytes += pts->size() * (3 * sizeof(float) + 16);  // xyz + overhead
+                approxBytes += ptsMap->size() * (3 * sizeof(float) + 16);  // xyz + overhead
             }
         }
     }
@@ -1806,29 +1911,31 @@ mp2p_icp::metric_map_t::Ptr FrameToFrameLoopClosure::get_cached_pointcloud(
         approxBytes = 1024;  // minimum estimate
     }
 
-    // Insert into cache
-    state_.pcCache[frameId] = {pc, approxBytes};
-    state_.pcLruOrder.push_front(frameId);
-    state_.pcCacheTotalBytes += approxBytes;
-
-    // Evict if over budget
-    evict_pc_cache();
+    // Insert into this thread's cache.
+    pts.pcCache[frameId] = {pc, approxBytes};
+    pts.pcLruOrder.push_front(frameId);
+    pts.pcCacheTotalBytes += approxBytes;
+    evict_pc_cache(pts);
 
     return pc;
 }
 
-void FrameToFrameLoopClosure::evict_pc_cache()
+void FrameToFrameLoopClosure::evict_pc_cache(PerThreadState& pts)
 {
-    while (state_.pcCacheTotalBytes > params_.pc_cache_max_bytes && !state_.pcLruOrder.empty())
+    // Budget is divided across the ICP slots so the total cache footprint stays
+    // close to pc_cache_max_bytes regardless of the worker-thread count.
+    const size_t budget =
+        std::max<size_t>(1, params_.pc_cache_max_bytes / state_.perThreadState_.size());
+    while (pts.pcCacheTotalBytes > budget && !pts.pcLruOrder.empty())
     {
-        const auto oldestId = state_.pcLruOrder.back();
-        state_.pcLruOrder.pop_back();
+        const auto oldestId = pts.pcLruOrder.back();
+        pts.pcLruOrder.pop_back();
 
-        auto it = state_.pcCache.find(oldestId);
-        if (it != state_.pcCache.end())
+        auto it = pts.pcCache.find(oldestId);
+        if (it != pts.pcCache.end())
         {
-            state_.pcCacheTotalBytes -= it->second.approxBytes;
-            state_.pcCache.erase(it);
+            pts.pcCacheTotalBytes -= it->second.approxBytes;
+            pts.pcCache.erase(it);
         }
     }
 }
