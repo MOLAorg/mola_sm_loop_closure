@@ -247,6 +247,15 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
          *  an mrpt::maps::CPointsMap-derived object. */
         std::string kiss_matcher_layer = "points_to_register_points";
 
+        /** Minimum number of final (translation) inliers for a KISS-Matcher
+         *  solution to be trusted as the ICP initial guess.  KISS-Matcher's
+         *  own `valid` flag only requires a single surviving inlier, which on
+         *  repetitive geometry (e.g. urban LiDAR) routinely yields grossly
+         *  wrong transforms (large translations, flipped orientations) that
+         *  then mislead ICP.  Below this count the graph-based guess is used
+         *  instead. */
+        uint32_t kiss_matcher_min_inliers = 5;
+
         // ===== Manual Loop Closure Hints =====
         struct ManualLoopConstraint
         {

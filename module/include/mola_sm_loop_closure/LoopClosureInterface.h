@@ -23,6 +23,8 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <set>
+#include <utility>
 #include <vector>
 
 namespace mola
@@ -74,6 +76,12 @@ struct LoopClosureAnalyzeOptions
      *  true to stop early and return the edges found so far. Lets the consumer
      *  cancel a long-running scan on new data or shutdown. */
     std::function<bool()> should_abort;
+
+    /** Keyframe-index pairs (min,max) to exclude from candidate selection, e.g.
+     *  loops the consumer already closed. Excluding them frees the per-scan
+     *  candidate budget for as-yet-unclosed pairs, so repeated full scans keep
+     *  discovering new loops instead of re-proposing the same ones. */
+    std::set<std::pair<uint32_t, uint32_t>> exclude_pairs;
 };
 
 class LoopClosureInterface : public mrpt::rtti::CObject, public mrpt::system::COutputLogger

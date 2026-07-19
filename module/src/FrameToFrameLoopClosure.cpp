@@ -287,6 +287,7 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, use_kiss_matcher, bool);
     YAML_LOAD_OPT(params_, kiss_matcher_resolution, double);
     YAML_LOAD_OPT(params_, kiss_matcher_layer, std::string);
+    YAML_LOAD_OPT(params_, kiss_matcher_min_inliers, uint32_t);
 
     YAML_LOAD_OPT(params_, largest_delta_for_reconsider, double);
     YAML_LOAD_OPT(params_, max_sensor_range, double);
@@ -1432,9 +1433,13 @@ std::optional<FrameToFrameLoopClosure::LcIcpEdge> FrameToFrameLoopClosure::run_l
 
         if (!src_pts.empty() && !tgt_pts.empty())
         {
-            const auto sol = static_cast<kiss_matcher::KISSMatcher*>(pts.kissMatcher.get())
-                                 ->estimate(src_pts, tgt_pts);
-            if (sol.valid)
+            auto*      km  = static_cast<kiss_matcher::KISSMatcher*>(pts.kissMatcher.get());
+            const auto sol = km->estimate(src_pts, tgt_pts);
+            // KISS-Matcher's `valid` flag only requires one surviving inlier;
+            // gate on the actual final-inlier count so grossly wrong global
+            // registrations (which mislead ICP) fall back to the graph guess.
+            const auto nInliers = km->getNumFinalInliers();
+            if (sol.valid && nInliers >= params_.kiss_matcher_min_inliers)
             {
                 mrpt::math::CMatrixDouble44 T = mrpt::math::CMatrixDouble44::Identity();
                 for (int r = 0; r < 3; r++)
@@ -1450,13 +1455,15 @@ std::optional<FrameToFrameLoopClosure::LcIcpEdge> FrameToFrameLoopClosure::run_l
                 initGuess = mrpt::poses::CPose3D(T).asTPose();
                 MRPT_LOG_DEBUG_STREAM(
                     "KISS-Matcher valid guess for LC " << lc.frame_i << "<->" << lc.frame_j
+                                                       << " inliers=" << nInliers
                                                        << " T=" << initGuess);
             }
             else
             {
                 MRPT_LOG_DEBUG_STREAM(
-                    "KISS-Matcher invalid solution for LC " << lc.frame_i << "<->" << lc.frame_j
-                                                            << "; using graph-based guess");
+                    "KISS-Matcher rejected for LC "
+                    << lc.frame_i << "<->" << lc.frame_j << " (valid=" << sol.valid
+                    << " inliers=" << nInliers << "); using graph-based guess");
             }
         }
     }
@@ -1600,7 +1607,11 @@ std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
         state_.graphValues.insert(X(i), mrpt::gtsam_wrappers::toPose3(frame_pose_in_simplemap(i)));
     }
 
-    const std::set<std::pair<frame_id_t, frame_id_t>> alreadyChecked;
+    // Seed with pairs the caller already closed so candidate selection skips
+    // them and spends its budget on as-yet-unclosed loops (drives the finalize
+    // cascade toward new revisit regions each round).
+    const std::set<std::pair<frame_id_t, frame_id_t>> alreadyChecked(
+        opts.exclude_pairs.begin(), opts.exclude_pairs.end());
     const frame_id_t minLaterFrame = opts.first_new_keyframe.value_or(0);
     const auto       candidates    = find_loop_candidates(alreadyChecked, minLaterFrame);
 
@@ -1620,7 +1631,23 @@ std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
             break;
         }
 
-        const auto edge = run_lc_icp(lc);
+        // A single degenerate candidate (e.g. a keyframe whose filtered scan
+        // lacks the ICP registration layer, or an ICP that fails to converge)
+        // must not abort the whole background loop-closure scan: log and skip
+        // it so the remaining candidates are still evaluated.
+        std::optional<LcIcpEdge> edge;
+        try
+        {
+            edge = run_lc_icp(lc);
+        }
+        catch (const std::exception& e)
+        {
+            MRPT_LOG_WARN_STREAM(
+                "Loop-closure candidate "
+                << lc.frame_i << " <-> " << lc.frame_j
+                << " skipped due to error: " << first_n_lines(e.what(), 2));
+            continue;
+        }
         if (!edge)
         {
             continue;
