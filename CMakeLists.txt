@@ -92,6 +92,22 @@ if(mp2p_icp_VERSION VERSION_GREATER_EQUAL "2.6.0")
   target_compile_definitions(${PROJECT_NAME} PRIVATE MP2P_ICP_HAS_LOG_FUNCTOR)
 endif()
 
+# Detect whether mola_georeferencing exposes the newer, unified
+# extract_imu_frames_from_sm()/IMUFrames API (gravity + absolute attitude), or only the
+# older extract_imu_acc_frames_from_sm()/IMUAccFrames one, kept for old installed versions.
+# A version check is not reliable here since the new API landed without a version bump,
+# so probe for it directly instead.
+include(CheckCXXSourceCompiles)
+set(CMAKE_REQUIRED_LIBRARIES mola::mola_georeferencing)
+check_cxx_source_compiles(
+  "#include <mola_georeferencing/simplemap_georeference.h>
+   int main() { auto fn = &mola::extract_imu_frames_from_sm; (void)fn; return 0; }"
+  MOLA_GEOREFERENCING_HAS_NEW_IMU_API)
+unset(CMAKE_REQUIRED_LIBRARIES)
+if(MOLA_GEOREFERENCING_HAS_NEW_IMU_API)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE MOLA_GEOREFERENCING_HAS_NEW_IMU_API)
+endif()
+
 # Optional: KISS-Matcher for global-registration initial guesses in F2F loop closure.
 # Enabled automatically when the git submodule is populated.
 set(_KISS_MATCHER_CMAKE

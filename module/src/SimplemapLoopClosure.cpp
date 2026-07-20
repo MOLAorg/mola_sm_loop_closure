@@ -462,7 +462,11 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         // inline the equivalent logic using X(i) directly and a single fixed T(0)=Identity anchor.
         if (params_.use_imu_gravity)
         {
+#ifdef MOLA_GEOREFERENCING_HAS_NEW_IMU_API
+            const auto imuFrames = mola::extract_imu_frames_from_sm(*state_.sm);
+#else
             const auto imuFrames = mola::extract_imu_acc_frames_from_sm(*state_.sm);
+#endif
             if (!imuFrames.frames.empty())
             {
                 using gtsam::symbol_shorthand::T;
@@ -486,11 +490,20 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
                 const std::size_t before = state_.kfGraphFG.size();
                 for (const auto& frame : imuFrames.frames)
                 {
+#ifdef MOLA_GEOREFERENCING_HAS_NEW_IMU_API
+                    if (!frame.normalizedAcc)
+                    {
+                        continue;
+                    }
+                    const auto& normalizedAcc = *frame.normalizedAcc;
+#else
+                    const auto& normalizedAcc = frame.normalizedAcc;
+#endif
                     const auto sensorOnVehicle =
                         mrpt::gtsam_wrappers::toPose3(frame.sensorPoseOnVehicle);
                     state_.knownInlierFactorIndices.push_back(state_.kfGraphFG.size());
                     state_.kfGraphFG.emplace_shared<mola::factors::MeasuredGravityFactor>(
-                        T(0), X(frame.kf_index), sensorOnVehicle, frame.normalizedAcc, accNoise);
+                        T(0), X(frame.kf_index), sensorOnVehicle, normalizedAcc, accNoise);
                 }
                 const std::size_t after = state_.kfGraphFG.size();
                 MRPT_LOG_INFO_STREAM(
