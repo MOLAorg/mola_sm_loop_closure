@@ -91,7 +91,7 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
          *  measured accelerometer direction. Independent of use_gnss: this works with or
          *  without GNSS, correcting orientation drift from accelerometer data alone.
          *  Disabled by default: only enable it if the input simplemap actually carries
-         *  per-keyframe IMU accelerometer data (see mola::extract_imu_acc_frames_from_sm()). */
+         *  per-keyframe IMU accelerometer data (see mola::extract_imu_frames_from_sm()). */
         bool use_imu_gravity = false;
 
         /** Sigma [deg] for the IMU gravity-alignment factors (see use_imu_gravity). */

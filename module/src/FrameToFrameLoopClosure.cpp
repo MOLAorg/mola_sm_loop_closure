@@ -835,7 +835,11 @@ bool FrameToFrameLoopClosure::add_imu_gravity_factors()
 
     ASSERT_(state_.sm);
 
+#ifdef MOLA_GEOREFERENCING_HAS_NEW_IMU_API
+    const auto imuFrames = mola::extract_imu_frames_from_sm(*state_.sm);
+#else
     const auto imuFrames = mola::extract_imu_acc_frames_from_sm(*state_.sm);
+#endif
     if (imuFrames.frames.empty())
     {
         MRPT_LOG_WARN(
@@ -866,10 +870,19 @@ bool FrameToFrameLoopClosure::add_imu_gravity_factors()
     const std::size_t before = state_.graphFG.size();
     for (const auto& frame : imuFrames.frames)
     {
+#ifdef MOLA_GEOREFERENCING_HAS_NEW_IMU_API
+        if (!frame.normalizedAcc)
+        {
+            continue;
+        }
+        const auto& normalizedAcc = *frame.normalizedAcc;
+#else
+        const auto& normalizedAcc = frame.normalizedAcc;
+#endif
         const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPose3(frame.sensorPoseOnVehicle);
         state_.knownInlierFactorIndices.push_back(state_.graphFG.size());
         state_.graphFG.emplace_shared<mola::factors::MeasuredGravityFactor>(
-            T(0), X(frame.kf_index), sensorOnVehicle, frame.normalizedAcc, accNoise);
+            T(0), X(frame.kf_index), sensorOnVehicle, normalizedAcc, accNoise);
     }
     const std::size_t after = state_.graphFG.size();
     MRPT_LOG_INFO_STREAM(
@@ -1010,7 +1023,7 @@ void FrameToFrameLoopClosure::add_manual_loop_closure_factors()
         auto factor = boost::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             X(fi), X(fj), deltaPose, edgeNoise);
 #else
-        auto factor = std::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+        auto        factor        = std::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             X(fi), X(fj), deltaPose, edgeNoise);
 #endif
         state_.graphFG += factor;
