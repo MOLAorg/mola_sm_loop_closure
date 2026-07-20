@@ -1652,6 +1652,21 @@ std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
     out.reserve(candidates.size());
     std::atomic<bool> aborted{false};
 
+    // Live progress reporting: total is fixed for the pass, evaluated grows as
+    // ICP runs. The consumer derives a per-scan pending-queue depth from
+    // (total - done). Kept as an atomic so both the sequential and parallel
+    // paths update it uniformly.
+    const std::size_t        candidatesTotal = candidates.size();
+    std::atomic<std::size_t> evaluated{0};
+    auto                     reportProgress = [&]
+    {
+        if (opts.on_progress)
+        {
+            opts.on_progress(evaluated.load(std::memory_order_relaxed), candidatesTotal);
+        }
+    };
+    reportProgress();  // initial (0 / total), so a listener sees the queue fill
+
     // Loop-closure candidates are independent pairwise registrations, so their
     // ICP tests can run concurrently. Resolve the worker count: one per-thread
     // ICP slot (each with its own pipeline + KISS-Matcher instance), optionally
@@ -1712,6 +1727,8 @@ std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
                 break;
             }
             auto pe = evalCandidate(lc, /*slot=*/0, /*profile=*/true);
+            evaluated.fetch_add(1, std::memory_order_relaxed);
+            reportProgress();
             if (!pe)
             {
                 continue;
@@ -1748,16 +1765,23 @@ std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
                     break;
                 }
                 auto pe = evalCandidate(candidates[idx], slot, /*profile=*/false);
-                if (!pe)
+                evaluated.fetch_add(1, std::memory_order_relaxed);
+                // Only serialize when there is something to do under the lock:
+                // progress to report or an accepted edge to push. Rejected
+                // candidates (the common case) stay on the lock-free path.
+                if (opts.on_progress || pe)
                 {
-                    continue;
+                    std::lock_guard<std::mutex> lk(outMtx);
+                    reportProgress();
+                    if (pe)
+                    {
+                        if (opts.on_edge_found)
+                        {
+                            opts.on_edge_found(*pe);
+                        }
+                        out.push_back(*pe);
+                    }
                 }
-                std::lock_guard<std::mutex> lk(outMtx);
-                if (opts.on_edge_found)
-                {
-                    opts.on_edge_found(*pe);
-                }
-                out.push_back(*pe);
             }
         };
 
@@ -1784,6 +1808,14 @@ std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
     MRPT_LOG_INFO_STREAM(
         "analyze(): accepted " << out.size() << " loop closure edges"
                                << (aborted ? " (aborted early)" : ""));
+
+    if (opts.out_stats)
+    {
+        opts.out_stats->candidates_generated = candidatesTotal;
+        opts.out_stats->candidates_evaluated = evaluated.load(std::memory_order_relaxed);
+        opts.out_stats->edges_accepted       = out.size();
+        opts.out_stats->aborted              = aborted.load();
+    }
 
     // state_.sm is cleared by snapshotGuard on scope exit.
     return out;
