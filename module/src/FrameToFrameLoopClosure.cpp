@@ -1023,7 +1023,7 @@ void FrameToFrameLoopClosure::add_manual_loop_closure_factors()
         auto factor = boost::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             X(fi), X(fj), deltaPose, edgeNoise);
 #else
-        auto factor = std::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+        auto        factor        = std::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             X(fi), X(fj), deltaPose, edgeNoise);
 #endif
         state_.graphFG += factor;
