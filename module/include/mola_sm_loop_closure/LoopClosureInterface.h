@@ -20,12 +20,19 @@
 #include <mrpt/rtti/CObject.h>
 #include <mrpt/system/COutputLogger.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <optional>
 #include <set>
 #include <utility>
 #include <vector>
+
+/** Feature macro: when defined, LoopClosureAnalyzeOptions exposes on_progress /
+ *  out_stats (and the LoopClosureAnalyzeStats summary), so a consumer can report
+ *  per-scan progress and candidate/accept counts. Lets out-of-repo consumers
+ *  detect the feature at compile time. */
+#define MOLA_SM_LOOP_CLOSURE_HAS_ANALYZE_STATS 1
 
 namespace mola
 {
@@ -49,6 +56,26 @@ struct ProposedLoopEdge
 
     /// Detector confidence in [0,1] (e.g. ICP goodness).
     double quality = 0;
+};
+
+/** Summary counts of one LoopClosureInterface::analyze() pass, so the caller
+ *  can report progress/statistics (e.g. in a UI) without re-deriving them.
+ *  Rejected candidates = candidates_evaluated - edges_accepted. */
+struct LoopClosureAnalyzeStats
+{
+    /// Candidate pairs the detector decided to test this pass (after candidate
+    /// selection / exclusion), i.e. the initial "queue" size for the scan.
+    std::size_t candidates_generated = 0;
+
+    /// Candidates whose ICP actually ran (== candidates_generated unless the
+    /// scan was aborted early).
+    std::size_t candidates_evaluated = 0;
+
+    /// Candidates accepted as loop-closure edges (passed min_icp_goodness).
+    std::size_t edges_accepted = 0;
+
+    /// True if the pass stopped early via should_abort().
+    bool aborted = false;
 };
 
 /** Options for the streaming / incremental LoopClosureInterface::analyze(). */
@@ -82,6 +109,17 @@ struct LoopClosureAnalyzeOptions
      *  candidate budget for as-yet-unclosed pairs, so repeated full scans keep
      *  discovering new loops instead of re-proposing the same ones. */
     std::set<std::pair<uint32_t, uint32_t>> exclude_pairs;
+
+    /** If set, invoked as candidates are evaluated with (done, total), so the
+     *  consumer can show live progress / a per-scan pending-queue depth
+     *  (total - done) while the (possibly long) ICP scan runs. Called from the
+     *  analyze() thread(s); must be thread-safe and must not call back into
+     *  this engine. `total` is the candidate count for the pass (constant);
+     *  `done` is monotonically increasing. */
+    std::function<void(std::size_t done, std::size_t total)> on_progress;
+
+    /** If set, filled with the pass summary counts before analyze() returns. */
+    LoopClosureAnalyzeStats* out_stats = nullptr;
 };
 
 class LoopClosureInterface : public mrpt::rtti::CObject, public mrpt::system::COutputLogger
