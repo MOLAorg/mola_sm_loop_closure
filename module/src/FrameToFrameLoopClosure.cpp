@@ -1766,17 +1766,22 @@ std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
                 }
                 auto pe = evalCandidate(candidates[idx], slot, /*profile=*/false);
                 evaluated.fetch_add(1, std::memory_order_relaxed);
-                std::lock_guard<std::mutex> lk(outMtx);
-                reportProgress();
-                if (!pe)
+                // Only serialize when there is something to do under the lock:
+                // progress to report or an accepted edge to push. Rejected
+                // candidates (the common case) stay on the lock-free path.
+                if (opts.on_progress || pe)
                 {
-                    continue;
+                    std::lock_guard<std::mutex> lk(outMtx);
+                    reportProgress();
+                    if (pe)
+                    {
+                        if (opts.on_edge_found)
+                        {
+                            opts.on_edge_found(*pe);
+                        }
+                        out.push_back(*pe);
+                    }
                 }
-                if (opts.on_edge_found)
-                {
-                    opts.on_edge_found(*pe);
-                }
-                out.push_back(*pe);
             }
         };
 
