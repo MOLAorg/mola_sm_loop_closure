@@ -134,6 +134,13 @@ if(EXISTS "${_KISS_MATCHER_CMAKE}" AND EXISTS "${_ROBIN_DIR}")
   if(TARGET pmc)
     target_compile_options(pmc PRIVATE -Wno-format-security)
   endif()
+  # Silence upstream warnings in third-party sources we don't maintain.
+  if(TARGET robin)
+    target_compile_options(robin PRIVATE -Wno-return-type)
+  endif()
+  if(TARGET kiss_matcher_core)
+    target_compile_options(kiss_matcher_core PRIVATE -Wno-unused-variable)
+  endif()
   # Treat KISS-Matcher's (and dependencies') headers as system headers so
   # their internal warnings (shadowing, macro redefinition, etc.) don't
   # pollute the build of our own code that includes them.
