@@ -34,7 +34,6 @@ find_package(mola_relocalization REQUIRED)
 find_package(mola_yaml REQUIRED)
 find_package(mp2p_icp REQUIRED)
 find_package(mp2p_icp_filters REQUIRED)
-find_package(mrpt-gui REQUIRED)
 find_package(mrpt-maps REQUIRED)
 find_package(mrpt-tclap REQUIRED)
 
