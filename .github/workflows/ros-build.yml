@@ -12,6 +12,13 @@ jobs:
       DEBIAN_FRONTEND: noninteractive
     continue-on-error: ${{ matrix.allow_failure == true }}
     strategy:
+      # Without this, one broken distro cancels the sibling jobs and they report
+      # as failures with nothing but "context canceled" in the log -- so a single
+      # known failure looks like three, and hides the results that would
+      # otherwise be actionable. Seen here: humble's container ships nanoflann
+      # 1.4.2, below the 1.5.1 that RKNN search needs, which took down the two
+      # jazzy rows with it.
+      fail-fast: false
       matrix:
         include:
           # Humble Hawksbill (May 2022 - May 2027)
