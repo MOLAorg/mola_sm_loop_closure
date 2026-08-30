@@ -211,16 +211,27 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
          *  going to be compared against another run, and leave it off for live
          *  SLAM, where the answer only has to be good, not repeatable.
          *
-         *  Setting it does three things, and all three are needed. It evaluates
-         *  candidates sequentially, in candidate order, so no edge depends on
-         *  which worker finished first. It sorts the accepted edges before
-         *  returning, so a consumer that folds them into a graph sees a fixed
-         *  order. And, for the duration of the scan, it pins the parallel
-         *  runtimes UNDERNEATH this library -- mp2p_icp's TBB reductions, which
-         *  otherwise decide both the order of the correspondence list and the
-         *  summation order of the Gauss-Newton normal equations, and
-         *  KISS-Matcher's TBB and OpenMP regions. `parallel_icp_enabled` alone
-         *  reaches none of those, which is why it is not enough on its own.
+         *  It does NOT turn off candidate parallelism -- that was measured and
+         *  is not where the nondeterminism lives. Two things are needed instead.
+         *  It sorts the accepted edges before returning, so a consumer folding
+         *  them into a graph (which typically drops a pair already closed) sees
+         *  a fixed order. And it pins, for the duration of the scan, the
+         *  parallel runtimes UNDERNEATH this library, which read none of this
+         *  library's own thread settings.
+         *
+         *  What is actually left to pin is narrower than it looks, and worth
+         *  knowing before changing any of this. mp2p_icp's pairing reduction was
+         *  the other cause and is fixed at the source (it now joins
+         *  deterministically); with that in place and KISS-Matcher disabled, a
+         *  fully parallel scan is already reproducible. The remaining cause is
+         *  KISS-Matcher, which builds an index list with its own
+         *  concatenation-joined `tbb::parallel_reduce` and uses OpenMP as well --
+         *  and which is vendored from upstream, so pinning it is the available
+         *  lever rather than fixing it.
+         *
+         *  Cost on KITTI-07: 8.5 s unpinned, 40 s here, 92.7 s if candidates are
+         *  serialized too. The output is byte-identical across all thread counts
+         *  tried, which is what "deterministic" is supposed to mean.
          *
          *  See DeterministicScope in module/src/ for the mechanism. */
         bool deterministic = false;

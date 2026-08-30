@@ -1683,18 +1683,30 @@ std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
     // ICP slot (each with its own pipeline + KISS-Matcher instance), optionally
     // capped by num_icp_threads, and never more than the candidate count.
     //
-    // `deterministic` overrides the parallelism settings rather than being
-    // combined with them: a caller that asked for a reproducible scan gets one,
-    // and does not have to also remember to turn parallel_icp_enabled off.
+    // `deterministic` does NOT turn off candidate parallelism, and that is a
+    // measured decision rather than an oversight. Once the reduction underneath
+    // (mp2p_icp's pairing list) is order-stable, evaluating candidates
+    // concurrently is reproducible on its own: each candidate is an independent
+    // registration on its own ICP slot, and the accepted edges are sorted below.
+    // What is left needing a pin is the parallelism INSIDE a candidate, which
+    // the scope handles. Serializing the candidates too would cost ~8x for no
+    // determinism gained.
     const DeterministicScope detScope{params_.deterministic, this};
 
     size_t nThreads = 1;
-    if (params_.parallel_icp_enabled && !params_.deterministic)
+    if (params_.parallel_icp_enabled)
     {
         const size_t slots = state_.perThreadState_.size();
         // Auto (0): use ~1/4 of the cores. mp2p_icp already parallelizes each ICP
         // internally with TBB, so one outer thread per core just oversubscribes
         // the shared TBB pool; the measured speedup flattens out by ~cores/4.
+        //
+        // cores/4 stays the auto value under `deterministic` too. Taking all the
+        // slots instead was tried, on the theory that pinning the inner runtimes
+        // leaves nothing to oversubscribe, and measured WORSE on KITTI-07 (47-50 s
+        // against 40 s): the per-thread point-cloud cache is
+        // pc_cache_max_bytes/slots, so more slots means a smaller cache each and
+        // more clouds regenerated.
         nThreads = params_.num_icp_threads == 0 ? std::max<size_t>(1, slots / 4)
                                                 : std::min(params_.num_icp_threads, slots);
         nThreads = std::clamp<size_t>(nThreads, 1, std::max<size_t>(1, candidates.size()));
