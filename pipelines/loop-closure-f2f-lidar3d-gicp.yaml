@@ -53,7 +53,10 @@ params:
   # thread per core just oversubscribes; speedup flattens by ~cores/4.
   num_icp_threads: "${LC_NUM_ICP_THREADS|0}"
 
-  # Reproducible scan: same simplemap in, same edges out, every time.
+  # Reproducible scan: same simplemap in, same edges out -- provided the build
+  # could pin the runtimes it relies on. TBB and OpenMP are optional at build
+  # time; if one that is actually in use was not found by CMake, the engine warns
+  # at scan time and the guarantee does not hold.
   #
   # Overrides the two settings above (no need to also turn parallel_icp_enabled
   # off) AND pins the parallel runtimes underneath this library for the duration

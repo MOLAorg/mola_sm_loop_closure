@@ -204,7 +204,13 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         size_t num_icp_threads = 0;
 
         /** Master switch for a REPRODUCIBLE scan: the same simplemap in gives
-         *  the same edges out, every time.
+         *  the same edges out, every time -- PROVIDED this build could pin the
+         *  runtimes it relies on. TBB and OpenMP are both optional at build
+         *  time (see CMakeLists.txt); if CMake did not find one that is
+         *  actually in use, the guarantee does not hold and DeterministicScope
+         *  says so at construction rather than letting a caller discover it by
+         *  diffing two outputs. `fully_pinned()` reports the same thing
+         *  programmatically.
          *
          *  Off by default because it costs wall clock -- it is one thread, all
          *  the way down. Turn it on for a batch/offline run whose numbers are
