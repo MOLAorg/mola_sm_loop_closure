@@ -63,6 +63,8 @@
 #include <future>
 #include <mutex>
 
+#include "DeterministicScope.h"
+
 using namespace mola;
 
 IMPLEMENTS_SERIALIZABLE(FrameToFrameLoopClosure, LoopClosureInterface, mola)
@@ -242,6 +244,7 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
 
     YAML_LOAD_OPT(params_, parallel_icp_enabled, bool);
     YAML_LOAD_OPT(params_, num_icp_threads, size_t);
+    YAML_LOAD_OPT(params_, deterministic, bool);
 
     if (params_.min_frames_between_lc == 0)
     {
@@ -400,12 +403,20 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
     using namespace std::string_literals;
 
     ASSERT_(state_.initialized);
+
+    // Same contract as analyze(): with `deterministic` set, this whole batch
+    // pass -- every ICP inside it, and every parallel runtime underneath --
+    // runs on one thread, so the corrected map is a function of the input.
+    const DeterministicScope detScope{params_.deterministic, this};
+
     state_.sm               = &sm;
     state_.readOnlySnapshot = false;
     state_.pcCacheClear();
     accepted_lc_edges_.clear();
 
-    MRPT_LOG_INFO_STREAM("Processing simplemap with " << sm.size() << " frames");
+    MRPT_LOG_INFO_STREAM(
+        "Processing simplemap with " << sm.size() << " frames"
+                                     << (params_.deterministic ? " [deterministic]" : ""));
 
     // Precompute which frames have mapping-capable observations, so that
     // find_loop_candidates() does not need to access (and lazy-load) the
@@ -1671,8 +1682,14 @@ std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
     // ICP tests can run concurrently. Resolve the worker count: one per-thread
     // ICP slot (each with its own pipeline + KISS-Matcher instance), optionally
     // capped by num_icp_threads, and never more than the candidate count.
+    //
+    // `deterministic` overrides the parallelism settings rather than being
+    // combined with them: a caller that asked for a reproducible scan gets one,
+    // and does not have to also remember to turn parallel_icp_enabled off.
+    const DeterministicScope detScope{params_.deterministic, this};
+
     size_t nThreads = 1;
-    if (params_.parallel_icp_enabled)
+    if (params_.parallel_icp_enabled && !params_.deterministic)
     {
         const size_t slots = state_.perThreadState_.size();
         // Auto (0): use ~1/4 of the cores. mp2p_icp already parallelizes each ICP
@@ -1805,9 +1822,22 @@ std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
         profiler_.enable(profWasEnabled);
     }
 
+    // A canonical order on the way out. The sequential path already produces
+    // candidate order, but a consumer folding these into a factor graph often
+    // drops a pair it has already closed, which makes the order observable --
+    // so state it here rather than leaving each consumer to sort defensively.
+    if (params_.deterministic)
+    {
+        std::sort(
+            out.begin(), out.end(),
+            [](const ProposedLoopEdge& a, const ProposedLoopEdge& b)
+            { return std::minmax(a.from, a.to) < std::minmax(b.from, b.to); });
+    }
+
     MRPT_LOG_INFO_STREAM(
         "analyze(): accepted " << out.size() << " loop closure edges"
-                               << (aborted ? " (aborted early)" : ""));
+                               << (aborted ? " (aborted early)" : "")
+                               << (params_.deterministic ? " [deterministic]" : ""));
 
     if (opts.out_stats)
     {

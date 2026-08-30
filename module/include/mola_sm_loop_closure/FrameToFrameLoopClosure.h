@@ -203,6 +203,28 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
          *  ICP slot (hardware concurrency). Clamped to the number of slots. */
         size_t num_icp_threads = 0;
 
+        /** Master switch for a REPRODUCIBLE scan: the same simplemap in gives
+         *  the same edges out, every time.
+         *
+         *  Off by default because it costs wall clock -- it is one thread, all
+         *  the way down. Turn it on for a batch/offline run whose numbers are
+         *  going to be compared against another run, and leave it off for live
+         *  SLAM, where the answer only has to be good, not repeatable.
+         *
+         *  Setting it does three things, and all three are needed. It evaluates
+         *  candidates sequentially, in candidate order, so no edge depends on
+         *  which worker finished first. It sorts the accepted edges before
+         *  returning, so a consumer that folds them into a graph sees a fixed
+         *  order. And, for the duration of the scan, it pins the parallel
+         *  runtimes UNDERNEATH this library -- mp2p_icp's TBB reductions, which
+         *  otherwise decide both the order of the correspondence list and the
+         *  summation order of the Gauss-Newton normal equations, and
+         *  KISS-Matcher's TBB and OpenMP regions. `parallel_icp_enabled` alone
+         *  reaches none of those, which is why it is not enough on its own.
+         *
+         *  See DeterministicScope in module/src/ for the mechanism. */
+        bool deterministic = false;
+
         // Sensor parameters
         double max_sensor_range = 100.0;  // [m]
 

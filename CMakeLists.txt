@@ -86,6 +86,32 @@ mola_add_library(
     mrpt-maps
 )
 
+# Optional, and only used by the `deterministic` parameter: pinning a scan to
+# one thread means pinning the parallel runtimes UNDERNEATH this library, since
+# neither reads our own thread settings. TBB is what mp2p_icp reduces its
+# correspondence list and its Gauss-Newton normal equations with; OpenMP is what
+# KISS-Matcher's ROBINMatching uses. Missing either only costs reproducibility,
+# and DeterministicScope says so at runtime rather than pretending, so neither
+# is REQUIRED here.
+find_package(TBB QUIET)
+if(TBB_FOUND)
+  message(STATUS "TBB found: `deterministic` can pin mp2p_icp's reductions")
+  target_link_libraries(${PROJECT_NAME} PRIVATE TBB::tbb)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE MOLA_SM_LC_HAS_TBB)
+else()
+  message(WARNING "TBB NOT found: the `deterministic` parameter cannot pin "
+                  "mp2p_icp's parallel reductions, so scans stay non-reproducible")
+endif()
+
+find_package(OpenMP QUIET COMPONENTS CXX)
+if(OpenMP_CXX_FOUND)
+  message(STATUS "OpenMP found: `deterministic` can pin KISS-Matcher's OpenMP regions")
+  target_link_libraries(${PROJECT_NAME} PRIVATE OpenMP::OpenMP_CXX)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE MOLA_SM_LC_HAS_OPENMP)
+else()
+  message(STATUS "OpenMP NOT found: `deterministic` cannot pin KISS-Matcher's OpenMP regions")
+endif()
+
 # Check mp2p_icp version for log functor support
 if(mp2p_icp_VERSION VERSION_GREATER_EQUAL "2.6.0")
   target_compile_definitions(${PROJECT_NAME} PRIVATE MP2P_ICP_HAS_LOG_FUNCTOR)
