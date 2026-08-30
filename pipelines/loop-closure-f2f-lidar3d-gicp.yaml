@@ -53,6 +53,23 @@ params:
   # thread per core just oversubscribes; speedup flattens by ~cores/4.
   num_icp_threads: "${LC_NUM_ICP_THREADS|0}"
 
+  # Reproducible scan: same simplemap in, same edges out -- provided the build
+  # could pin the runtimes it relies on. TBB and OpenMP are optional at build
+  # time; if one that is actually in use was not found by CMake, the engine warns
+  # at scan time and the guarantee does not hold.
+  #
+  # Overrides the two settings above (no need to also turn parallel_icp_enabled
+  # off) AND pins the parallel runtimes underneath this library for the duration
+  # of the scan -- mp2p_icp's TBB reductions, which otherwise decide both the
+  # order of the correspondence list and the summation order of the
+  # Gauss-Newton normal equations, and KISS-Matcher's TBB and OpenMP regions.
+  # Turning parallel_icp_enabled off alone reaches none of those.
+  #
+  # Costs wall clock: it is one thread all the way down. Leave it off for live
+  # SLAM, where the answer has to be good rather than repeatable; turn it on for
+  # a batch run whose numbers will be compared against another run.
+  deterministic: "${LC_DETERMINISTIC|false}"
+
   # ===== Odometry Edge Parameters =====
   input_odometry_noise_xyz: "${INPUT_ODOMETRY_NOISE_XYZ_PER_M|0.04}" # [m] Odometry translational noise (per meter of travel if scaled)
   input_odometry_noise_ang: "${INPUT_ODOMETRY_NOISE_ANG_DEG_PER_M|0.05}" # [deg] Odometry angular noise (per meter of travel if scaled)

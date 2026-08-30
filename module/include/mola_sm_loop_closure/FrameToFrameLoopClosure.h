@@ -203,6 +203,45 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
          *  ICP slot (hardware concurrency). Clamped to the number of slots. */
         size_t num_icp_threads = 0;
 
+        /** Master switch for a REPRODUCIBLE scan: the same simplemap in gives
+         *  the same edges out, every time -- PROVIDED this build could pin the
+         *  runtimes it relies on. TBB and OpenMP are both optional at build
+         *  time (see CMakeLists.txt); if CMake did not find one that is
+         *  actually in use, the guarantee does not hold and DeterministicScope
+         *  says so at construction rather than letting a caller discover it by
+         *  diffing two outputs. `fully_pinned()` reports the same thing
+         *  programmatically.
+         *
+         *  Off by default because it costs wall clock -- it is one thread, all
+         *  the way down. Turn it on for a batch/offline run whose numbers are
+         *  going to be compared against another run, and leave it off for live
+         *  SLAM, where the answer only has to be good, not repeatable.
+         *
+         *  It does NOT turn off candidate parallelism -- that was measured and
+         *  is not where the nondeterminism lives. Two things are needed instead.
+         *  It sorts the accepted edges before returning, so a consumer folding
+         *  them into a graph (which typically drops a pair already closed) sees
+         *  a fixed order. And it pins, for the duration of the scan, the
+         *  parallel runtimes UNDERNEATH this library, which read none of this
+         *  library's own thread settings.
+         *
+         *  What is actually left to pin is narrower than it looks, and worth
+         *  knowing before changing any of this. mp2p_icp's pairing reduction was
+         *  the other cause and is fixed at the source (it now joins
+         *  deterministically); with that in place and KISS-Matcher disabled, a
+         *  fully parallel scan is already reproducible. The remaining cause is
+         *  KISS-Matcher, which builds an index list with its own
+         *  concatenation-joined `tbb::parallel_reduce` and uses OpenMP as well --
+         *  and which is vendored from upstream, so pinning it is the available
+         *  lever rather than fixing it.
+         *
+         *  Cost on KITTI-07: 8.5 s unpinned, 40 s here, 92.7 s if candidates are
+         *  serialized too. The output is byte-identical across all thread counts
+         *  tried, which is what "deterministic" is supposed to mean.
+         *
+         *  See DeterministicScope in module/src/ for the mechanism. */
+        bool deterministic = false;
+
         // Sensor parameters
         double max_sensor_range = 100.0;  // [m]
 
