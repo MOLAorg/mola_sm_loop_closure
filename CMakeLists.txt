@@ -34,8 +34,8 @@ find_package(mola_relocalization REQUIRED)
 find_package(mola_yaml REQUIRED)
 find_package(mp2p_icp REQUIRED)
 find_package(mp2p_icp_filters REQUIRED)
-find_package(mrpt-maps REQUIRED)
-find_package(mrpt-tclap REQUIRED)
+find_package(mrpt_maps REQUIRED)
+find_package(CLI11 REQUIRED)
 
 # -----------------------
 # define lib:
@@ -74,7 +74,7 @@ mola_add_library(
     mola::mola_yaml
     mola::mp2p_icp
     mola::mp2p_icp_filters
-    mrpt::maps
+    mrpt::mrpt_maps
 #	PRIVATE_LINK_LIBRARIES
   CMAKE_DEPENDENCIES
     mola_georeferencing
@@ -83,7 +83,7 @@ mola_add_library(
     mola_relocalization
     mp2p_icp
     mp2p_icp_filters
-    mrpt-maps
+    mrpt_maps
 )
 
 # Optional, and only used by the `deterministic` parameter: pinning a scan to
@@ -207,8 +207,8 @@ mola_add_executable(
   SOURCES apps/mola-sm-lc-cli.cpp
   LINK_LIBRARIES
     ${PROJECT_NAME}
-    mrpt::maps
-    mrpt::tclap
+    mrpt::mrpt_maps
+    CLI11::CLI11
 )
 
 

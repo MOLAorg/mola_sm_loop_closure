@@ -39,16 +39,16 @@
 #include <mrpt/obs/CObservationGPS.h>
 #include <mrpt/obs/CObservationPointCloud.h>
 #include <mrpt/obs/CObservationVelodyneScan.h>
-#include <mrpt/opengl/CGridPlaneXY.h>
-#include <mrpt/opengl/CPointCloud.h>
-#include <mrpt/opengl/CSetOfLines.h>
-#include <mrpt/opengl/Scene.h>
-#include <mrpt/opengl/Viewport.h>
-#include <mrpt/opengl/opengl_fonts.h>
 #include <mrpt/poses/CPose3DInterpolator.h>
 #include <mrpt/poses/Lie/SO.h>
 #include <mrpt/poses/gtsam_wrappers.h>
 #include <mrpt/system/filesystem.h>
+#include <mrpt/viz/CGridPlaneXY.h>
+#include <mrpt/viz/CPointCloud.h>
+#include <mrpt/viz/CSetOfLines.h>
+#include <mrpt/viz/Scene.h>
+#include <mrpt/viz/Viewport.h>
+#include <mrpt/viz/opengl_fonts.h>
 
 #ifdef MOLA_HAS_KISS_MATCHER
 #include <kiss_matcher/KISSMatcher.hpp>
@@ -332,20 +332,19 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
         for (const auto& entryNode : cfg["manual_loop_constraints"].asSequenceRange())
         {
             ASSERT_(entryNode.isMap());
-            const auto& entry = entryNode.asMap();
+            const mrpt::containers::yaml entry(entryNode);
 
             Parameters::ManualLoopConstraint mlc;
             ASSERTMSG_(
-                entry.count("timestamp_i") != 0 && entry.count("timestamp_j") != 0 &&
-                    entry.count("sigma_xyz") != 0,
+                entry.has("timestamp_i") && entry.has("timestamp_j") && entry.has("sigma_xyz"),
                 "Each manual_loop_constraints entry must have: timestamp_i, timestamp_j, "
                 "sigma_xyz");
 
-            mlc.timestamp_i = entry.at("timestamp_i").as<double>();
-            mlc.timestamp_j = entry.at("timestamp_j").as<double>();
-            mlc.sigma_xyz   = entry.at("sigma_xyz").as<double>();
-            if (entry.count("trust_as_inlier") != 0)
-                mlc.trust_as_inlier = entry.at("trust_as_inlier").as<bool>();
+            mlc.timestamp_i = entry["timestamp_i"].as<double>();
+            mlc.timestamp_j = entry["timestamp_j"].as<double>();
+            mlc.sigma_xyz   = entry["sigma_xyz"].as<double>();
+            if (entry.has("trust_as_inlier"))
+                mlc.trust_as_inlier = entry["trust_as_inlier"].as<bool>();
 
             params_.manual_loop_constraints.push_back(mlc);
         }
@@ -2149,7 +2148,7 @@ void FrameToFrameLoopClosure::save_3d_scene_initial_files() const
 
     // 1) Initial path edges
     {
-        auto lines = mrpt::opengl::CSetOfLines::Create();
+        auto lines = mrpt::viz::CSetOfLines::Create();
         lines->setLineWidth(params_.scene_path_line_width);
         lines->setColor_u8(pathColor);
 
@@ -2160,7 +2159,7 @@ void FrameToFrameLoopClosure::save_3d_scene_initial_files() const
             lines->appendLine(p0, p1);
         }
 
-        mrpt::opengl::Scene scene;
+        mrpt::viz::Scene scene;
         scene.insert(lines);
         const auto fn = prefix + "initial_path_edges.3Dscene";
         if (scene.saveToFile(fn))
@@ -2175,7 +2174,7 @@ void FrameToFrameLoopClosure::save_3d_scene_initial_files() const
 
     // 2) Initial keyframe points
     {
-        auto pts = mrpt::opengl::CPointCloud::Create();
+        auto pts = mrpt::viz::CPointCloud::Create();
         pts->setPointSize(params_.scene_keyframe_point_size);
         pts->setColor_u8(pathColor);
 
@@ -2185,7 +2184,7 @@ void FrameToFrameLoopClosure::save_3d_scene_initial_files() const
             pts->insertPoint(p);
         }
 
-        mrpt::opengl::Scene scene;
+        mrpt::viz::Scene scene;
         scene.insert(pts);
         const auto fn = prefix + "initial_keyframe_points.3Dscene";
         if (scene.saveToFile(fn))
@@ -2207,7 +2206,7 @@ void FrameToFrameLoopClosure::save_3d_scene_files(const std::string& suffix) con
 
     // 1) Path edges: lines connecting consecutive keyframes
     {
-        auto lines = mrpt::opengl::CSetOfLines::Create();
+        auto lines = mrpt::viz::CSetOfLines::Create();
         lines->setLineWidth(params_.scene_path_line_width);
         lines->setColor_u8(mrpt::img::TColorf(
                                params_.scene_path_color_r, params_.scene_path_color_g,
@@ -2221,7 +2220,7 @@ void FrameToFrameLoopClosure::save_3d_scene_files(const std::string& suffix) con
             lines->appendLine(p0, p1);
         }
 
-        mrpt::opengl::Scene scene;
+        mrpt::viz::Scene scene;
         scene.insert(lines);
         const auto fn = prefix + "path_edges.3Dscene";
         if (scene.saveToFile(fn))
@@ -2236,7 +2235,7 @@ void FrameToFrameLoopClosure::save_3d_scene_files(const std::string& suffix) con
 
     // 2) Keyframe points
     {
-        auto pts = mrpt::opengl::CPointCloud::Create();
+        auto pts = mrpt::viz::CPointCloud::Create();
         pts->setPointSize(params_.scene_keyframe_point_size);
         pts->setColor_u8(mrpt::img::TColorf(
                              params_.scene_path_color_r, params_.scene_path_color_g,
@@ -2249,7 +2248,7 @@ void FrameToFrameLoopClosure::save_3d_scene_files(const std::string& suffix) con
             pts->insertPoint(p);
         }
 
-        mrpt::opengl::Scene scene;
+        mrpt::viz::Scene scene;
         scene.insert(pts);
         const auto fn = prefix + "keyframe_points.3Dscene";
         if (scene.saveToFile(fn))
@@ -2264,7 +2263,7 @@ void FrameToFrameLoopClosure::save_3d_scene_files(const std::string& suffix) con
 
     // 3) Loop closure edges
     {
-        auto lines = mrpt::opengl::CSetOfLines::Create();
+        auto lines = mrpt::viz::CSetOfLines::Create();
         lines->setLineWidth(params_.scene_lc_line_width);
         lines->setColor_u8(mrpt::img::TColorf(
                                params_.scene_lc_color_r, params_.scene_lc_color_g,
@@ -2278,7 +2277,7 @@ void FrameToFrameLoopClosure::save_3d_scene_files(const std::string& suffix) con
             lines->appendLine(p0, p1);
         }
 
-        mrpt::opengl::Scene scene;
+        mrpt::viz::Scene scene;
         scene.insert(lines);
         const auto fn = prefix + "lc_edges.3Dscene";
         if (scene.saveToFile(fn))
@@ -2305,7 +2304,7 @@ void FrameToFrameLoopClosure::save_3d_scene_live_preview(
     ASSERT_(state_.sm);
     const auto& sm = *state_.sm;
 
-    mrpt::opengl::Scene scene;
+    mrpt::viz::Scene scene;
 
     // Ground grid spanning the trajectory bounding box
     {
@@ -2332,14 +2331,14 @@ void FrameToFrameLoopClosure::save_3d_scene_live_preview(
         yMin = std::floor((yMin - MARGIN) / GRID_SPACING) * GRID_SPACING;
         yMax = std::ceil((yMax + MARGIN) / GRID_SPACING) * GRID_SPACING;
 
-        auto grid = mrpt::opengl::CGridPlaneXY::Create(xMin, xMax, yMin, yMax, 0.0f, GRID_SPACING);
+        auto grid = mrpt::viz::CGridPlaneXY::Create(xMin, xMax, yMin, yMax, 0.0f, GRID_SPACING);
         grid->setColor(0.5f, 0.5f, 0.5f, 0.5f);
         scene.insert(grid);
     }
 
     // Trajectory path edges
     {
-        auto lines = mrpt::opengl::CSetOfLines::Create();
+        auto lines = mrpt::viz::CSetOfLines::Create();
         lines->setLineWidth(params_.scene_path_line_width);
         lines->setColor_u8(mrpt::img::TColorf(
                                params_.scene_path_color_r, params_.scene_path_color_g,
@@ -2355,7 +2354,7 @@ void FrameToFrameLoopClosure::save_3d_scene_live_preview(
 
     // Keyframe positions
     {
-        auto pts = mrpt::opengl::CPointCloud::Create();
+        auto pts = mrpt::viz::CPointCloud::Create();
         pts->setPointSize(params_.scene_keyframe_point_size);
         pts->setColor_u8(mrpt::img::TColorf(
                              params_.scene_path_color_r, params_.scene_path_color_g,
@@ -2371,7 +2370,7 @@ void FrameToFrameLoopClosure::save_3d_scene_live_preview(
     // Accepted LC edges (green)
     if (!accepted_lc_edges_.empty())
     {
-        auto lines = mrpt::opengl::CSetOfLines::Create();
+        auto lines = mrpt::viz::CSetOfLines::Create();
         lines->setLineWidth(params_.scene_lc_line_width);
         lines->setColor_u8(mrpt::img::TColorf(
                                params_.scene_lc_color_r, params_.scene_lc_color_g,
@@ -2387,7 +2386,7 @@ void FrameToFrameLoopClosure::save_3d_scene_live_preview(
     // Pending candidate LC edges (orange)
     if (!pendingCandidates.empty())
     {
-        auto lines = mrpt::opengl::CSetOfLines::Create();
+        auto lines = mrpt::viz::CSetOfLines::Create();
         lines->setLineWidth(params_.scene_lc_line_width);
         lines->setColor_u8(
             mrpt::img::TColorf(
@@ -2410,7 +2409,7 @@ void FrameToFrameLoopClosure::save_3d_scene_live_preview(
         const auto gnssFrames = extract_gnss_frames_from_sm(*state_.sm, state_.globalGeoRef);
         if (!gnssFrames.frames.empty())
         {
-            auto pts = mrpt::opengl::CPointCloud::Create();
+            auto pts = mrpt::viz::CPointCloud::Create();
             pts->setPointSize(3.0f);
             pts->setColor_u8(mrpt::img::TColor(0, 220, 220, 128));  // cyan, alpha=50%
             for (const auto& gf : gnssFrames.frames)
@@ -2426,7 +2425,7 @@ void FrameToFrameLoopClosure::save_3d_scene_live_preview(
     {
         auto vp = scene.getViewport("main");
 
-        mrpt::opengl::TFontParams fp;
+        mrpt::viz::TFontParams fp;
         fp.vfont_name  = "sans";
         fp.vfont_scale = 14.0f;
         fp.draw_shadow = true;

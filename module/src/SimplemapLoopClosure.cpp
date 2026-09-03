@@ -29,13 +29,13 @@
 #include <mrpt/obs/CObservationGPS.h>
 #include <mrpt/obs/CObservationPointCloud.h>
 #include <mrpt/obs/CObservationVelodyneScan.h>
-#include <mrpt/opengl/CEllipsoid2D.h>
 #include <mrpt/poses/CPose3DInterpolator.h>
 #include <mrpt/poses/CPoseRandomSampler.h>
 #include <mrpt/poses/Lie/SO.h>
 #include <mrpt/poses/gtsam_wrappers.h>
 #include <mrpt/random/RandomGenerators.h>
 #include <mrpt/system/filesystem.h>
+#include <mrpt/viz/CEllipsoid2D.h>
 
 // MOLA:
 #include <mola_relocalization/relocalization.h>
@@ -50,9 +50,9 @@
 #include <mrpt/graphs/dijkstra.h>
 
 // visualization:
-#include <mrpt/opengl/CBox.h>
-#include <mrpt/opengl/Scene.h>
-#include <mrpt/opengl/graph_tools.h>
+#include <mrpt/viz/CBox.h>
+#include <mrpt/viz/Scene.h>
+#include <mrpt/viz/graph_tools.h>
 
 // GTSAM:
 #include <gtsam/geometry/Point3.h>
@@ -448,7 +448,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             VizOptions opts;
             auto       glMap = build_submaps_visualization(opts);
 
-            mrpt::opengl::Scene scene;
+            mrpt::viz::Scene scene;
             scene.insert(glMap);
 
             scene.saveToFile(params_.debug_files_prefix + "_submaps_initial_pre.3Dscene"s);
@@ -523,7 +523,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         VizOptions opts;
         auto       glMap = build_submaps_visualization(opts);
 
-        mrpt::opengl::Scene scene;
+        mrpt::viz::Scene scene;
         scene.insert(glMap);
 
         scene.saveToFile(params_.debug_files_prefix + "_submaps_initial.3Dscene"s);
@@ -692,7 +692,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         VizOptions opts;
         auto       glMap = build_submaps_visualization(opts);
 
-        mrpt::opengl::Scene scene;
+        mrpt::viz::Scene scene;
         scene.insert(glMap);
 
         scene.saveToFile(params_.debug_files_prefix + "_submaps_final.3Dscene");
@@ -1045,17 +1045,17 @@ void SimplemapLoopClosure::updatePipelineDynamicVariablesForKeyframe(
     ps.realize();
 }
 
-mrpt::opengl::CSetOfObjects::Ptr SimplemapLoopClosure::build_submaps_visualization(
+mrpt::viz::CSetOfObjects::Ptr SimplemapLoopClosure::build_submaps_visualization(
     const VizOptions& p) const
 {
-    auto glViz = mrpt::opengl::CSetOfObjects::Create();
+    auto glViz = mrpt::viz::CSetOfObjects::Create();
 
     // Show graph:
     mrpt::containers::yaml extra_params;
     extra_params["show_ID_labels"] = true;
     extra_params["show_edges"]     = p.show_edges;
 
-    auto glGraph = mrpt::opengl::graph_tools::graph_visualize(state_.submapsGraph, extra_params);
+    auto glGraph = mrpt::viz::graph_tools::graph_visualize(state_.submapsGraph, extra_params);
 
     // Show at an elevated height:
     glGraph->setLocation(0, 0, 10);
@@ -1065,11 +1065,11 @@ mrpt::opengl::CSetOfObjects::Ptr SimplemapLoopClosure::build_submaps_visualizati
     // Boxes and mini-maps for each submap:
     for (const auto& [id, submap] : state_.submaps)
     {
-        auto glSubmap = mrpt::opengl::CSetOfObjects::Create();
+        auto glSubmap = mrpt::viz::CSetOfObjects::Create();
 
         if (p.show_bbox)
         {
-            auto glBox = mrpt::opengl::CBox::Create();
+            auto glBox = mrpt::viz::CBox::Create();
             glBox->setWireframe(true);
             auto bbox = submap.bbox;
             glBox->setBoxCorners(bbox.min, bbox.max);
@@ -1173,12 +1173,12 @@ SimplemapLoopClosure::PotentialLoopOutput SimplemapLoopClosure::find_next_loop_c
                 "%s/tree_root_%04u_iter_%02i.3Dscene", d.c_str(), (unsigned int)root_id, tree_iter);
             std::cout << "[SAVE_TREES] Saving tree : " << sFil << "\n";
 
-            mrpt::opengl::Scene scene;
+            mrpt::viz::Scene scene;
 
             for (const auto& [id, m] : submapPoses)
             {
                 {
-                    auto glCorner = mrpt::opengl::stock_objects::CornerXYZSimple(2.5f);
+                    auto glCorner = mrpt::viz::stock_objects::CornerXYZSimple(2.5f);
                     glCorner->enableShowName();
 
                     std::string label = "#"s + std::to_string(id);
@@ -1195,7 +1195,7 @@ SimplemapLoopClosure::PotentialLoopOutput SimplemapLoopClosure::find_next_loop_c
                 }
 
                 {
-                    auto glEllip = mrpt::opengl::CEllipsoid2D::Create();
+                    auto glEllip = mrpt::viz::CEllipsoid2D::Create();
                     glEllip->setCovMatrix(m.pose.cov.asEigen().block<2, 2>(0, 0));
                     glEllip->setLocation(m.pose.mean.translation());
                     glEllip->setQuantiles(2.0);

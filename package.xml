@@ -25,8 +25,8 @@
   <depend>mola_relocalization</depend>
   <depend>mola_yaml</depend>
   <depend>mp2p_icp</depend>
-  <depend>mrpt_libmaps</depend>
-  <depend>mrpt_libtclap</depend>
+  <depend>mrpt_maps</depend>
+  <depend>cli11</depend>
   <depend>tbb</depend>
 
   <doc_depend>doxygen</doc_depend>
