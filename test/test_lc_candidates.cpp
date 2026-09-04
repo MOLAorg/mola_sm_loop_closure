@@ -17,12 +17,14 @@
 
 namespace
 {
+/** The named environment variable, or an empty string when it is unset. */
 std::string getenv_or_empty(const char* name)
 {
     const char* v = std::getenv(name);
     return v != nullptr ? std::string(v) : std::string();
 }
 
+/** Mean pose of one keyframe of the map. */
 mrpt::poses::CPose3D kf_pose(const mrpt::maps::CSimpleMap& sm, uint32_t i)
 {
     return sm.get(i).pose->getMeanVal();
@@ -46,6 +48,15 @@ constexpr double MAX_EDGE_ROTATION_ERROR    = 5.0;  // [deg]
 constexpr double REVISIT_SEPARATION = 1.5;  // [m]
 }  // namespace
 
+TEST(MolaSmLcCandidates, default_candidate_floor_admits_revisits)
+{
+    // The candidate distance floor is measured in the current estimate, so any
+    // non-zero value rejects revisits outright on an accurate odometry. Pinned
+    // here because it is a contract of the class, not a tuning choice.
+    const mola::FrameToFrameLoopClosure::Parameters defaults;
+    EXPECT_EQ(defaults.min_distance_between_frames, 0.0);
+}
+
 TEST(MolaSmLcCandidates, F2F_warehouse_revisits_are_proposed)
 {
     const std::string pipeline = getenv_or_empty("LC_PIPELINE_YAML");
@@ -59,6 +70,10 @@ TEST(MolaSmLcCandidates, F2F_warehouse_revisits_are_proposed)
     mrpt::maps::CSimpleMap sm;
     ASSERT_TRUE(sm.loadFromFile(input_sm)) << "Failed to load simplemap: " << input_sm;
     ASSERT_GT(sm.size(), 0U);
+
+    // Clear the candidate-floor hook before loading, so what is exercised is
+    // the pipeline's own default and not whatever the environment supplies.
+    ::unsetenv("MIN_LC_DISTANCE");
 
     mola::FrameToFrameLoopClosure lc;
     auto                          cfg = mola::load_yaml_file(pipeline);
