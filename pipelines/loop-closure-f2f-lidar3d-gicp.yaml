@@ -18,7 +18,10 @@ params:
   gnss_edges_uncertainty_multiplier: "${GNSS_EDGES_UNCERTAINTY_MULTIPLIER|1.0}"
 
   # ===== Loop Closure Candidate Selection =====
-  min_distance_between_frames: "${MIN_LC_DISTANCE|2.0}" # [m] Min spatial separation
+  # Min spatial separation, in the CURRENT ESTIMATE, so a non-zero value
+  # rejects real revisits on any odometry accurate enough to place them
+  # where they are. Keyframe adjacency is min_frames_between_lc's job.
+  min_distance_between_frames: "${MIN_LC_DISTANCE|0.0}" # [m]
   max_distance_for_lc_candidate: "${MAX_LC_DISTANCE|50.0}" # [m] Max distance to consider
   max_lc_candidates: "${MAX_LC_CANDIDATES|20}" # Maximum candidates per iteration
   min_frames_between_lc: "${MIN_FRAMES_BETWEEN_LC|20}" # Minimum frame index separation
