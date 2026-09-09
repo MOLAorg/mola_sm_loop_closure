@@ -97,8 +97,19 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         /** Sigma [deg] for the IMU gravity-alignment factors (see use_imu_gravity). */
         double imu_gravity_sigma_deg = 3.0;
 
-        // Loop closure candidate selection
-        double min_distance_between_frames   = 20.0;  // [m] minimum separation for LC
+        // Loop closure candidate selection. Both bounds apply to the
+        // separation of the two keyframes IN THE CURRENT ESTIMATE, so they only
+        // mean what they say to the extent that the estimate has drifted.
+        //
+        // A revisit is a return to the same place: it appears displaced only
+        // through accumulated drift, and on an accurate estimate it appears
+        // where it is, at nearly zero separation. A non-zero floor therefore
+        // discards real loop closures first, so it defaults to zero; keyframe
+        // adjacency is min_frames_between_lc's job, and that guard does not
+        // depend on the estimate's quality. The ceiling has no such
+        // estimate-free substitute and must be set to the drift the odometry
+        // actually has.
+        double min_distance_between_frames   = 0.0;  // [m] minimum separation for LC
         double max_distance_for_lc_candidate = 50.0;  // [m] maximum distance to consider
         size_t max_lc_candidates             = 100;  // maximum candidates to check
         size_t min_frames_between_lc         = 50;  // minimum frame separation

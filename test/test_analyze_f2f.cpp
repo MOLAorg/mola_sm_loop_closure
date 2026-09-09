@@ -43,10 +43,10 @@ TEST(MolaSmLcAnalyze, F2F_warehouse)
         // No debug artifacts on disk.
         cfg["params"]["save_trajectory_files"] = false;
         cfg["params"]["save_3d_scene_files"]   = false;
-        // Accept any candidate that yields an ICP result so the edge-building
-        // path is exercised: this dataset has valid loop-closure candidates but
-        // their ICP goodness sits below the production threshold, so a strict
-        // gate would accept none and leave nothing to check.
+        // Accept any candidate that yields an ICP result, so the structural
+        // checks below see the whole edge-building path rather than only the
+        // few candidates the production gate keeps. That gate is exercised on
+        // its own in test_lc_candidates.
         cfg["params"]["min_icp_goodness"] = 0.0;
     }
     lc.initialize(cfg);
