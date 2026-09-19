@@ -35,6 +35,7 @@ find_package(mola_yaml REQUIRED)
 find_package(mp2p_icp REQUIRED)
 find_package(mp2p_icp_filters REQUIRED)
 find_package(mrpt_maps REQUIRED)
+find_package(mrpt_viz REQUIRED)
 find_package(CLI11 REQUIRED)
 
 # -----------------------
@@ -75,6 +76,7 @@ mola_add_library(
     mola::mp2p_icp
     mola::mp2p_icp_filters
     mrpt::mrpt_maps
+    mrpt::mrpt_viz
 #	PRIVATE_LINK_LIBRARIES
   CMAKE_DEPENDENCIES
     mola_georeferencing
@@ -84,6 +86,7 @@ mola_add_library(
     mp2p_icp
     mp2p_icp_filters
     mrpt_maps
+    mrpt_viz
 )
 
 # Optional, and only used by the `deterministic` parameter: pinning a scan to
