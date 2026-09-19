@@ -23,123 +23,81 @@
 
 #include <mola_sm_loop_closure/LoopClosureInterface.h>
 #include <mola_yaml/yaml_helpers.h>
-#include <mrpt/3rdparty/tclap/CmdLine.h>
 #include <mrpt/containers/yaml.h>
 #include <mrpt/io/lazy_load_path.h>
 #include <mrpt/system/filesystem.h>
 #include <mrpt/system/os.h>
 
+#include <CLI/CLI.hpp>
+
 namespace
 {
 
 // CLI flags:
-struct Cli
+CLI::App cmd{"mola-sm-lc-cli"};
+
+std::string argInput  = "map.simplemap";
+std::string argOutput = "corrected_map.simplemap";
+std::string argPlugins;
+std::string argPipeline         = "loop_closure.yaml";
+std::string arg_verbosity_level = "INFO";
+std::string arg_algo            = "mola::SimplemapLoopClosure";
+std::string arg_lazy_load_base_dir;
+
+CLI::Option* optPlugins;
+CLI::Option* optVerbosityLevel;
+CLI::Option* optLazyLoadBaseDir;
+
+void run_sm_to_mm()
 {
-    TCLAP::CmdLine cmd{"mola-sm-lc-cli"};
-
-    TCLAP::ValueArg<std::string> argInput{
-        "i", "input", "Input .simplemap file", true, "map.simplemap", "map.simplemap", cmd};
-
-    TCLAP::ValueArg<std::string> argOutput{
-        "o",
-        "output",
-        "Output .simplemap file to write to",
-        true,
-        "corrected_map.simplemap",
-        "corrected_map.simplemap",
-        cmd};
-
-    TCLAP::ValueArg<std::string> argPlugins{
-        "l",
-        "load-plugins",
-        "One or more (comma separated) *.so files to load as plugins, e.g. "
-        "defining new CMetricMap classes",
-        false,
-        "foobar.so",
-        "foobar.so",
-        cmd};
-
-    TCLAP::ValueArg<std::string> argPipeline{
-        "p",  "pipeline",          "YAML file with the loop closure algorithm configuration file.",
-        true, "loop_closure.yaml", "loop_closure.yaml",
-        cmd};
-
-    TCLAP::ValueArg<std::string> arg_verbosity_level{
-        "v",    "verbosity", "Verbosity level: ERROR|WARN|INFO|DEBUG (Default: INFO)", false, "",
-        "INFO", cmd};
-
-    TCLAP::ValueArg<std::string> arg_algo{
-        "a",
-        "algorithm",
-        "C++ class name of the loop-closure algorithm to use.",
-        false,
-        "mola::SimplemapLoopClosure",
-        "ClassName",
-        cmd};
-
-    TCLAP::ValueArg<std::string> arg_lazy_load_base_dir{
-        "",
-        "externals-dir",
-        "Lazy-load base directory for datasets with externally-stored "
-        "observations. If not defined, the program will try anyway to "
-        "autodetect any directory side-by-side to the input .simplemap with "
-        "the postfix '_Images' and try to use it as lazy-load base directory.",
-        false,
-        "dataset_Images",
-        "<ExternalsDirectory>",
-        cmd};
-};
-
-void run_sm_to_mm(Cli& cli)
-{
-    if (cli.argPlugins.isSet())
+    if (optPlugins->count() > 0)
     {
         std::string sErrs;
-        bool        ok = mrpt::system::loadPluginModules(cli.argPlugins.getValue(), sErrs);
+        bool        ok = mrpt::system::loadPluginModules(argPlugins, sErrs);
         if (!ok)
         {
-            std::cerr << "Errors loading plugins: " << cli.argPlugins.getValue() << "\n";
+            std::cerr << "Errors loading plugins: " << argPlugins << "\n";
             throw std::runtime_error(sErrs.c_str());
         }
     }
 
-    const auto filYaml = cli.argPipeline.getValue();
+    const auto& filYaml = argPipeline;
     ASSERT_FILE_EXISTS_(filYaml);
     auto yamlData = mola::load_yaml_file(filYaml);
 
-    const auto& filSM  = cli.argInput.getValue();
-    const auto& filOut = cli.argOutput.getValue();
+    const auto& filSM  = argInput;
+    const auto& filOut = argOutput;
 
     mrpt::maps::CSimpleMap sm;
 
     std::cout << "[mola-sm-lc-cli] Reading simplemap from: '" << filSM << "'...\n";
 
-    sm.loadFromFile(filSM);
+    bool loadOk = sm.loadFromFile(filSM);
+    ASSERT_(loadOk);
 
     std::cout << "[mola-sm-lc-cli] Done read simplemap with " << sm.size() << " keyframes.\n";
     ASSERT_(!sm.empty());
 
     // Create algorithm:
-    auto algoPtr = mrpt::rtti::classFactory(cli.arg_algo.getValue());
+    auto algoPtr = mrpt::rtti::classFactory(arg_algo);
     if (!algoPtr)
     {
-        THROW_EXCEPTION_FMT(
-            "Unregistered algorithm C++ class: '%s'", cli.arg_algo.getValue().c_str());
+        THROW_EXCEPTION_FMT("Unregistered algorithm C++ class: '%s'", arg_algo.c_str());
     }
     auto lcPtr = std::dynamic_pointer_cast<mola::LoopClosureInterface>(algoPtr);
     if (!lcPtr)
     {
         THROW_EXCEPTION_FMT(
             "Algorithm C++ class seems not to be an implementation of 'LoopClosureInterface': '%s'",
-            cli.arg_algo.getValue().c_str());
+            arg_algo.c_str());
     }
     auto& lc = *lcPtr;
 
     mrpt::system::VerbosityLevel logLevel = mrpt::system::LVL_INFO;
-    if (cli.arg_verbosity_level.isSet())
+    if (optVerbosityLevel->count() > 0)
     {
         using vl = mrpt::typemeta::TEnumType<mrpt::system::VerbosityLevel>;
-        logLevel = vl::name2value(cli.arg_verbosity_level.getValue());
+        logLevel = vl::name2value(arg_verbosity_level);
     }
 
     // Set "params.debug_files_prefix" so generated .tum files, etc. have the expected prefix:
@@ -158,9 +116,9 @@ void run_sm_to_mm(Cli& cli)
 
     // try to detect lazy load:
     std::string lazyLoadBaseDir;
-    if (cli.arg_lazy_load_base_dir.isSet())
+    if (optLazyLoadBaseDir->count() > 0)
     {  // use provided dir:
-        lazyLoadBaseDir = cli.arg_lazy_load_base_dir.getValue();
+        lazyLoadBaseDir = arg_lazy_load_base_dir;
     }
     else
     {  // try to autodetect:
@@ -187,7 +145,8 @@ void run_sm_to_mm(Cli& cli)
     // save output:
     std::cout << "[mola-sm-lc-cli] Writing output map to: '" << filOut << "'...\n";
 
-    sm.saveToFile(filOut);
+    bool saveOk = sm.saveToFile(filOut);
+    ASSERT_(saveOk);
 
     std::cout << "[mola-sm-lc-cli] Done.\n";
 }
@@ -195,17 +154,39 @@ void run_sm_to_mm(Cli& cli)
 
 int main(int argc, char** argv)
 {
+    cmd.add_option("-i,--input", argInput, "Input .simplemap file")->required();
+
+    cmd.add_option("-o,--output", argOutput, "Output .simplemap file to write to")->required();
+
+    optPlugins = cmd.add_option(
+        "-l,--load-plugins", argPlugins,
+        "One or more (comma separated) *.so files to load as plugins, e.g. "
+        "defining new CMetricMap classes");
+
+    cmd.add_option(
+           "-p,--pipeline", argPipeline,
+           "YAML file with the loop closure algorithm configuration file.")
+        ->required();
+
+    optVerbosityLevel = cmd.add_option(
+        "-v,--verbosity", arg_verbosity_level,
+        "Verbosity level: ERROR|WARN|INFO|DEBUG (Default: INFO)");
+
+    cmd.add_option(
+        "-a,--algorithm", arg_algo, "C++ class name of the loop-closure algorithm to use.");
+
+    optLazyLoadBaseDir = cmd.add_option(
+        "--externals-dir", arg_lazy_load_base_dir,
+        "Lazy-load base directory for datasets with externally-stored "
+        "observations. If not defined, the program will try anyway to "
+        "autodetect any directory side-by-side to the input .simplemap with "
+        "the postfix '_Images' and try to use it as lazy-load base directory.");
+
+    CLI11_PARSE(cmd, argc, argv);
+
     try
     {
-        Cli cli;
-
-        // Parse arguments:
-        if (!cli.cmd.parse(argc, argv))
-        {
-            return 1;  // should exit.
-        }
-
-        run_sm_to_mm(cli);
+        run_sm_to_mm();
     }
     catch (const std::exception& e)
     {

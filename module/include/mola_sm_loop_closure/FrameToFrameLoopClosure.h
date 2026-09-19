@@ -27,10 +27,10 @@
 #include <mrpt/core/WorkerThreadsPool.h>
 #include <mrpt/maps/CSimpleMap.h>
 #include <mrpt/math/TPoint3D.h>
-#include <mrpt/opengl/CSetOfObjects.h>
 #include <mrpt/system/CTimeLogger.h>
 #include <mrpt/topography/data_types.h>
 #include <mrpt/typemeta/TEnumType.h>
+#include <mrpt/viz/CSetOfObjects.h>
 
 #include <list>
 #include <mutex>

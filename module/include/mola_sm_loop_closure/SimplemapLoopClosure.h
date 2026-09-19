@@ -28,8 +28,8 @@
 #include <mrpt/graphs/CNetworkOfPoses.h>
 #include <mrpt/maps/CSimpleMap.h>
 #include <mrpt/maps/CSimplePointsMap.h>
-#include <mrpt/opengl/CSetOfObjects.h>
 #include <mrpt/system/CTimeLogger.h>
+#include <mrpt/viz/CSetOfObjects.h>
 
 #include <future>
 #include <set>
@@ -208,7 +208,7 @@ class SimplemapLoopClosure : public mola::LoopClosureInterface
         bool        show_edges      = true;
     };
 
-    mrpt::opengl::CSetOfObjects::Ptr build_submaps_visualization(const VizOptions& p) const;
+    mrpt::viz::CSetOfObjects::Ptr build_submaps_visualization(const VizOptions& p) const;
 
     mrpt::poses::CPose3D keyframe_pose_in_simplemap(keyframe_id_t kfId) const;
     mrpt::poses::CPose3D keyframe_relative_pose_in_simplemap(

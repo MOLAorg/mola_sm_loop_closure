@@ -21,14 +21,12 @@ TEST(MolaSmLcCli, F2F_GICP_warehouse)
     const std::string input_sm  = getenv_or_empty("LC_INPUT_SIMPLEMAP");
     const std::string output_sm = getenv_or_empty("LC_OUTPUT_SIMPLEMAP");
 
-    ASSERT_FALSE(pipeline.empty())  << "LC_PIPELINE_YAML env var not set";
-    ASSERT_FALSE(input_sm.empty())  << "LC_INPUT_SIMPLEMAP env var not set";
+    ASSERT_FALSE(pipeline.empty()) << "LC_PIPELINE_YAML env var not set";
+    ASSERT_FALSE(input_sm.empty()) << "LC_INPUT_SIMPLEMAP env var not set";
     ASSERT_FALSE(output_sm.empty()) << "LC_OUTPUT_SIMPLEMAP env var not set";
 
-    ASSERT_TRUE(std::filesystem::exists(pipeline))
-        << "Pipeline YAML not found: " << pipeline;
-    ASSERT_TRUE(std::filesystem::exists(input_sm))
-        << "Input simplemap not found: " << input_sm;
+    ASSERT_TRUE(std::filesystem::exists(pipeline)) << "Pipeline YAML not found: " << pipeline;
+    ASSERT_TRUE(std::filesystem::exists(input_sm)) << "Input simplemap not found: " << input_sm;
 
     // Remove any leftover output from a previous run
     std::filesystem::remove(output_sm);
@@ -36,9 +34,14 @@ TEST(MolaSmLcCli, F2F_GICP_warehouse)
     const std::string cmd =
         "mola-sm-lc-cli"
         " -a mola::FrameToFrameLoopClosure"
-        " -p \"" + pipeline  + "\""
-        " -i \"" + input_sm  + "\""
-        " -o \"" + output_sm + "\"";
+        " -p \"" +
+        pipeline +
+        "\""
+        " -i \"" +
+        input_sm +
+        "\""
+        " -o \"" +
+        output_sm + "\"";
 
     const int ret = std::system(cmd.c_str());
     EXPECT_EQ(ret, 0) << "CLI returned non-zero exit code. Command was:\n" << cmd;
