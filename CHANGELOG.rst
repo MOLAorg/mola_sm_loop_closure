@@ -2,8 +2,8 @@
 Changelog for package mola_sm_loop_closure
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+1.3.0 (2026-10-01)
+------------------
 * ci: make scripts/release.py identical across repos by auto-discovering packages
 * ci: add GitHub release workflow on version tags
 * Merge pull request `#25 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/25>`_ from MOLAorg/feat/mrpt3
