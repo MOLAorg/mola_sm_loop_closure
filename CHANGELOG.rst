@@ -2,6 +2,49 @@
 Changelog for package mola_sm_loop_closure
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* ci: make scripts/release.py identical across repos by auto-discovering packages
+* ci: add GitHub release workflow on version tags
+* Merge pull request `#25 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/25>`_ from MOLAorg/feat/mrpt3
+* Declare mrpt_viz as a direct dependency; clang-format test file
+* Merge remote-tracking branch 'origin/develop' into feat/mrpt3
+* fix: the loop-closure candidate floor rejects real revisits (`#24 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/24>`_)
+* Port to MRPT 3.x: opengl->viz, TCLAP->CLI11, yaml associativity
+* Merge pull request `#23 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/23>`_ from MOLAorg/feat/deterministic-scan
+* CI: fail-fast: false, so one broken distro stops masking the others
+* docs: the reproducibility guarantee is conditional on the build, say so
+* perf: keep candidate parallelism in deterministic scans (92.7 s -> 40 s)
+* feat: a `deterministic` mode that makes a scan reproducible
+* fix: listed mrpt::gui as dependency but could be removed
+* chore: silent 3rdparty code warnings
+* Merge pull request `#22 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/22>`_ from MOLAorg/feat/lc-analyze-progress-stats
+* perf: keep rejected candidates lock-free in parallel analyze()
+* feat: report per-scan progress and stats from analyze()
+* Merge pull request `#21 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/21>`_ from MOLAorg/fix/imu-frames-deprecation-warning
+* style: apply clang-format after IMU-frames ifdef edit
+* fix: silence mola_georeferencing IMU extraction deprecation warning
+* Merge pull request `#20 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/20>`_ from MOLAorg/feat/lc-parallel-icp
+* feat: parallel per-candidate ICP in the F2F loop-closure detector
+* Merge pull request `#19 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/19>`_ from MOLAorg/feat/lc-detection-robustness
+* fix: gate KISS-Matcher guesses on the final inlier count
+* feat: let analyze() callers exclude already-closed pairs from candidates
+* fix: skip a failing loop-closure candidate instead of aborting the scan
+* dont throw on empty scan frames
+* expose MOLA_DESKEW_IGNORE_NO_TIMESTAMPS
+* cmake: silent 3rdparty header warnings
+* remove leftover mrpt::gui dependency
+* Merge pull request `#18 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/18>`_ from MOLAorg/feat/f2f-use-imu-align
+* feat: f2f algo uses imu acc for alignment
+* Merge branch 'feat/lc-detector-analyze-api' into develop
+* fix: skip observation unload during read-only analyze()
+* Merge pull request `#17 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/17>`_ from MOLAorg/feat/lc-detector-analyze-api
+* fix: keep analyze() read-only and leak-free
+* fix: guard build_initial_graph against stale graph state
+* feat: streaming, incremental and abortable analyze()
+* feat: detector-only analyze() API for loop closure
+* Contributors: Jose Luis Blanco Claraco, Jose Luis Blanco-Claraco
+
 1.2.2 (2026-06-17)
 ------------------
 * update robin and kiss-matcher submodules
