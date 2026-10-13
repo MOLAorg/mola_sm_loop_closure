@@ -27,6 +27,7 @@
 #include <mrpt/obs/CObservation3DRangeScan.h>
 #include <mrpt/obs/CObservationComment.h>
 #include <mrpt/obs/CObservationGPS.h>
+#include <mrpt/obs/CObservationIMU.h>
 #include <mrpt/obs/CObservationPointCloud.h>
 #include <mrpt/obs/CObservationVelodyneScan.h>
 #include <mrpt/poses/CPose3DInterpolator.h>
@@ -1897,6 +1898,13 @@ mp2p_icp::metric_map_t::Ptr SimplemapLoopClosure::impl_get_submap_local_map(cons
 
         for (const auto& o : *sf)
         {
+            // IMU readings stored in keyframes (at most one each, kept for
+            // georeferencing) must not reach the de-skew: it uses the velocity buffer
+            // the odometry saved in the keyframe metadata, loaded above.
+            if (IS_CLASS(*o, mrpt::obs::CObservationIMU))
+            {
+                continue;
+            }
             mp2p_icp_filters::apply_generators(pts.pipeline.obs_generators, *o, *observation);
         }
 

@@ -37,6 +37,7 @@
 #include <mrpt/obs/CObservation3DRangeScan.h>
 #include <mrpt/obs/CObservationComment.h>
 #include <mrpt/obs/CObservationGPS.h>
+#include <mrpt/obs/CObservationIMU.h>
 #include <mrpt/obs/CObservationPointCloud.h>
 #include <mrpt/obs/CObservationVelodyneScan.h>
 #include <mrpt/poses/CPose3DInterpolator.h>
@@ -1895,6 +1896,13 @@ mp2p_icp::metric_map_t::Ptr FrameToFrameLoopClosure::generate_frame_pointcloud(
         // Generate point cloud from observations
         for (const auto& obs : *sf)
         {
+            // IMU readings stored in keyframes (at most one each, kept for
+            // georeferencing) must not reach the de-skew: it uses the velocity buffer
+            // the odometry saved in the keyframe metadata, loaded above.
+            if (IS_CLASS(*obs, mrpt::obs::CObservationIMU))
+            {
+                continue;
+            }
             mp2p_icp_filters::apply_generators(pts.pipeline.obs_generators, *obs, *observation);
         }
     }
