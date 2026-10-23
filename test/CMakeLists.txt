@@ -20,7 +20,10 @@ set(LC_PIPELINE_YAML ${mola_sm_loop_closure_SOURCE_DIR}/pipelines/loop-closure-f
 set(WAREHOUSE_SIMPLEMAP "${mola_test_datasets_DIR}/../datasets/simplemaps/mvsim-warehouse01.simplemap")
 set(OUTPUT_SIMPLEMAP "${CMAKE_CURRENT_BINARY_DIR}/tmp-warehouse-test.simplemap")
 
+# The CLI from this build tree, not from PATH: a Debian package build runs the tests before
+# installing, so mola-sm-lc-cli is not on PATH there.
 ament_add_gtest(test_cli_f2f_gicp test_cli_f2f_gicp.cpp
+  ENV LC_CLI=$<TARGET_FILE:mola-sm-lc-cli>
   ENV LC_PIPELINE_YAML=${LC_PIPELINE_YAML}
   ENV LC_INPUT_SIMPLEMAP=${WAREHOUSE_SIMPLEMAP}
   ENV LC_OUTPUT_SIMPLEMAP=${OUTPUT_SIMPLEMAP}

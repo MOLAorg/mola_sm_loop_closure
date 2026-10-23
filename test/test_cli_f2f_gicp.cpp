@@ -17,6 +17,12 @@ static std::string getenv_or_empty(const char* name)
 
 TEST(MolaSmLcCli, F2F_GICP_warehouse)
 {
+    // The CLI built with this package (set by CMake), else the one on PATH:
+    std::string cli = getenv_or_empty("LC_CLI");
+    if (cli.empty())
+    {
+        cli = "mola-sm-lc-cli";
+    }
     const std::string pipeline  = getenv_or_empty("LC_PIPELINE_YAML");
     const std::string input_sm  = getenv_or_empty("LC_INPUT_SIMPLEMAP");
     const std::string output_sm = getenv_or_empty("LC_OUTPUT_SIMPLEMAP");
@@ -31,17 +37,17 @@ TEST(MolaSmLcCli, F2F_GICP_warehouse)
     // Remove any leftover output from a previous run
     std::filesystem::remove(output_sm);
 
-    const std::string cmd =
-        "mola-sm-lc-cli"
-        " -a mola::FrameToFrameLoopClosure"
-        " -p \"" +
-        pipeline +
-        "\""
-        " -i \"" +
-        input_sm +
-        "\""
-        " -o \"" +
-        output_sm + "\"";
+    const std::string cmd = "\"" + cli +
+                            "\""
+                            " -a mola::FrameToFrameLoopClosure"
+                            " -p \"" +
+                            pipeline +
+                            "\""
+                            " -i \"" +
+                            input_sm +
+                            "\""
+                            " -o \"" +
+                            output_sm + "\"";
 
     const int ret = std::system(cmd.c_str());
     EXPECT_EQ(ret, 0) << "CLI returned non-zero exit code. Command was:\n" << cmd;
