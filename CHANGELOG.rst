@@ -2,8 +2,8 @@
 Changelog for package mola_sm_loop_closure
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+1.3.1 (2026-10-27)
+------------------
 * Merge pull request `#27 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/27>`_ from MOLAorg/fix/voxelmap-prob-miss
   Pin CVoxelMap prob_miss in loop closure pipelines (no behavior change)
 * Loop closure pipelines: pin CVoxelMap prob_miss to the weakest miss they were tuned with
