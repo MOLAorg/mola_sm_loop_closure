@@ -2,6 +2,17 @@
 Changelog for package mola_sm_loop_closure
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Merge pull request `#27 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/27>`_ from MOLAorg/fix/voxelmap-prob-miss
+  Pin CVoxelMap prob_miss in loop closure pipelines (no behavior change)
+* Loop closure pipelines: pin CVoxelMap prob_miss to the weakest miss they were tuned with
+* Merge pull request `#26 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/26>`_ from MOLAorg/fix/f2f-test-cli-path
+  test_cli_f2f_gicp: use the CLI of this build tree, not PATH
+* Update CLA: define Project Owners, Spanish law, fix patent and employer clauses
+* Keyframe IMU readings never reach the de-skew
+* Contributors: Jose Luis Blanco-Claraco
+
 1.3.0 (2026-10-01)
 ------------------
 * ci: make scripts/release.py identical across repos by auto-discovering packages
