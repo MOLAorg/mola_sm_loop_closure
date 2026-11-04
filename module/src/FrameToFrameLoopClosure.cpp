@@ -1094,6 +1094,21 @@ auto FrameToFrameLoopClosure::
     // Single vector for non-stratified approaches
     std::vector<LoopCandidate> candidates;
 
+    // Block pairs holding an excluded pair: their other pairs rank after those
+    // of the rest (all scores are in [0,1]), so places already closed do not
+    // use up the candidate budget of the ones never checked.
+    std::set<std::pair<frame_id_t, frame_id_t>> excludedBlocks;
+    if (excludedFramePairs != nullptr)
+    {
+        for (const auto& [a, b] : *excludedFramePairs)
+        {
+            const auto ga = frame_group_of(a, params_.min_frames_between_lc);
+            const auto gb = frame_group_of(b, params_.min_frames_between_lc);
+            excludedBlocks.insert({std::min(ga, gb), std::max(ga, gb)});
+        }
+    }
+    constexpr double EXCLUDED_BLOCK_SCORE_OFFSET = 1.0;
+
     // ========================================================================
     // STEP 1: Generate and score all candidates
     // ========================================================================
@@ -1185,6 +1200,12 @@ auto FrameToFrameLoopClosure::
                     lc.score               = score_multi_objective(args);
                     break;
                 }
+            }
+
+            lc.in_excluded_block = excludedBlocks.count(IDs) != 0;
+            if (lc.in_excluded_block)
+            {
+                lc.score -= EXCLUDED_BLOCK_SCORE_OFFSET;
             }
 
             // Add to appropriate container
@@ -1353,6 +1374,10 @@ auto FrameToFrameLoopClosure::
                 args.wDiv              = params_.lc_weight_diversity;
                 args.wCov              = params_.lc_weight_coverage;
                 lc.score               = score_multi_objective(args);
+                if (lc.in_excluded_block)
+                {
+                    lc.score -= EXCLUDED_BLOCK_SCORE_OFFSET;
+                }
             }
         }
     }

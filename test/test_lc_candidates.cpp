@@ -12,10 +12,13 @@
 #include <mrpt/poses/Lie/SO.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <iostream>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 
@@ -164,10 +167,15 @@ TEST(MolaSmLcCandidates, F2F_excluded_pairs_are_not_proposed_again)
 
     // A consumer closes the loops of a first pass, then asks again excluding them
     // (by keyframe index, as the options document):
-    const auto first = make_engine(pipeline)->analyze(sm);
+    mola::LoopClosureAnalyzeStats   firstStats;
+    mola::LoopClosureAnalyzeOptions firstOpts;
+    firstOpts.out_stats = &firstStats;
+    const auto first    = make_engine(pipeline)->analyze(sm, firstOpts);
     ASSERT_GE(first.size(), 1U);
 
+    mola::LoopClosureAnalyzeStats   secondStats;
     mola::LoopClosureAnalyzeOptions opts;
+    opts.out_stats = &secondStats;
     for (const auto& e : first)
     {
         opts.exclude_pairs.insert({std::min(e.from, e.to), std::max(e.from, e.to)});
@@ -180,4 +188,12 @@ TEST(MolaSmLcCandidates, F2F_excluded_pairs_are_not_proposed_again)
         EXPECT_EQ(opts.exclude_pairs.count(key), 0U)
             << "excluded pair " << key.first << " <-> " << key.second << " proposed again";
     }
+
+    // Only the exact pairs are excluded: the places they join still offer one
+    // candidate each (their next best pair), so the count does not drop, as it
+    // would if whole places were excluded.
+    std::cout << "first: " << first.size() << " loops of " << firstStats.candidates_generated
+              << " candidates; second: " << second.size() << " of "
+              << secondStats.candidates_generated << "\n";
+    EXPECT_EQ(secondStats.candidates_generated, firstStats.candidates_generated);
 }
