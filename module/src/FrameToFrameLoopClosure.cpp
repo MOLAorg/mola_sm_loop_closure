@@ -1060,8 +1060,9 @@ void FrameToFrameLoopClosure::add_manual_loop_closure_factors()
 
 auto FrameToFrameLoopClosure::
     find_loop_candidates(  // NOLINT(readability-function-cognitive-complexity)
-        const std::set<std::pair<frame_id_t, frame_id_t>>& alreadyChecked,
-        frame_id_t minLaterFrame) const -> std::vector<FrameToFrameLoopClosure::LoopCandidate>
+        const std::set<std::pair<frame_id_t, frame_id_t>>& alreadyChecked, frame_id_t minLaterFrame,
+        const std::set<std::pair<frame_id_t, frame_id_t>>* excludedFramePairs) const
+    -> std::vector<FrameToFrameLoopClosure::LoopCandidate>
 {
     mrpt::system::CTimeLoggerEntry tle(profiler_, "find_loop_candidates");
 
@@ -1116,6 +1117,12 @@ auto FrameToFrameLoopClosure::
                 std::max<frame_id_t>(frameGroup_i, frameGroup_j));
 
             if (alreadyChecked.count(IDs) != 0)
+            {
+                continue;
+            }
+            if (excludedFramePairs != nullptr &&
+                excludedFramePairs->count(
+                    {static_cast<frame_id_t>(i), static_cast<frame_id_t>(j)}) != 0)
             {
                 continue;
             }
@@ -1650,19 +1657,14 @@ std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
         state_.graphValues.insert(X(i), mrpt::gtsam_wrappers::toPose3(frame_pose_in_simplemap(i)));
     }
 
-    // Seed with the pairs the caller excludes (e.g. loops it already closed or
-    // rejected), so candidate selection spends its budget on other pairs (drives
-    // the finalize cascade toward new revisit regions each round). They come as
-    // keyframe indices, while candidate selection works on blocks of keyframes:
-    std::set<std::pair<frame_id_t, frame_id_t>> alreadyChecked;
-    for (const auto& [a, b] : opts.exclude_pairs)
-    {
-        const auto ga = frame_group_of(a, params_.min_frames_between_lc);
-        const auto gb = frame_group_of(b, params_.min_frames_between_lc);
-        alreadyChecked.insert({std::min(ga, gb), std::max(ga, gb)});
-    }
+    // Skip the keyframe pairs the caller excludes (e.g. loops it already closed or
+    // rejected), so candidate selection spends its budget on other pairs: the
+    // next best pair of the same block pair, or new revisit regions (drives the
+    // finalize cascade). Only those exact pairs: whole block pairs would allow a
+    // single loop per revisited region.
+    const std::set<std::pair<frame_id_t, frame_id_t>> noBlocks;
     const frame_id_t minLaterFrame = opts.first_new_keyframe.value_or(0);
-    const auto       candidates    = find_loop_candidates(alreadyChecked, minLaterFrame);
+    const auto candidates = find_loop_candidates(noBlocks, minLaterFrame, &opts.exclude_pairs);
 
     MRPT_LOG_INFO_STREAM(
         "analyze(): " << candidates.size() << " loop closure candidates"
