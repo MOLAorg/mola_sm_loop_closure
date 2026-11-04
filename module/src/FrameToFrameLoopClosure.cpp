@@ -210,6 +210,13 @@ std::string first_n_lines(const std::string& input, std::size_t n)
     return input.substr(0, pos);
 }
 
+/** The block of keyframes a keyframe belongs to: loop candidates are selected,
+ *  evaluated and excluded per pair of blocks, of about `group` keyframes each. */
+uint32_t frame_group_of(std::size_t i, std::size_t group)
+{
+    return static_cast<uint32_t>(mrpt::round(static_cast<double>(i) / static_cast<double>(group)));
+}
+
 }  // namespace
 
 FrameToFrameLoopClosure::FrameToFrameLoopClosure()
@@ -573,8 +580,7 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
                 return std::min(a.frame_i, a.frame_j) < std::min(b.frame_i, b.frame_j);
             });
 
-        const auto frameGroup           = static_cast<double>(params_.min_frames_between_lc);
-        size_t     acceptedSinceLastOpt = 0;
+        size_t acceptedSinceLastOpt = 0;
 
         LivePreviewStats liveStats;
         liveStats.lcRound         = lcRound;
@@ -598,8 +604,8 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
 
             // Decimate the frame IDs so we are effectively counting "blocks" of frames for what
             // concerns already-checked:
-            const auto frameGroup_i = mrpt::round(static_cast<double>(lc.frame_i) / frameGroup);
-            const auto frameGroup_j = mrpt::round(static_cast<double>(lc.frame_j) / frameGroup);
+            const auto frameGroup_i = frame_group_of(lc.frame_i, params_.min_frames_between_lc);
+            const auto frameGroup_j = frame_group_of(lc.frame_j, params_.min_frames_between_lc);
 
             const auto IDs = std::make_pair(
                 std::min<frame_id_t>(frameGroup_i, frameGroup_j),
@@ -1054,17 +1060,17 @@ void FrameToFrameLoopClosure::add_manual_loop_closure_factors()
 
 auto FrameToFrameLoopClosure::
     find_loop_candidates(  // NOLINT(readability-function-cognitive-complexity)
-        const std::set<std::pair<frame_id_t, frame_id_t>>& alreadyChecked,
-        frame_id_t minLaterFrame) const -> std::vector<FrameToFrameLoopClosure::LoopCandidate>
+        const std::set<std::pair<frame_id_t, frame_id_t>>& alreadyChecked, frame_id_t minLaterFrame,
+        const std::set<std::pair<frame_id_t, frame_id_t>>* excludedFramePairs) const
+    -> std::vector<FrameToFrameLoopClosure::LoopCandidate>
 {
     mrpt::system::CTimeLoggerEntry tle(profiler_, "find_loop_candidates");
 
     ASSERT_(state_.sm);
     const auto& sm = *state_.sm;
 
-    const auto   frameGroup = static_cast<double>(params_.min_frames_between_lc);
-    const double minDist    = params_.min_distance_between_frames;
-    const double maxDist    = params_.max_distance_for_lc_candidate;
+    const double minDist = params_.min_distance_between_frames;
+    const double maxDist = params_.max_distance_for_lc_candidate;
 
     // For multi-objective strategy: track selected distances and spatial
     // midpoints so the greedy selection step can update scores incrementally.
@@ -1088,6 +1094,21 @@ auto FrameToFrameLoopClosure::
     // Single vector for non-stratified approaches
     std::vector<LoopCandidate> candidates;
 
+    // Block pairs holding an excluded pair: their other pairs rank after those
+    // of the rest (all scores are in [0,1]), so places already closed do not
+    // use up the candidate budget of the ones never checked.
+    std::set<std::pair<frame_id_t, frame_id_t>> excludedBlocks;
+    if (excludedFramePairs != nullptr)
+    {
+        for (const auto& [a, b] : *excludedFramePairs)
+        {
+            const auto ga = frame_group_of(a, params_.min_frames_between_lc);
+            const auto gb = frame_group_of(b, params_.min_frames_between_lc);
+            excludedBlocks.insert({std::min(ga, gb), std::max(ga, gb)});
+        }
+    }
+    constexpr double EXCLUDED_BLOCK_SCORE_OFFSET = 1.0;
+
     // ========================================================================
     // STEP 1: Generate and score all candidates
     // ========================================================================
@@ -1103,14 +1124,20 @@ auto FrameToFrameLoopClosure::
         for (size_t j = jStart; j < sm.size(); j++)
         {
             // Check if already evaluated
-            const auto frameGroup_i = mrpt::round(static_cast<double>(i) / frameGroup);
-            const auto frameGroup_j = mrpt::round(static_cast<double>(j) / frameGroup);
+            const auto frameGroup_i = frame_group_of(i, params_.min_frames_between_lc);
+            const auto frameGroup_j = frame_group_of(j, params_.min_frames_between_lc);
 
             const auto IDs = std::make_pair(
                 std::min<frame_id_t>(frameGroup_i, frameGroup_j),
                 std::max<frame_id_t>(frameGroup_i, frameGroup_j));
 
             if (alreadyChecked.count(IDs) != 0)
+            {
+                continue;
+            }
+            if (excludedFramePairs != nullptr &&
+                excludedFramePairs->count(
+                    {static_cast<frame_id_t>(i), static_cast<frame_id_t>(j)}) != 0)
             {
                 continue;
             }
@@ -1175,6 +1202,12 @@ auto FrameToFrameLoopClosure::
                 }
             }
 
+            lc.in_excluded_block = excludedBlocks.count(IDs) != 0;
+            if (lc.in_excluded_block)
+            {
+                lc.score -= EXCLUDED_BLOCK_SCORE_OFFSET;
+            }
+
             // Add to appropriate container
             if (useStratification)
             {
@@ -1210,17 +1243,15 @@ auto FrameToFrameLoopClosure::
     // keeping the highest-scored candidate per block pair -- so that
     // max_lc_candidates truly reflects the number that will be evaluated.
     {
-        auto dedup = [&frameGroup](std::vector<LoopCandidate>& vec)
+        auto dedup = [this](std::vector<LoopCandidate>& vec)
         {
             std::map<std::pair<frame_id_t, frame_id_t>, size_t> best;  // blockPair -> index
             for (size_t k = 0; k < vec.size(); k++)
             {
-                const auto bg_i = static_cast<frame_id_t>(
-                    mrpt::round(static_cast<double>(vec[k].frame_i) / frameGroup));
-                const auto bg_j = static_cast<frame_id_t>(
-                    mrpt::round(static_cast<double>(vec[k].frame_j) / frameGroup));
-                const auto key = std::make_pair(std::min(bg_i, bg_j), std::max(bg_i, bg_j));
-                auto       it  = best.find(key);
+                const auto bg_i = frame_group_of(vec[k].frame_i, params_.min_frames_between_lc);
+                const auto bg_j = frame_group_of(vec[k].frame_j, params_.min_frames_between_lc);
+                const auto key  = std::make_pair(std::min(bg_i, bg_j), std::max(bg_i, bg_j));
+                auto       it   = best.find(key);
                 if (it == best.end() || vec[k].score > vec[it->second].score)
                 {
                     best[key] = k;
@@ -1343,6 +1374,10 @@ auto FrameToFrameLoopClosure::
                 args.wDiv              = params_.lc_weight_diversity;
                 args.wCov              = params_.lc_weight_coverage;
                 lc.score               = score_multi_objective(args);
+                if (lc.in_excluded_block)
+                {
+                    lc.score -= EXCLUDED_BLOCK_SCORE_OFFSET;
+                }
             }
         }
     }
@@ -1647,13 +1682,14 @@ std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
         state_.graphValues.insert(X(i), mrpt::gtsam_wrappers::toPose3(frame_pose_in_simplemap(i)));
     }
 
-    // Seed with pairs the caller already closed so candidate selection skips
-    // them and spends its budget on as-yet-unclosed loops (drives the finalize
-    // cascade toward new revisit regions each round).
-    const std::set<std::pair<frame_id_t, frame_id_t>> alreadyChecked(
-        opts.exclude_pairs.begin(), opts.exclude_pairs.end());
+    // Skip the keyframe pairs the caller excludes (e.g. loops it already closed or
+    // rejected), so candidate selection spends its budget on other pairs: the
+    // next best pair of the same block pair, or new revisit regions (drives the
+    // finalize cascade). Only those exact pairs: whole block pairs would allow a
+    // single loop per revisited region.
+    const std::set<std::pair<frame_id_t, frame_id_t>> noBlocks;
     const frame_id_t minLaterFrame = opts.first_new_keyframe.value_or(0);
-    const auto       candidates    = find_loop_candidates(alreadyChecked, minLaterFrame);
+    const auto candidates = find_loop_candidates(noBlocks, minLaterFrame, &opts.exclude_pairs);
 
     MRPT_LOG_INFO_STREAM(
         "analyze(): " << candidates.size() << " loop closure candidates"

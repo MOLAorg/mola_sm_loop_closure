@@ -449,14 +449,22 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         double               distance        = 0.0;  // estimated distance between frames
         double               score           = 0.0;  // candidate quality score
         mrpt::math::TPoint3D spatialMidpoint = {0, 0, 0};  // (pose_i + pose_j) / 2
+        /// Its block pair holds an excluded pair (a place already closed or
+        /// rejected): it ranks after the pairs of other block pairs.
+        bool in_excluded_block = false;
     };
 
     /** Find potential loop closure candidates.
+     *  \param alreadyChecked Block pairs (see min_frames_between_lc) to skip.
      *  \param minLaterFrame If >0, only generate pairs whose later frame index
-     *         is >= this value (used for incremental, new-keyframe-only scans). */
+     *         is >= this value (used for incremental, new-keyframe-only scans).
+     *  \param excludedFramePairs Keyframe pairs (min,max) to skip; the other
+     *         pairs of their block pairs remain candidates, ranked after those
+     *         of other block pairs. */
     std::vector<LoopCandidate> find_loop_candidates(
         const std::set<std::pair<frame_id_t, frame_id_t>>& alreadyChecked,
-        frame_id_t                                         minLaterFrame = 0) const;
+        frame_id_t                                         minLaterFrame      = 0,
+        const std::set<std::pair<frame_id_t, frame_id_t>>* excludedFramePairs = nullptr) const;
 
     /** Result of running ICP on one loop-closure candidate: the relative pose
      *  edge (i -> j) with the same diagonal, additive-noise-inflated covariance

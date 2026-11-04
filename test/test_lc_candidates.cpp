@@ -11,9 +11,16 @@
 #include <mrpt/poses/CPose3D.h>
 #include <mrpt/poses/Lie/SO.h>
 
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <iostream>
+#include <memory>
+#include <set>
 #include <string>
+#include <utility>
 
 namespace
 {
@@ -46,6 +53,20 @@ constexpr double MAX_EDGE_ROTATION_ERROR    = 5.0;  // [deg]
 
 // A pair this close together in the map is a revisit by any reading.
 constexpr double REVISIT_SEPARATION = 1.5;  // [m]
+
+/** An engine with the pipeline at its production values, without debug files. */
+std::unique_ptr<mola::FrameToFrameLoopClosure> make_engine(const std::string& pipeline)
+{
+    auto lc  = std::make_unique<mola::FrameToFrameLoopClosure>();
+    auto cfg = mola::load_yaml_file(pipeline);
+    if (cfg.has("params"))
+    {
+        cfg["params"]["save_trajectory_files"] = false;
+        cfg["params"]["save_3d_scene_files"]   = false;
+    }
+    lc->initialize(cfg);
+    return lc;
+}
 }  // namespace
 
 TEST(MolaSmLcCandidates, default_candidate_floor_admits_revisits)
@@ -128,4 +149,51 @@ TEST(MolaSmLcCandidates, F2F_warehouse_revisits_are_proposed)
     // candidate window is looking in the wrong range.
     EXPECT_GE(nRevisits, 1U) << "no accepted edge joins a pair closer than " << REVISIT_SEPARATION
                              << " m; the candidate window admits no revisits";
+}
+
+TEST(MolaSmLcCandidates, F2F_excluded_pairs_are_not_proposed_again)
+{
+    const std::string pipeline = getenv_or_empty("LC_PIPELINE_YAML");
+    const std::string input_sm = getenv_or_empty("LC_INPUT_SIMPLEMAP");
+    ASSERT_FALSE(pipeline.empty()) << "LC_PIPELINE_YAML env var not set";
+    ASSERT_FALSE(input_sm.empty()) << "LC_INPUT_SIMPLEMAP env var not set";
+    ASSERT_TRUE(std::filesystem::exists(pipeline)) << "Pipeline YAML not found: " << pipeline;
+    ASSERT_TRUE(std::filesystem::exists(input_sm)) << "Input simplemap not found: " << input_sm;
+
+    mrpt::maps::CSimpleMap sm;
+    ASSERT_TRUE(sm.loadFromFile(input_sm)) << "Failed to load simplemap: " << input_sm;
+    ASSERT_GT(sm.size(), 0U);
+    ::unsetenv("MIN_LC_DISTANCE");
+
+    // A consumer closes the loops of a first pass, then asks again excluding them
+    // (by keyframe index, as the options document):
+    mola::LoopClosureAnalyzeStats   firstStats;
+    mola::LoopClosureAnalyzeOptions firstOpts;
+    firstOpts.out_stats = &firstStats;
+    const auto first    = make_engine(pipeline)->analyze(sm, firstOpts);
+    ASSERT_GE(first.size(), 1U);
+
+    mola::LoopClosureAnalyzeStats   secondStats;
+    mola::LoopClosureAnalyzeOptions opts;
+    opts.out_stats = &secondStats;
+    for (const auto& e : first)
+    {
+        opts.exclude_pairs.insert({std::min(e.from, e.to), std::max(e.from, e.to)});
+    }
+    const auto second = make_engine(pipeline)->analyze(sm, opts);
+
+    for (const auto& e : second)
+    {
+        const std::pair<uint32_t, uint32_t> key = {std::min(e.from, e.to), std::max(e.from, e.to)};
+        EXPECT_EQ(opts.exclude_pairs.count(key), 0U)
+            << "excluded pair " << key.first << " <-> " << key.second << " proposed again";
+    }
+
+    // Only the exact pairs are excluded: the places they join still offer one
+    // candidate each (their next best pair), so the count does not drop, as it
+    // would if whole places were excluded.
+    std::cout << "first: " << first.size() << " loops of " << firstStats.candidates_generated
+              << " candidates; second: " << second.size() << " of "
+              << secondStats.candidates_generated << "\n";
+    EXPECT_EQ(secondStats.candidates_generated, firstStats.candidates_generated);
 }
