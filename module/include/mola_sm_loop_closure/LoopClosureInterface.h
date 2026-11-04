@@ -105,9 +105,11 @@ struct LoopClosureAnalyzeOptions
     std::function<bool()> should_abort;
 
     /** Keyframe-index pairs (min,max) to exclude from candidate selection, e.g.
-     *  loops the consumer already closed. Excluding them frees the per-scan
-     *  candidate budget for as-yet-unclosed pairs, so repeated full scans keep
-     *  discovering new loops instead of re-proposing the same ones. */
+     *  loops the consumer already closed or rejected. Excluding them frees the
+     *  per-scan candidate budget for other pairs, so repeated full scans keep
+     *  discovering new loops instead of re-proposing the same ones.
+     *  FrameToFrameLoopClosure tries at most one pair per pair of blocks of about
+     *  min_frames_between_lc keyframes, so it excludes the whole block pair. */
     std::set<std::pair<uint32_t, uint32_t>> exclude_pairs;
 
     /** If set, invoked as candidates are evaluated with (done, total), so the
