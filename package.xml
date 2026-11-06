@@ -20,7 +20,7 @@
   <depend>gtsam</depend>
   <depend>mola_common</depend>
   <depend>mola_georeferencing</depend>
-  <depend>mola_gtsam_factors</depend>
+  <depend version_gte="3.0.0">mola_gtsam_factors</depend> <!-- MapGravityFactor -->
   <depend>mola_pose_list</depend>
   <depend>mola_relocalization</depend>
   <depend>mola_yaml</depend>
