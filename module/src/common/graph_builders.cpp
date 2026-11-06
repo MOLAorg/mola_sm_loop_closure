@@ -57,14 +57,20 @@ void mola::lc_common::add_odometry_edges(
             sigmasXYZYPR[3 + k] += mrpt::DEG2RAD(params.additional_noise_ang_deg);
         }
 
-        // GTSAM Pose3 tangent-space order: (Rx, Ry, Rz, tx, ty, tz)
-        gtsam::Vector6 sigmas;
-        sigmas << sigmasXYZYPR[5], sigmasXYZYPR[4], sigmasXYZYPR[3], sigmasXYZYPR[0],
-            sigmasXYZYPR[1], sigmasXYZYPR[2];
+        // The sigmas are in MRPT layout (global translation, yaw/pitch/roll):
+        // convert them into the GTSAM tangent of the increment, rotation included.
+        mrpt::poses::CPose3DPDFGaussian inflated;
+        inflated.mean = relPose.mean;
+        inflated.cov.setZero();
+        for (int k = 0; k < 6; k++)
+        {
+            inflated.cov(k, k) = mrpt::square(sigmasXYZYPR[k]);
+        }
+        gtsam::Pose3   deltaPose;
+        gtsam::Matrix6 deltaCov;
+        mrpt::gtsam_wrappers::to_gtsam_se3_cov6(inflated, deltaPose, deltaCov);
 
-        auto edgeNoise = gtsam::noiseModel::Diagonal::Sigmas(sigmas);
-
-        const gtsam::Pose3 deltaPose = mrpt::gtsam_wrappers::toPose3(relPose.getPoseMean());
+        auto edgeNoise = gtsam::noiseModel::Gaussian::Covariance(deltaCov);
 
         knownInliers.push_back(static_cast<uint64_t>(fg.size()));
         fg.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(X(i - 1), X(i), deltaPose, edgeNoise);

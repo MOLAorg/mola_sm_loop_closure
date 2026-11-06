@@ -15,6 +15,7 @@
 #include <gtsam/slam/BetweenFactor.h>
 #include <mola_georeferencing/simplemap_georeference.h>
 #include <mola_gtsam_factors/FactorGnssEnu.h>
+#include <mola_gtsam_factors/MapGravityFactor.h>
 #include <mola_sm_loop_closure/common/gnss_factor_helpers.h>
 #include <mrpt/poses/gtsam_wrappers.h>
 
@@ -45,12 +46,10 @@ std::size_t mola::lc_common::add_gnss_factors_per_kf(
         geoRef = gnssFrames.refCoord;
     }
 
-    // Noise model for optional horizontality prior: tight on roll/pitch, free on yaw.
-    // GTSAM Pose3 tangent order: (Rx, Ry, Rz, tx, ty, tz)
-    auto horizNoise =
-        gtsam::noiseModel::Diagonal::Sigmas((gtsam::Vector6() << params.horizontality_sigma_rpy,
-                                             params.horizontality_sigma_rpy, 1e3, 1e3, 1e3, 1e3)
-                                                .finished());
+    // Noise model for optional horizontality constraint: the vehicle up-vector must
+    // point along {enu} +Z, which leaves yaw free whatever its value. A prior on the
+    // Pose3 rotation tangent would not: its x,y components mix with yaw.
+    auto horizNoise = gtsam::noiseModel::Isotropic::Sigma(3, params.horizontality_sigma_rpy);
 
     // Track the spatial spread and uncertainty of the accepted observations so
     // we can detect a degenerate configuration after the loop.
@@ -120,8 +119,8 @@ std::size_t mola::lc_common::add_gnss_factors_per_kf(
         if (params.add_horizontality)
         {
             knownInliers.push_back(static_cast<uint64_t>(fg.size()));
-            fg.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
-                X(frameId), gtsam::Pose3::Identity(), horizNoise);
+            fg.emplace_shared<mola::factors::MapGravityFactor>(
+                X(frameId), gtsam::Pose3::Identity(), gtsam::Vector3::UnitZ(), horizNoise);
             added++;
         }
     }

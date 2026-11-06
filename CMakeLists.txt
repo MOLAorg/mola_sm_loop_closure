@@ -28,7 +28,7 @@ find_package(mola_common REQUIRED)
 # find dependencies:
 find_package(GTSAM REQUIRED)
 find_package(mola_georeferencing REQUIRED)
-find_package(mola_gtsam_factors REQUIRED)
+find_package(mola_gtsam_factors 3.0.0 REQUIRED)
 find_package(mola_pose_list REQUIRED)
 find_package(mola_relocalization REQUIRED)
 find_package(mola_yaml REQUIRED)

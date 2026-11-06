@@ -409,10 +409,11 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             // 2) Add edge to low-level keyframe graph (submap strategy only):
             if (params_.gnss_factor_strategy == "submap")
             {
-                const gtsam::Pose3 deltaPose = mrpt::gtsam_wrappers::toPose3(relPose.getPoseMean());
+                gtsam::Pose3   deltaPose;
+                gtsam::Matrix6 deltaCov;
+                mrpt::gtsam_wrappers::to_gtsam_se3_cov6(relPose, deltaPose, deltaCov);
 
-                auto edgeNoise = gtsam::noiseModel::Gaussian::Covariance(
-                    mrpt::gtsam_wrappers::to_gtsam_se3_cov6_reordering(relPose.cov));
+                auto edgeNoise = gtsam::noiseModel::Gaussian::Covariance(deltaCov);
 
                 const auto refKfId = *refSubmap.kf_ids.begin();
                 const auto curKfId = *submap.kf_ids.begin();
@@ -420,8 +421,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
                 MRPT_LOG_DEBUG_STREAM(
                     "GNSS edge #" << refKfId << " => #" << curKfId << " relPose: " << relPose
                                   << "\n gtsam:" << deltaPose << "\n cov:\n"
-                                  << mrpt::gtsam_wrappers::to_gtsam_se3_cov6_reordering(
-                                         relPose.cov));
+                                  << deltaCov);
 
                 {
                     const auto p0 = state_.kfGraphValues.at<gtsam::Pose3>(X(refKfId));
@@ -716,8 +716,10 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         {
             try
             {
-                newPose->cov = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(
-                    state_.kfGraphMarginals->marginalCovariance(X(id)));
+                newPose->cov = mrpt::gtsam_wrappers::to_mrpt_se3_pdf(
+                                   state_.kfGraphValues.at<gtsam::Pose3>(X(id)),
+                                   state_.kfGraphMarginals->marginalCovariance(X(id)))
+                                   .cov;
             }
             catch (const std::exception& e)
             {
@@ -1465,19 +1467,22 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         using gtsam::symbol_shorthand::X;
 
         // Single LC edge with real ICP cov + extra noise; GNC handles outlier rejection.
-        gtsam::Vector6 realSigmasXYZYPR = icpRelPose.cov.asEigen().diagonal().array().sqrt().eval();
-
-        for (int i = 0; i < 3; i++)
+        // MRPT covariance order: x y z yaw pitch roll. The extra noise inflates
+        // each sigma and keeps the correlations of the ICP covariance:
+        mrpt::poses::CPose3DPDFGaussian inflated = icpRelPose;
+        for (int i = 0; i < 6; i++)
         {
-            realSigmasXYZYPR[3 + i] += params_.icp_edge_additional_noise_xyz;
-            realSigmasXYZYPR[i] += mrpt::DEG2RAD(params_.icp_edge_additional_noise_ang_deg);
+            const double extra = i < 3 ? params_.icp_edge_additional_noise_xyz
+                                       : mrpt::DEG2RAD(params_.icp_edge_additional_noise_ang_deg);
+            inflated.cov(i, i) = mrpt::square(std::sqrt(icpRelPose.cov(i, i)) + extra);
         }
 
-        gtsam::Vector6 realSigmasGtsam;
-        realSigmasGtsam << realSigmasXYZYPR[5], realSigmasXYZYPR[4], realSigmasXYZYPR[3],
-            realSigmasXYZYPR[0], realSigmasXYZYPR[1], realSigmasXYZYPR[2];
+        // Into the GTSAM tangent of the relative pose, rotation included:
+        gtsam::Pose3   unusedPose;
+        gtsam::Matrix6 icpEdgeCov;
+        mrpt::gtsam_wrappers::to_gtsam_se3_cov6(inflated, unusedPose, icpEdgeCov);
 
-        auto icpEdgeNoise = gtsam::noiseModel::Diagonal::Sigmas(realSigmasGtsam);
+        auto icpEdgeNoise = gtsam::noiseModel::Gaussian::Covariance(icpEdgeCov);
 
         state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             X(*submapGlobal.kf_ids.begin()), X(*submapLocal.kf_ids.begin()), deltaPose,
