@@ -1467,19 +1467,28 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         using gtsam::symbol_shorthand::X;
 
         // Single LC edge with real ICP cov + extra noise; GNC handles outlier rejection.
+        // MRPT covariance order: x y z yaw pitch roll.
         gtsam::Vector6 realSigmasXYZYPR = icpRelPose.cov.asEigen().diagonal().array().sqrt().eval();
 
         for (int i = 0; i < 3; i++)
         {
-            realSigmasXYZYPR[3 + i] += params_.icp_edge_additional_noise_xyz;
-            realSigmasXYZYPR[i] += mrpt::DEG2RAD(params_.icp_edge_additional_noise_ang_deg);
+            realSigmasXYZYPR[i] += params_.icp_edge_additional_noise_xyz;
+            realSigmasXYZYPR[3 + i] += mrpt::DEG2RAD(params_.icp_edge_additional_noise_ang_deg);
         }
 
-        gtsam::Vector6 realSigmasGtsam;
-        realSigmasGtsam << realSigmasXYZYPR[5], realSigmasXYZYPR[4], realSigmasXYZYPR[3],
-            realSigmasXYZYPR[0], realSigmasXYZYPR[1], realSigmasXYZYPR[2];
+        // Into the GTSAM tangent of the relative pose, rotation included:
+        mrpt::poses::CPose3DPDFGaussian inflated;
+        inflated.mean = icpRelPose.mean;
+        inflated.cov.setZero();
+        for (int i = 0; i < 6; i++)
+        {
+            inflated.cov(i, i) = mrpt::square(realSigmasXYZYPR[i]);
+        }
+        gtsam::Pose3   unusedPose;
+        gtsam::Matrix6 icpEdgeCov;
+        mrpt::gtsam_wrappers::to_gtsam_se3_cov6(inflated, unusedPose, icpEdgeCov);
 
-        auto icpEdgeNoise = gtsam::noiseModel::Diagonal::Sigmas(realSigmasGtsam);
+        auto icpEdgeNoise = gtsam::noiseModel::Gaussian::Covariance(icpEdgeCov);
 
         state_.kfGraphFG.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             X(*submapGlobal.kf_ids.begin()), X(*submapLocal.kf_ids.begin()), deltaPose,

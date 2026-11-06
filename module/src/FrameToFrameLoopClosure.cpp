@@ -1615,7 +1615,12 @@ std::optional<size_t> FrameToFrameLoopClosure::process_loop_candidate(const Loop
     const size_t newFactorIdx = state_.graphFG.size();
     const auto   deltaPose    = mrpt::gtsam_wrappers::toPose3(edge->relPose.mean);
 
-    auto edgeNoise = gtsam::noiseModel::Diagonal::Sigmas(edge->sigmas);
+    // edge->sigmas are the diagonal of an MRPT covariance (global translation,
+    // yaw/pitch/roll): convert it into the GTSAM tangent of the relative pose.
+    gtsam::Pose3   unusedPose;
+    gtsam::Matrix6 edgeCov;
+    mrpt::gtsam_wrappers::to_gtsam_se3_cov6(edge->relPose, unusedPose, edgeCov);
+    auto edgeNoise = gtsam::noiseModel::Gaussian::Covariance(edgeCov);
 
     // LC edges use plain Gaussian noise (no robust kernel here).
     // The GNC optimizer handles outlier rejection for these edges.
