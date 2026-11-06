@@ -409,10 +409,11 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             // 2) Add edge to low-level keyframe graph (submap strategy only):
             if (params_.gnss_factor_strategy == "submap")
             {
-                const gtsam::Pose3 deltaPose = mrpt::gtsam_wrappers::toPose3(relPose.getPoseMean());
+                gtsam::Pose3   deltaPose;
+                gtsam::Matrix6 deltaCov;
+                mrpt::gtsam_wrappers::to_gtsam_se3_cov6(relPose, deltaPose, deltaCov);
 
-                auto edgeNoise = gtsam::noiseModel::Gaussian::Covariance(
-                    mrpt::gtsam_wrappers::to_gtsam_se3_cov6_reordering(relPose.cov));
+                auto edgeNoise = gtsam::noiseModel::Gaussian::Covariance(deltaCov);
 
                 const auto refKfId = *refSubmap.kf_ids.begin();
                 const auto curKfId = *submap.kf_ids.begin();
@@ -420,8 +421,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
                 MRPT_LOG_DEBUG_STREAM(
                     "GNSS edge #" << refKfId << " => #" << curKfId << " relPose: " << relPose
                                   << "\n gtsam:" << deltaPose << "\n cov:\n"
-                                  << mrpt::gtsam_wrappers::to_gtsam_se3_cov6_reordering(
-                                         relPose.cov));
+                                  << deltaCov);
 
                 {
                     const auto p0 = state_.kfGraphValues.at<gtsam::Pose3>(X(refKfId));
@@ -716,8 +716,10 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         {
             try
             {
-                newPose->cov = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(
-                    state_.kfGraphMarginals->marginalCovariance(X(id)));
+                newPose->cov = mrpt::gtsam_wrappers::to_mrpt_se3_pdf(
+                                   state_.kfGraphValues.at<gtsam::Pose3>(X(id)),
+                                   state_.kfGraphMarginals->marginalCovariance(X(id)))
+                                   .cov;
             }
             catch (const std::exception& e)
             {

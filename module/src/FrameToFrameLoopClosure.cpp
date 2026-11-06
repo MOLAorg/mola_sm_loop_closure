@@ -730,8 +730,7 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
         {
             try
             {
-                newPose->cov = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(
-                    state_.graphMarginals->marginalCovariance(X(id)));
+                newPose->cov = state_.get_pose_cov(id);
             }
             catch (const std::exception& e)
             {
@@ -2135,7 +2134,9 @@ mrpt::math::CMatrixDouble66 FrameToFrameLoopClosure::State::get_pose_cov(frame_i
     using gtsam::symbol_shorthand::X;
     ASSERT_(graphMarginals.has_value());
 
-    return mrpt::gtsam_wrappers::to_mrpt_se3_cov6(graphMarginals->marginalCovariance(X(id)));
+    return mrpt::gtsam_wrappers::to_mrpt_se3_pdf(
+               graphValues.at<gtsam::Pose3>(X(id)), graphMarginals->marginalCovariance(X(id)))
+        .cov;
 }
 
 void FrameToFrameLoopClosure::update_dynamic_variables(frame_id_t frameId, size_t threadIdx)
