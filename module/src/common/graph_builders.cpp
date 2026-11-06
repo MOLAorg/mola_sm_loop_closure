@@ -16,6 +16,8 @@
 #include <mrpt/poses/CPose3DPDFGaussian.h>
 #include <mrpt/poses/gtsam_wrappers.h>
 
+#include "mrpt_gtsam_compat.h"
+
 void mola::lc_common::add_odometry_edges(
     gtsam::NonlinearFactorGraph& fg, gtsam::Values& values, const mrpt::maps::CSimpleMap& sm,
     const OdometryEdgeParams& params, std::vector<uint64_t>& knownInliers)
@@ -68,7 +70,7 @@ void mola::lc_common::add_odometry_edges(
         }
         gtsam::Pose3   deltaPose;
         gtsam::Matrix6 deltaCov;
-        mrpt::gtsam_wrappers::to_gtsam_se3_cov6(inflated, deltaPose, deltaCov);
+        mola::gtsam_compat::to_gtsam_se3_cov6(inflated, deltaPose, deltaCov);
 
         auto edgeNoise = gtsam::noiseModel::Gaussian::Covariance(deltaCov);
 

@@ -51,6 +51,8 @@
 #include <mrpt/viz/Viewport.h>
 #include <mrpt/viz/opengl_fonts.h>
 
+#include "common/mrpt_gtsam_compat.h"
+
 #ifdef MOLA_HAS_KISS_MATCHER
 #include <kiss_matcher/KISSMatcher.hpp>
 #endif
@@ -1619,7 +1621,7 @@ std::optional<size_t> FrameToFrameLoopClosure::process_loop_candidate(const Loop
     // yaw/pitch/roll): convert it into the GTSAM tangent of the relative pose.
     gtsam::Pose3   unusedPose;
     gtsam::Matrix6 edgeCov;
-    mrpt::gtsam_wrappers::to_gtsam_se3_cov6(edge->relPose, unusedPose, edgeCov);
+    mola::gtsam_compat::to_gtsam_se3_cov6(edge->relPose, unusedPose, edgeCov);
     auto edgeNoise = gtsam::noiseModel::Gaussian::Covariance(edgeCov);
 
     // LC edges use plain Gaussian noise (no robust kernel here).
@@ -2139,7 +2141,7 @@ mrpt::math::CMatrixDouble66 FrameToFrameLoopClosure::State::get_pose_cov(frame_i
     using gtsam::symbol_shorthand::X;
     ASSERT_(graphMarginals.has_value());
 
-    return mrpt::gtsam_wrappers::to_mrpt_se3_pdf(
+    return mola::gtsam_compat::to_mrpt_se3_pdf(
                graphValues.at<gtsam::Pose3>(X(id)), graphMarginals->marginalCovariance(X(id)))
         .cov;
 }
