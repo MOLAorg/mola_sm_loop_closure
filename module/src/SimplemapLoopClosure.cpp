@@ -38,6 +38,8 @@
 #include <mrpt/system/filesystem.h>
 #include <mrpt/viz/CEllipsoid2D.h>
 
+#include "common/mrpt_gtsam_compat.h"
+
 // MOLA:
 #include <mola_relocalization/relocalization.h>
 #include <mola_sm_loop_closure/SimplemapLoopClosure.h>
@@ -411,7 +413,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
             {
                 gtsam::Pose3   deltaPose;
                 gtsam::Matrix6 deltaCov;
-                mrpt::gtsam_wrappers::to_gtsam_se3_cov6(relPose, deltaPose, deltaCov);
+                mola::gtsam_compat::to_gtsam_se3_cov6(relPose, deltaPose, deltaCov);
 
                 auto edgeNoise = gtsam::noiseModel::Gaussian::Covariance(deltaCov);
 
@@ -716,7 +718,7 @@ void SimplemapLoopClosure::process(mrpt::maps::CSimpleMap& sm)
         {
             try
             {
-                newPose->cov = mrpt::gtsam_wrappers::to_mrpt_se3_pdf(
+                newPose->cov = mola::gtsam_compat::to_mrpt_se3_pdf(
                                    state_.kfGraphValues.at<gtsam::Pose3>(X(id)),
                                    state_.kfGraphMarginals->marginalCovariance(X(id)))
                                    .cov;
@@ -1480,7 +1482,7 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         // Into the GTSAM tangent of the relative pose, rotation included:
         gtsam::Pose3   unusedPose;
         gtsam::Matrix6 icpEdgeCov;
-        mrpt::gtsam_wrappers::to_gtsam_se3_cov6(inflated, unusedPose, icpEdgeCov);
+        mola::gtsam_compat::to_gtsam_se3_cov6(inflated, unusedPose, icpEdgeCov);
 
         auto icpEdgeNoise = gtsam::noiseModel::Gaussian::Covariance(icpEdgeCov);
 
