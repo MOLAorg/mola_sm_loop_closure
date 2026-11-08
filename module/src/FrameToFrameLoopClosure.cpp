@@ -31,6 +31,7 @@
 #include <mola_sm_loop_closure/common/tum_writer.h>
 #include <mola_yaml/yaml_helpers.h>
 #include <mp2p_icp/update_velocity_buffer_from_obs.h>
+#include <mrpt/core/exceptions.h>
 #include <mrpt/core/get_env.h>
 #include <mrpt/maps/CPointsMap.h>
 #include <mrpt/obs/CObservation2DRangeScan.h>
@@ -1549,7 +1550,19 @@ std::optional<FrameToFrameLoopClosure::LcIcpEdge> FrameToFrameLoopClosure::run_l
     update_dynamic_variables(lc.frame_j, threadIdx);
 
     mp2p_icp::Results icp_result;
-    pts.pipeline.icp->align(*pc_j, *pc_i, initGuess, params_.icp_parameters, icp_result);
+    try
+    {
+        pts.pipeline.icp->align(*pc_j, *pc_i, initGuess, params_.icp_parameters, icp_result);
+    }
+    catch (const std::exception& e)
+    {
+        // A degenerate registration (e.g. too few pairings for a valid
+        // covariance) rejects this candidate, not the whole run.
+        MRPT_LOG_WARN_STREAM(
+            "ICP " << lc.frame_i << " <-> " << lc.frame_j
+                   << " failed, candidate rejected: " << mrpt::exception_to_str(e));
+        return std::nullopt;
+    }
 
     const auto poseDelta = (icp_result.optimal_tf.getMeanVal().asTPose() - initGuess);
 

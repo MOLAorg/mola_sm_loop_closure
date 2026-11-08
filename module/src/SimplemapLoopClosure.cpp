@@ -22,6 +22,7 @@
 #include <mola_sm_loop_closure/common/icp_pipeline_setup.h>
 #include <mola_sm_loop_closure/common/tum_writer.h>
 #include <mp2p_icp/update_velocity_buffer_from_obs.h>
+#include <mrpt/core/exceptions.h>
 #include <mrpt/core/get_env.h>
 #include <mrpt/obs/CObservation2DRangeScan.h>
 #include <mrpt/obs/CObservation3DRangeScan.h>
@@ -1785,8 +1786,19 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         updatePipelineDynamicVariablesForKeyframe(
             *submapLocal.kf_ids.begin(), *submapLocal.kf_ids.begin(), threadIdx);
 
-        pts.pipeline.icp->align(
-            pcs_local, pcs_global, initPose, params_.icp_parameters, icp_result);
+        try
+        {
+            pts.pipeline.icp->align(
+                pcs_local, pcs_global, initPose, params_.icp_parameters, icp_result);
+        }
+        catch (const std::exception& e)
+        {
+            // A degenerate registration (e.g. too few pairings for a valid
+            // covariance) rejects this initial guess, not the whole run.
+            MRPT_LOG_WARN_STREAM(
+                "ICP failed, initial guess rejected: " << mrpt::exception_to_str(e));
+            continue;
+        }
 
         MRPT_LOG_INFO_FMT(
             "ICP: goodness=%6.01f%% iters=%u pose=%s "
