@@ -72,6 +72,12 @@
 
 using namespace mola;
 
+namespace
+{
+// Loop-closure ICP runs that may throw before any one succeeds.
+constexpr std::size_t MAX_LC_ICP_FAILURES_WITHOUT_SUCCESS = 10;
+}  // namespace
+
 IMPLEMENTS_SERIALIZABLE(SimplemapLoopClosure, LoopClosureInterface, mola)
 
 namespace
@@ -1683,38 +1689,59 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
             << " corner_min=" << in.initial_guess_lattice.corner_min
             << " corner_max=" << in.initial_guess_lattice.corner_max);
 
-        const auto out = mola::RelocalizationICP_SE2::run(in);
-
-        // search top candidates:
-
-        // Take the voxel with the largest number of poses:
-        std::map<size_t, mrpt::math::TPose3D> bestVoxels;
-
-        out.found_poses.visitAllVoxels(
-            [&](const mola::HashedSetSE3::global_index3d_t&, const mola::HashedSetSE3::VoxelData& v)
-            {
-                if (v.poses().empty())
-                {
-                    return;
-                }
-                bestVoxels[v.poses().size()] = v.poses().front();
-            });
-
-        if (!bestVoxels.empty())
+        std::optional<mola::RelocalizationICP_SE2::Output> mcOut;
+        try
         {
-            const auto& bestPose = bestVoxels.rbegin()->second;
+            mcOut = mola::RelocalizationICP_SE2::run(in);
+        }
+        catch (const std::exception& e)
+        {
+            // Same as a failed ICP below: fall back to the default guesses.
+            if (state_.lcIcpCompleted == 0 &&
+                ++state_.lcIcpFailed >= MAX_LC_ICP_FAILURES_WITHOUT_SUCCESS)
+            {
+                throw;
+            }
+            MRPT_LOG_WARN_STREAM(
+                "[Relocalize SE(2)] failed, using the default initial guesses: "
+                << mrpt::exception_to_str(e));
+        }
+        if (mcOut)
+        {
+            const auto& out = *mcOut;
+
+            // search top candidates:
+
+            // Take the voxel with the largest number of poses:
+            std::map<size_t, mrpt::math::TPose3D> bestVoxels;
+
+            out.found_poses.visitAllVoxels(
+                [&](const mola::HashedSetSE3::global_index3d_t&,
+                    const mola::HashedSetSE3::VoxelData& v)
+                {
+                    if (v.poses().empty())
+                    {
+                        return;
+                    }
+                    bestVoxels[v.poses().size()] = v.poses().front();
+                });
+
+            if (!bestVoxels.empty())
+            {
+                const auto& bestPose = bestVoxels.rbegin()->second;
 #if 0
             lambdaAddIcpEdge(mrpt::poses::CPose3D(bestPose), 1.0);
             // ...
             return true;  // done
 #endif
-            MRPT_LOG_INFO_STREAM(
-                "[Relocalize SE(2)] Result has "
-                << out.found_poses.voxels().size() << " voxels, most populated one |V|="
-                << bestVoxels.rbegin()->first << " bestPose: " << bestPose);
+                MRPT_LOG_INFO_STREAM(
+                    "[Relocalize SE(2)] Result has "
+                    << out.found_poses.voxels().size() << " voxels, most populated one |V|="
+                    << bestVoxels.rbegin()->first << " bestPose: " << bestPose);
 
-            // Let ICP to run again to recover the covariance.
-            initGuesses.push_back(bestPose);
+                // Let ICP to run again to recover the covariance.
+                initGuesses.push_back(bestPose);
+            }
         }
     }
 
@@ -1794,11 +1821,20 @@ bool SimplemapLoopClosure::process_loop_candidate(const PotentialLoop& lc)
         catch (const std::exception& e)
         {
             // A degenerate registration (e.g. too few pairings for a valid
-            // covariance) rejects this initial guess, not the whole run.
+            // covariance) rejects this initial guess, not the whole run. If no
+            // ICP has ever succeeded, the ICP setup itself is broken.
+            if (state_.lcIcpCompleted == 0 &&
+                ++state_.lcIcpFailed >= MAX_LC_ICP_FAILURES_WITHOUT_SUCCESS)
+            {
+                MRPT_LOG_ERROR_STREAM(
+                    "All " << state_.lcIcpFailed << " loop-closure ICP runs failed: aborting.");
+                throw;
+            }
             MRPT_LOG_WARN_STREAM(
                 "ICP failed, initial guess rejected: " << mrpt::exception_to_str(e));
             continue;
         }
+        state_.lcIcpCompleted++;
 
         MRPT_LOG_INFO_FMT(
             "ICP: goodness=%6.01f%% iters=%u pose=%s "
