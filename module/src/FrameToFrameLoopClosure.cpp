@@ -71,6 +71,12 @@
 
 using namespace mola;
 
+namespace
+{
+// Loop-closure ICP runs that may throw before any one succeeds.
+constexpr std::size_t MAX_LC_ICP_FAILURES_WITHOUT_SUCCESS = 10;
+}  // namespace
+
 IMPLEMENTS_SERIALIZABLE(FrameToFrameLoopClosure, LoopClosureInterface, mola)
 
 namespace
@@ -1557,12 +1563,20 @@ std::optional<FrameToFrameLoopClosure::LcIcpEdge> FrameToFrameLoopClosure::run_l
     catch (const std::exception& e)
     {
         // A degenerate registration (e.g. too few pairings for a valid
-        // covariance) rejects this candidate, not the whole run.
+        // covariance) rejects this candidate, not the whole run. If no
+        // candidate has ever succeeded, the ICP setup itself is broken.
+        const auto nFailed = ++state_.lcIcpFailed;
+        if (state_.lcIcpCompleted == 0 && nFailed >= MAX_LC_ICP_FAILURES_WITHOUT_SUCCESS)
+        {
+            MRPT_LOG_ERROR_STREAM("All " << nFailed << " loop-closure ICP runs failed: aborting.");
+            throw;
+        }
         MRPT_LOG_WARN_STREAM(
             "ICP " << lc.frame_i << " <-> " << lc.frame_j
                    << " failed, candidate rejected: " << mrpt::exception_to_str(e));
         return std::nullopt;
     }
+    state_.lcIcpCompleted++;
 
     const auto poseDelta = (icp_result.optimal_tf.getMeanVal().asTPose() - initGuess);
 

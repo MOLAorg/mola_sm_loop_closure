@@ -147,6 +147,11 @@ class SimplemapLoopClosure : public mola::LoopClosureInterface
 
     struct State
     {
+        /// Loop-closure ICP runs that completed or threw: a run where every
+        /// one throws is a configuration error, not degenerate candidates.
+        std::size_t lcIcpCompleted = 0;
+        std::size_t lcIcpFailed    = 0;
+
         State() = default;
 
         bool initialized = false;

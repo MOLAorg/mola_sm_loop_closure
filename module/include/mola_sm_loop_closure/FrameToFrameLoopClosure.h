@@ -32,6 +32,7 @@
 #include <mrpt/typemeta/TEnumType.h>
 #include <mrpt/viz/CSetOfObjects.h>
 
+#include <atomic>
 #include <list>
 #include <mutex>
 #include <set>
@@ -368,6 +369,11 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
     struct State
     {
         bool initialized = false;
+
+        /// Candidate ICP runs that completed or threw: a run where every one
+        /// throws is a configuration error, not degenerate candidates.
+        std::atomic<std::size_t> lcIcpCompleted{0};
+        std::atomic<std::size_t> lcIcpFailed{0};
 
         const mrpt::maps::CSimpleMap* sm = nullptr;
 
