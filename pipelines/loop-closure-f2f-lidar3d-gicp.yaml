@@ -16,6 +16,9 @@ params:
   gnss_add_horizontality: false # Add constraints for flat terrain
   gnss_horizontality_sigma_rpy: 0.10 # [rad] roll/pitch constraint if enabled
   gnss_edges_uncertainty_multiplier: "${GNSS_EDGES_UNCERTAINTY_MULTIPLIER|1.0}"
+  # Start from the yaw+translation that best fits the GNSS readings, so a stiff
+  # odometry (see input_odometry_noise_*) need not rotate the whole map in the solver:
+  gnss_initial_alignment: "${LC_GNSS_INITIAL_ALIGNMENT|true}"
 
   # ===== Loop Closure Candidate Selection =====
   # Min spatial separation, in the CURRENT ESTIMATE, so a non-zero value
@@ -76,6 +79,10 @@ params:
   # ===== Odometry Edge Parameters =====
   input_odometry_noise_xyz: "${INPUT_ODOMETRY_NOISE_XYZ_PER_M|0.04}" # [m] Odometry translational noise (per meter of travel if scaled)
   input_odometry_noise_ang: "${INPUT_ODOMETRY_NOISE_ANG_DEG_PER_M|0.05}" # [deg] Odometry angular noise (per meter of travel if scaled)
+  # A LIO with ~1 m keyframe spacing is often much better than these defaults
+  # (e.g. ~0.001 m and ~0.01 deg per m). With GNSS through long outages, lower
+  # values carry the odometry shape through the gap instead of bending it toward
+  # the last fixes.
   scale_odometry_noise_by_distance: true # Scale noise proportionally to inter-frame distance
 
   # ===== Optimization Control =====

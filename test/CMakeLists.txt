@@ -1,6 +1,10 @@
 # Unit tests:
 
 find_package(ament_cmake_gtest REQUIRED)
+
+# Pure unit tests, no datasets needed:
+ament_add_gtest(test_gnss_alignment_and_densify test_gnss_alignment_and_densify.cpp)
+target_link_libraries(test_gnss_alignment_and_densify ${PROJECT_NAME})
 find_package(mola_test_datasets)
 
 if(NOT mola_test_datasets_FOUND)

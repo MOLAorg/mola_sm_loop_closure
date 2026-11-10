@@ -20,7 +20,21 @@
 #include <mrpt/poses/gtsam_wrappers.h>
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
+
+namespace
+{
+/// The uncertainty rules for a GNSS reading to be used, shared by the factors
+/// and the initial alignment so both use the same readings.
+bool gnss_reading_accepted(
+    const mola::FrameGNSS& gf, const mola::lc_common::GnssFactorParams& params)
+{
+    const double horizUncertainty = std::sqrt(gf.sigma_E * gf.sigma_E + gf.sigma_N * gf.sigma_N);
+    return horizUncertainty <= params.max_uncertainty_horiz &&
+           gf.sigma_U <= params.max_uncertainty_vert;
+}
+}  // namespace
 
 std::size_t mola::lc_common::add_gnss_factors_per_kf(
     gtsam::NonlinearFactorGraph& fg, const mrpt::maps::CSimpleMap& sm,
@@ -69,10 +83,7 @@ std::size_t mola::lc_common::add_gnss_factors_per_kf(
         }
 
         // Reject readings with excessive uncertainty
-        const double horizUncertainty =
-            std::sqrt(gf.sigma_E * gf.sigma_E + gf.sigma_N * gf.sigma_N);
-        if (horizUncertainty > params.max_uncertainty_horiz ||
-            gf.sigma_U > params.max_uncertainty_vert)
+        if (!gnss_reading_accepted(gf, params))
         {
             rejected++;
             continue;
@@ -158,4 +169,112 @@ std::size_t mola::lc_common::add_gnss_factors_per_kf(
     }
 
     return added;
+}
+
+std::optional<mrpt::poses::CPose3D> mola::lc_common::fit_yaw_translation(
+    const std::vector<mrpt::math::TPoint3D>& src, const std::vector<mrpt::math::TPoint3D>& dst,
+    double minHorizontalSpread)
+{
+    ASSERT_EQUAL_(src.size(), dst.size());
+    const size_t n = src.size();
+    if (n < 3)
+    {
+        return std::nullopt;
+    }
+
+    mrpt::math::TPoint3D srcMean(0, 0, 0);
+    mrpt::math::TPoint3D dstMean(0, 0, 0);
+    for (size_t i = 0; i < n; i++)
+    {
+        srcMean += src[i];
+        dstMean += dst[i];
+    }
+    srcMean *= 1.0 / static_cast<double>(n);
+    dstMean *= 1.0 / static_cast<double>(n);
+
+    double sumCross  = 0;
+    double sumDot    = 0;
+    double sumSpread = 0;
+    for (size_t i = 0; i < n; i++)
+    {
+        const double ax = src[i].x - srcMean.x;
+        const double ay = src[i].y - srcMean.y;
+        const double bx = dst[i].x - dstMean.x;
+        const double by = dst[i].y - dstMean.y;
+        sumCross += ax * by - ay * bx;
+        sumDot += ax * bx + ay * by;
+        sumSpread += ax * ax + ay * ay;
+    }
+    if (std::sqrt(sumSpread / static_cast<double>(n)) < minHorizontalSpread)
+    {
+        return std::nullopt;
+    }
+
+    const double yaw            = std::atan2(sumCross, sumDot);
+    const auto   rot            = mrpt::poses::CPose3D::FromYawPitchRoll(yaw, 0, 0);
+    const auto   rotatedSrcMean = rot.rotateVector(srcMean);
+    return mrpt::poses::CPose3D::FromXYZYawPitchRoll(
+        dstMean.x - rotatedSrcMean.x, dstMean.y - rotatedSrcMean.y, dstMean.z - rotatedSrcMean.z,
+        yaw, 0, 0);
+}
+
+std::optional<mrpt::poses::CPose3D> mola::lc_common::fit_yaw_translation_to_gnss(
+    const mrpt::maps::CSimpleMap& sm, std::optional<mrpt::topography::TGeodeticCoords>& geoRef,
+    const GnssFactorParams& params, const std::function<mrpt::poses::CPose3D(size_t)>& kfPose,
+    mrpt::system::COutputLogger* logger)
+{
+    // Below this spread, the yaw of the fit is not trustworthy:
+    constexpr double MIN_HORIZONTAL_SPREAD = 2.0;  // [m]
+
+    const auto gnssFrames = extract_gnss_frames_from_sm(sm, geoRef);
+    if (gnssFrames.frames.empty())
+    {
+        return std::nullopt;
+    }
+    if (!geoRef.has_value())
+    {
+        geoRef = gnssFrames.refCoord;
+    }
+
+    std::vector<mrpt::math::TPoint3D> antennaInMap;
+    std::vector<mrpt::math::TPoint3D> antennaInEnu;
+    for (const auto& gf : gnssFrames.frames)
+    {
+        const auto frameId = static_cast<size_t>(gf.kf_index);
+        if (frameId >= sm.size())
+        {
+            continue;
+        }
+        if (!gnss_reading_accepted(gf, params))
+        {
+            continue;
+        }
+        const auto&                antennaPose = gf.obs->sensorPose;
+        const mrpt::math::TPoint3D antennaOnVehicle(
+            antennaPose.x(), antennaPose.y(), antennaPose.z());
+        antennaInMap.push_back(kfPose(frameId).composePoint(antennaOnVehicle));
+        antennaInEnu.push_back(gf.enu);
+    }
+
+    auto fit = fit_yaw_translation(antennaInMap, antennaInEnu, MIN_HORIZONTAL_SPREAD);
+    if (logger)
+    {
+        if (fit)
+        {
+            logger->logFmt(
+                mrpt::system::LVL_INFO,
+                "[gnss_factor_helpers] Initial yaw+translation alignment from %zu GNSS readings: "
+                "%s",
+                antennaInMap.size(), fit->asString().c_str());
+        }
+        else
+        {
+            logger->logFmt(
+                mrpt::system::LVL_WARN,
+                "[gnss_factor_helpers] No initial GNSS alignment: %zu usable readings, too few or "
+                "too close together.",
+                antennaInMap.size());
+        }
+    }
+    return fit;
 }
