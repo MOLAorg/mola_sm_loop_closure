@@ -99,3 +99,15 @@ TEST(DensifyTrajectory, ClampsOutsideTheKeyframeSpan)
     EXPECT_LT(out.front().pose.distanceTo(c + dense.front().pose), 1e-9);
     EXPECT_LT(out.back().pose.distanceTo(c + dense.back().pose), 1e-9);
 }
+
+TEST(DensifyTrajectory, RejectsUnsortedInput)
+{
+    const CPose3D            p;
+    std::vector<StampedPose> kf    = {{0.0, p}, {1.0, p}};
+    std::vector<StampedPose> dense = {{0.5, p}, {0.2, p}};
+    std::vector<StampedPose> out;
+    EXPECT_ANY_THROW(mola::lc_common::densify_trajectory(kf, kf, dense, out));
+    std::vector<StampedPose> kfUnsorted = {{1.0, p}, {0.0, p}};
+    std::vector<StampedPose> denseOk    = {{0.2, p}, {0.5, p}};
+    EXPECT_ANY_THROW(mola::lc_common::densify_trajectory(kfUnsorted, kfUnsorted, denseOk, out));
+}

@@ -411,6 +411,9 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         // for use with GNC optimizer
         std::vector<uint64_t> knownInlierFactorIndices;
 
+        /// Index in graphFG of the prior on the first keyframe
+        std::size_t firstPosePriorFactorIndex = 0;
+
         /// Precomputed flag per frame: true if the frame has mapping-capable
         /// observations.  Computed once at the start of process() to avoid
         /// repeated lazy-loading of externally-stored observations.
@@ -457,6 +460,9 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
 
     /** See Parameters::gnss_initial_alignment */
     void align_initial_values_to_gnss();
+
+    /** Sigma of the prior on the first keyframe (all 6 dims) */
+    double first_pose_prior_sigma() const;
 
     /** Adds per-keyframe IMU gravity-alignment factors (see Parameters::use_imu_gravity). */
     /// Returns true if at least one IMU gravity-alignment factor was added.

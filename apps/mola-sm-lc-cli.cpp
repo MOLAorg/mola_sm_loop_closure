@@ -106,17 +106,32 @@ void write_tum(const std::string& filename, const std::vector<StampedPose>& pose
     }
 }
 
-/// Keyframe poses with the stamp of their first observation (as in the TUM outputs)
-std::vector<StampedPose> keyframe_poses(const mrpt::maps::CSimpleMap& sm)
+/// Indices of the keyframes with a pose and observations (the stamp comes from
+/// their first observation, as in the TUM outputs)
+std::vector<size_t> usable_keyframes(const mrpt::maps::CSimpleMap& sm)
 {
-    std::vector<StampedPose> ret;
+    std::vector<size_t> ret;
     for (size_t i = 0; i < sm.size(); i++)
     {
         const auto& [pose, sf, twist] = sm.get(i);
-        if (!pose || !sf || sf->empty())
+        if (pose && sf && !sf->empty())
         {
-            continue;
+            ret.push_back(i);
         }
+    }
+    return ret;
+}
+
+std::vector<StampedPose> keyframe_poses(
+    const mrpt::maps::CSimpleMap& sm, const std::vector<size_t>& indices)
+{
+    std::vector<StampedPose> ret;
+    ret.reserve(indices.size());
+    for (const auto i : indices)
+    {
+        ASSERT_LT_(i, sm.size());
+        const auto& [pose, sf, twist] = sm.get(i);
+        ASSERTMSG_(pose && sf && !sf->empty(), "Keyframe without pose or observations");
         ret.push_back(
             {mrpt::Clock::toDouble(sf->getObservationByIndex(0)->timestamp), pose->getMeanVal()});
     }
@@ -218,10 +233,18 @@ void run_sm_to_mm()
     ASSERTMSG_(
         densify == (optOutputDense->count() > 0),
         "--input-dense-trajectory and --output-dense-trajectory go together");
+    // Check the dense input and output before the (possibly long) optimization:
+    std::vector<size_t>      kfIndices;
     std::vector<StampedPose> kfBefore;
+    std::vector<StampedPose> dense;
     if (densify)
     {
-        kfBefore = keyframe_poses(sm);
+        kfIndices = usable_keyframes(sm);
+        kfBefore  = keyframe_poses(sm, kfIndices);
+        dense     = read_tum(arg_input_dense);
+        ASSERTMSG_(!dense.empty(), "No poses read from: '" + arg_input_dense + "'");
+        std::ofstream testOut(arg_output_dense);
+        ASSERTMSG_(testOut.is_open(), "Cannot write to: '" + arg_output_dense + "'");
     }
 
     // Main stuff here:
@@ -229,8 +252,7 @@ void run_sm_to_mm()
 
     if (densify)
     {
-        const auto               dense   = read_tum(arg_input_dense);
-        const auto               kfAfter = keyframe_poses(sm);
+        const auto               kfAfter = keyframe_poses(sm, kfIndices);
         std::vector<StampedPose> out;
         const auto r = mola::lc_common::densify_trajectory(kfBefore, kfAfter, dense, out);
         write_tum(arg_output_dense, out);

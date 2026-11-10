@@ -765,6 +765,12 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
     sm = outSM;  // TODO: Make CSimpleMap move constructible
 }
 
+double FrameToFrameLoopClosure::first_pose_prior_sigma() const
+{
+    // Very weak with GNSS, so the GNSS factors can override it as needed.
+    return params_.use_gnss ? 1e+2 : 1e-2;
+}
+
 void FrameToFrameLoopClosure::build_initial_graph()
 {
     using gtsam::symbol_shorthand::X;
@@ -791,12 +797,13 @@ void FrameToFrameLoopClosure::build_initial_graph()
 
     // Add prior on first frame: very weak, so GNSS can override it as needed.
     // if not using GNSS, let X(0) be anchored.
-    const double priorSigma = params_.use_gnss ? 1e+2 : 1e-2;
+    const double priorSigma = first_pose_prior_sigma();
 
     const auto pose0      = frame_pose_in_simplemap(0);
     auto       priorNoise = gtsam::noiseModel::Isotropic::Sigma(6, priorSigma);
 
     state_.knownInlierFactorIndices.push_back(state_.graphFG.size());
+    state_.firstPosePriorFactorIndex = state_.graphFG.size();
     state_.graphFG.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
         X(0), mrpt::gtsam_wrappers::toPose3(pose0), priorNoise);
 
@@ -871,6 +878,7 @@ void FrameToFrameLoopClosure::align_initial_values_to_gnss()
         [this](size_t id) { return state_.get_pose(id); }, this);
     if (!fit)
     {
+        MRPT_LOG_WARN("GNSS initial alignment skipped: starting from the odometry frame");
         return;
     }
     const auto T = mrpt::gtsam_wrappers::toPose3(*fit);
@@ -878,6 +886,18 @@ void FrameToFrameLoopClosure::align_initial_values_to_gnss()
     {
         state_.graphValues.update(X(i), T.compose(state_.graphValues.at<gtsam::Pose3>(X(i))));
     }
+
+    // Move the (weak) prior on the first keyframe along, so it does not pull
+    // against the aligned start:
+    const auto alignedPose0 = T.compose(mrpt::gtsam_wrappers::toPose3(frame_pose_in_simplemap(0)));
+    auto       priorNoise   = gtsam::noiseModel::Isotropic::Sigma(6, first_pose_prior_sigma());
+#if GTSAM_USES_BOOST
+    auto prior =
+        boost::make_shared<gtsam::PriorFactor<gtsam::Pose3>>(X(0), alignedPose0, priorNoise);
+#else
+    auto prior = std::make_shared<gtsam::PriorFactor<gtsam::Pose3>>(X(0), alignedPose0, priorNoise);
+#endif
+    state_.graphFG.replace(state_.firstPosePriorFactorIndex, prior);
 }
 
 bool FrameToFrameLoopClosure::add_imu_gravity_factors()

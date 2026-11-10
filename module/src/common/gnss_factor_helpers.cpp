@@ -23,6 +23,19 @@
 #include <cmath>
 #include <limits>
 
+namespace
+{
+/// The uncertainty rules for a GNSS reading to be used, shared by the factors
+/// and the initial alignment so both use the same readings.
+bool gnss_reading_accepted(
+    const mola::FrameGNSS& gf, const mola::lc_common::GnssFactorParams& params)
+{
+    const double horizUncertainty = std::sqrt(gf.sigma_E * gf.sigma_E + gf.sigma_N * gf.sigma_N);
+    return horizUncertainty <= params.max_uncertainty_horiz &&
+           gf.sigma_U <= params.max_uncertainty_vert;
+}
+}  // namespace
+
 std::size_t mola::lc_common::add_gnss_factors_per_kf(
     gtsam::NonlinearFactorGraph& fg, const mrpt::maps::CSimpleMap& sm,
     std::optional<mrpt::topography::TGeodeticCoords>& geoRef, const GnssFactorParams& params,
@@ -70,10 +83,7 @@ std::size_t mola::lc_common::add_gnss_factors_per_kf(
         }
 
         // Reject readings with excessive uncertainty
-        const double horizUncertainty =
-            std::sqrt(gf.sigma_E * gf.sigma_E + gf.sigma_N * gf.sigma_N);
-        if (horizUncertainty > params.max_uncertainty_horiz ||
-            gf.sigma_U > params.max_uncertainty_vert)
+        if (!gnss_reading_accepted(gf, params))
         {
             rejected++;
             continue;
@@ -235,10 +245,7 @@ std::optional<mrpt::poses::CPose3D> mola::lc_common::fit_yaw_translation_to_gnss
         {
             continue;
         }
-        const double horizUncertainty =
-            std::sqrt(gf.sigma_E * gf.sigma_E + gf.sigma_N * gf.sigma_N);
-        if (horizUncertainty > params.max_uncertainty_horiz ||
-            gf.sigma_U > params.max_uncertainty_vert)
+        if (!gnss_reading_accepted(gf, params))
         {
             continue;
         }

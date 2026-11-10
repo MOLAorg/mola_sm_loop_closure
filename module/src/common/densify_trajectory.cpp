@@ -41,8 +41,16 @@ mola::lc_common::DensifyResult mola::lc_common::densify_trajectory(
     const std::vector<StampedPose>& dense, std::vector<StampedPose>& out, double maxTimeOffset)
 {
     ASSERT_EQUAL_(kfBefore.size(), kfAfter.size());
-    ASSERT_(!kfBefore.empty());
-    ASSERT_(!dense.empty());
+    ASSERTMSG_(!kfBefore.empty(), "No keyframes to take the corrections from");
+    ASSERTMSG_(!dense.empty(), "Empty dense trajectory");
+    const auto byStamp = [](const StampedPose& a, const StampedPose& b)
+    { return a.stamp < b.stamp; };
+    ASSERTMSG_(
+        std::is_sorted(dense.begin(), dense.end(), byStamp),
+        "The dense trajectory must be sorted by timestamp");
+    ASSERTMSG_(
+        std::is_sorted(kfBefore.begin(), kfBefore.end(), byStamp),
+        "The keyframes must be sorted by timestamp");
 
     constexpr double STAMP_TOLERANCE = 1e-3;  // [s]
     constexpr double MATCH_TOLERANCE = 0.02;  // [s]
