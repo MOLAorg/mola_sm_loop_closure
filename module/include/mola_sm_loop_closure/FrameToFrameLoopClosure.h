@@ -18,6 +18,7 @@
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/Values.h>
 #include <mola_sm_loop_closure/LoopClosureInterface.h>
+#include <mola_sm_loop_closure/common/gnss_factor_helpers.h>
 #include <mola_sm_loop_closure/common/icp_pipeline_setup.h>
 #include <mp2p_icp/icp_pipeline_from_yaml.h>
 #include <mp2p_icp/metricmap.h>
@@ -86,6 +87,13 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         double gnss_edges_uncertainty_multiplier = 1.0;
         double gnss_max_uncertainty_horiz = 20.0;  // [m] reject if sqrt(sigE²+sigN²) > this
         double gnss_max_uncertainty_vert  = 40.0;  // [m] reject if sigU > this
+
+        /** If true, before adding the GNSS factors, move the initial guess of all
+         *  keyframes by the yaw + translation that best fits their GNSS readings.
+         *  The input odometry frame is otherwise an arbitrary initial guess for the
+         *  {enu} frame, which a stiff odometry (low input_odometry_noise_*) cannot
+         *  rotate into place within the optimizer. */
+        bool gnss_initial_alignment = true;
 
         /** If true, add per-keyframe IMU gravity-alignment factors
          *  (mola::factors::MeasuredGravityFactor) constraining roll/pitch against the
@@ -443,6 +451,12 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
 
     /** Add GNSS factors to the graph */
     void add_gnss_factors();
+
+    /** GNSS factor parameters, from params_ */
+    lc_common::GnssFactorParams gnss_factor_params() const;
+
+    /** See Parameters::gnss_initial_alignment */
+    void align_initial_values_to_gnss();
 
     /** Adds per-keyframe IMU gravity-alignment factors (see Parameters::use_imu_gravity). */
     /// Returns true if at least one IMU gravity-alignment factor was added.

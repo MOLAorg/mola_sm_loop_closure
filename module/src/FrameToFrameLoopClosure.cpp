@@ -248,6 +248,7 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, gnss_edges_uncertainty_multiplier, double);
     YAML_LOAD_OPT(params_, gnss_max_uncertainty_horiz, double);
     YAML_LOAD_OPT(params_, gnss_max_uncertainty_vert, double);
+    YAML_LOAD_OPT(params_, gnss_initial_alignment, bool);
 
     YAML_LOAD_OPT(params_, use_imu_gravity, bool);
     YAML_LOAD_OPT(params_, imu_gravity_sigma_deg, double);
@@ -479,6 +480,10 @@ void FrameToFrameLoopClosure::process(mrpt::maps::CSimpleMap& sm)  // NOLINT
     // Add GNSS factors if available
     if (params_.use_gnss)
     {
+        if (params_.gnss_initial_alignment)
+        {
+            align_initial_values_to_gnss();
+        }
         add_gnss_factors();
 
         // Initial optimization with GNSS
@@ -833,12 +838,8 @@ void FrameToFrameLoopClosure::build_initial_graph()
     MRPT_LOG_INFO_STREAM("Built initial graph with " << sm.size() << " frames");
 }
 
-void FrameToFrameLoopClosure::add_gnss_factors()
+lc_common::GnssFactorParams FrameToFrameLoopClosure::gnss_factor_params() const
 {
-    mrpt::system::CTimeLoggerEntry tle(profiler_, "add_gnss_factors");
-
-    ASSERT_(state_.sm);
-
     lc_common::GnssFactorParams p;
     p.add_horizontality       = params_.gnss_add_horizontality;
     p.horizontality_sigma_rpy = params_.gnss_horizontality_sigma_rpy;
@@ -846,9 +847,37 @@ void FrameToFrameLoopClosure::add_gnss_factors()
     p.uncertainty_multiplier  = params_.gnss_edges_uncertainty_multiplier;
     p.max_uncertainty_horiz   = params_.gnss_max_uncertainty_horiz;
     p.max_uncertainty_vert    = params_.gnss_max_uncertainty_vert;
+    return p;
+}
 
+void FrameToFrameLoopClosure::add_gnss_factors()
+{
+    mrpt::system::CTimeLoggerEntry tle(profiler_, "add_gnss_factors");
+    ASSERT_(state_.sm);
     lc_common::add_gnss_factors_per_kf(
-        state_.graphFG, *state_.sm, state_.globalGeoRef, p, state_.knownInlierFactorIndices, this);
+        state_.graphFG, *state_.sm, state_.globalGeoRef, gnss_factor_params(),
+        state_.knownInlierFactorIndices, this);
+}
+
+void FrameToFrameLoopClosure::align_initial_values_to_gnss()
+{
+    using gtsam::symbol_shorthand::X;
+
+    mrpt::system::CTimeLoggerEntry tle(profiler_, "align_initial_values_to_gnss");
+    ASSERT_(state_.sm);
+
+    const auto fit = lc_common::fit_yaw_translation_to_gnss(
+        *state_.sm, state_.globalGeoRef, gnss_factor_params(),
+        [this](size_t id) { return state_.get_pose(id); }, this);
+    if (!fit)
+    {
+        return;
+    }
+    const auto T = mrpt::gtsam_wrappers::toPose3(*fit);
+    for (size_t i = 0; i < state_.sm->size(); i++)
+    {
+        state_.graphValues.update(X(i), T.compose(state_.graphValues.at<gtsam::Pose3>(X(i))));
+    }
 }
 
 bool FrameToFrameLoopClosure::add_imu_gravity_factors()
@@ -2567,18 +2596,22 @@ void FrameToFrameLoopClosure::save_trajectory_as_tum(
     const std::string& filename, bool saveCovariancesToo) const
 {
     ASSERT_(state_.sm);
-    if (saveCovariancesToo)
+
+    // Marginals may be unavailable for an ill-conditioned graph (e.g. a very stiff
+    // odometry with only a weak prior): save the poses anyway.
+    const bool withCov = saveCovariancesToo && state_.graphMarginals.has_value();
+    if (saveCovariancesToo && !withCov)
     {
-        ASSERT_(state_.graphMarginals.has_value());
+        MRPT_LOG_WARN_STREAM("No graph marginals: saving '" << filename << "' without covariances");
     }
 
     std::function<mrpt::math::CMatrixDouble66(size_t)> covOf;
-    if (saveCovariancesToo)
+    if (withCov)
     {
         covOf = [this](size_t id) { return state_.get_pose_cov(id); };
     }
 
     lc_common::save_trajectory_as_tum(
         filename, *state_.sm, [this](size_t id) { return state_.get_pose(id); },
-        saveCovariancesToo ? &covOf : nullptr, const_cast<FrameToFrameLoopClosure*>(this));
+        withCov ? &covOf : nullptr, const_cast<FrameToFrameLoopClosure*>(this));
 }
