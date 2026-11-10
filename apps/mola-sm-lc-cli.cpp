@@ -243,7 +243,8 @@ void run_sm_to_mm()
         kfBefore  = keyframe_poses(sm, kfIndices);
         dense     = read_tum(arg_input_dense);
         ASSERTMSG_(!dense.empty(), "No poses read from: '" + arg_input_dense + "'");
-        std::ofstream testOut(arg_output_dense);
+        // Append mode: checks writability without truncating an existing file.
+        std::ofstream testOut(arg_output_dense, std::ios::app);
         ASSERTMSG_(testOut.is_open(), "Cannot write to: '" + arg_output_dense + "'");
     }
 
