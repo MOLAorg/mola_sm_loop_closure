@@ -2,8 +2,8 @@
 Changelog for package mola_sm_loop_closure
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+1.4.0 (2026-11-15)
+------------------
 * GNSS pose graph: yaw+translation pre-alignment; mola-sm-lc-cli can write a dense trajectory output.
 * analyze(): exclude_pairs (keyframe indices), so already-closed pairs are not proposed again while revisited regions can still give several loops.
 * Exact MRPT<->GTSAM SE(3) pose covariance conversions; ICP loop-closure edges keep the correlations of the ICP covariance, with noise floors on the right components.
