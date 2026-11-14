@@ -2,6 +2,16 @@
 Changelog for package mola_sm_loop_closure
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* GNSS pose graph: yaw+translation pre-alignment; mola-sm-lc-cli can write a dense trajectory output.
+* analyze(): exclude_pairs (keyframe indices), so already-closed pairs are not proposed again while revisited regions can still give several loops.
+* Exact MRPT<->GTSAM SE(3) pose covariance conversions; ICP loop-closure edges keep the correlations of the ICP covariance, with noise floors on the right components.
+* Horizontality constraint as an up-vector factor, independent of yaw.
+* Robustness: a failed candidate ICP rejects only that candidate; abort if every ICP run throws.
+* Requires mola_gtsam_factors >= 3.0.0.
+* Contributors: Jose Luis Blanco-Claraco
+
 1.3.1 (2026-10-27)
 ------------------
 * Merge pull request `#27 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/27>`_ from MOLAorg/fix/voxelmap-prob-miss
