@@ -66,6 +66,7 @@
 #include <cstring>
 #include <future>
 #include <mutex>
+#include <thread>
 
 #include "DeterministicScope.h"
 
@@ -231,7 +232,6 @@ uint32_t frame_group_of(std::size_t i, std::size_t group)
 FrameToFrameLoopClosure::FrameToFrameLoopClosure()
 {
     mrpt::system::COutputLogger::setLoggerName("FrameToFrameLoopClosure");
-    threads_.name("f2f_icp_threads");
 }
 
 void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
@@ -372,6 +372,26 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     }
 
     profiler_.enable(params_.profiler_enabled);
+
+    // One ICP slot per candidate worker: each slot holds a pipeline, a
+    // KISS-Matcher instance and a share of the point-cloud cache, so sizing
+    // them by the cores instead would cost memory for workers never used.
+    size_t nSlots = 1;
+    if (params_.parallel_icp_enabled)
+    {
+        // Auto (0): ~1/4 of the cores. mp2p_icp already parallelizes each ICP
+        // internally with TBB, so one outer thread per core just oversubscribes
+        // the shared TBB pool; the measured speedup flattens out by ~cores/4.
+        const size_t cores = std::max(1u, std::thread::hardware_concurrency());
+        nSlots =
+            params_.num_icp_threads == 0 ? std::max<size_t>(1, cores / 4) : params_.num_icp_threads;
+    }
+    state_.perThreadState_ = std::vector<PerThreadState>(nSlots);
+    if (nSlots > 1 && threads_.size() < nSlots)
+    {
+        threads_.resize(nSlots - threads_.size());
+        threads_.name("f2f_icp_threads");
+    }
 
     // Initialize ICP pipelines for each thread
     for (auto& pts : state_.perThreadState_)
@@ -1797,9 +1817,8 @@ std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
     reportProgress();  // initial (0 / total), so a listener sees the queue fill
 
     // Loop-closure candidates are independent pairwise registrations, so their
-    // ICP tests can run concurrently. Resolve the worker count: one per-thread
-    // ICP slot (each with its own pipeline + KISS-Matcher instance), optionally
-    // capped by num_icp_threads, and never more than the candidate count.
+    // ICP tests can run concurrently: one worker per ICP slot (see
+    // initialize()), never more than the candidate count.
     //
     // `deterministic` does NOT turn off candidate parallelism, and that is a
     // measured decision rather than an oversight. Once the reduction underneath
@@ -1811,24 +1830,8 @@ std::vector<ProposedLoopEdge> FrameToFrameLoopClosure::analyze(
     // determinism gained.
     const DeterministicScope detScope{params_.deterministic, this};
 
-    size_t nThreads = 1;
-    if (params_.parallel_icp_enabled)
-    {
-        const size_t slots = state_.perThreadState_.size();
-        // Auto (0): use ~1/4 of the cores. mp2p_icp already parallelizes each ICP
-        // internally with TBB, so one outer thread per core just oversubscribes
-        // the shared TBB pool; the measured speedup flattens out by ~cores/4.
-        //
-        // cores/4 stays the auto value under `deterministic` too. Taking all the
-        // slots instead was tried, on the theory that pinning the inner runtimes
-        // leaves nothing to oversubscribe, and measured WORSE on KITTI-07 (47-50 s
-        // against 40 s): the per-thread point-cloud cache is
-        // pc_cache_max_bytes/slots, so more slots means a smaller cache each and
-        // more clouds regenerated.
-        nThreads = params_.num_icp_threads == 0 ? std::max<size_t>(1, slots / 4)
-                                                : std::min(params_.num_icp_threads, slots);
-        nThreads = std::clamp<size_t>(nThreads, 1, std::max<size_t>(1, candidates.size()));
-    }
+    const size_t nThreads = std::clamp<size_t>(
+        state_.perThreadState_.size(), 1, std::max<size_t>(1, candidates.size()));
 
     // Evaluate one candidate on ICP slot `slot`; returns the accepted edge (if
     // any). A single degenerate candidate (e.g. a scan missing the registration

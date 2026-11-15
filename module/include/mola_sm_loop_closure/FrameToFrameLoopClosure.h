@@ -219,8 +219,10 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
          *  independent pairwise registrations, so this speeds up both live scans
          *  and the finalize pass roughly linearly with core count. */
         bool parallel_icp_enabled = true;
-        /** Number of worker threads for candidate ICP. 0 = one per per-thread
-         *  ICP slot (hardware concurrency). Clamped to the number of slots. */
+        /** Number of worker threads for candidate ICP. 0 = auto (a quarter of
+         *  the hardware concurrency). It also sets how many per-thread ICP slots
+         *  (pipeline, KISS-Matcher instance, share of the point-cloud cache) are
+         *  created, so memory scales with it. */
         size_t num_icp_threads = 0;
 
         /** Master switch for a REPRODUCIBLE scan: the same simplemap in gives
@@ -390,9 +392,8 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
         /// (no unload) since we must not mutate the borrowed map.
         bool readOnlySnapshot = false;
 
-        // Per-thread ICP instances
-        std::vector<PerThreadState> perThreadState_{
-            std::max(1u, std::thread::hardware_concurrency())};
+        // Per-thread ICP instances, one per worker (sized in initialize()).
+        std::vector<PerThreadState> perThreadState_ = std::vector<PerThreadState>(1);
 
         // GNSS reference coordinate
         std::optional<mrpt::topography::TGeodeticCoords> globalGeoRef;
@@ -435,7 +436,7 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
     State state_;
 
     mrpt::system::CTimeLogger profiler_{true, "frame_to_frame_lc"};
-    mrpt::WorkerThreadsPool   threads_{state_.perThreadState_.size()};
+    mrpt::WorkerThreadsPool   threads_;  // grown in initialize()
 
     // Private methods
     mrpt::poses::CPose3D frame_pose_in_simplemap(frame_id_t frameId) const;

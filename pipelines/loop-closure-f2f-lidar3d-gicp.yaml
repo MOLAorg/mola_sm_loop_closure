@@ -57,6 +57,7 @@ params:
   parallel_icp_enabled: "${LC_PARALLEL_ICP|true}"
   # 0 = auto (~cores/4). Each ICP already uses TBB internally, so one outer
   # thread per core just oversubscribes; speedup flattens by ~cores/4.
+  # Also the number of per-thread ICP slots, so memory scales with it.
   num_icp_threads: "${LC_NUM_ICP_THREADS|0}"
 
   # Reproducible scan: same simplemap in, same edges out -- provided the build
