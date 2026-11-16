@@ -77,6 +77,10 @@ mola-sm-lc-cli -i in.simplemap -o out.simplemap \
 - `use_kiss_matcher: true` : use [KISS-Matcher](https://github.com/mit-spark/kiss-matcher) global registration to seed the ICP initial guess for each loop-closure candidate (default: `false`; requires the `third_party/kiss-matcher` submodule to be populated).
   - `kiss_matcher_resolution` (default `1.0` m) : voxel size for KISS-Matcher feature extraction; controls `normal_radius ≈ 3×` and `fpfh_radius ≈ 5×`.
   - `kiss_matcher_layer` (default `"points_to_register_points"`) : name of the `mp2p_icp::metric_map_t` layer whose points are fed into KISS-Matcher.
+- `global_registration` : initial guess of each loop-closure ICP: `none` (the graph estimate), `kiss` (KISS-Matcher, as `use_kiss_matcher`) or `bev` (default: `kiss` if `use_kiss_matcher`, else `none`).
+  - `bev`: a gravity-aligned 4-DoF search of our own (`global_registration::bev_correlation()`): both keyframe clouds are leveled with the roll and pitch of their poses, projected into bird's eye view grids of the cell vertical extent and matched by FFT cross-correlation, coarse to fine in yaw; z from the ground heights in the overlap. It needs keyframe poses with absolute roll and pitch (LiDAR-inertial odometry). Parameters in `bev_correlation:` (grid resolution and range, yaw steps, `min_score`, `min_ambiguity_ratio`).
+  - `global_registration_layer` (default `"points_to_register_points"`) : layer fed into `bev`.
+  - `skip_ambiguous_candidates` (default `true`) : reject a candidate whose `bev` match cannot be told apart from a clearly different one (repetitive structure), instead of running ICP from the graph estimate.
 
 See the [online tutorial](https://docs.mola-slam.org/latest/tutorial-ouster-mapping-lc.html) for a step-by-step example.
 

@@ -127,6 +127,26 @@ params:
   kiss_matcher_resolution: "${KISS_MATCHER_RESOLUTION|1.0}" # [m] voxel size for feature extraction
   kiss_matcher_layer: "${KISS_MATCHER_LAYER|points_to_register_points}" # metric-map layer to feed KISS-Matcher
 
+  # ===== Global registration initial guess =====
+  # none | kiss | bev. Empty: kiss if use_kiss_matcher is true, none otherwise.
+  # bev: gravity-aligned 4-DoF search (bird's eye view correlation); it needs
+  # keyframe poses with absolute roll and pitch (LiDAR-inertial odometry).
+  global_registration: "${LC_GLOBAL_REGISTRATION|}"
+  global_registration_layer: "${LC_GLOBAL_REGISTRATION_LAYER|points_to_register_points}"
+  # Reject candidates whose bev match is ambiguous (repetitive structure)
+  # instead of running ICP from the graph estimate:
+  skip_ambiguous_candidates: "${LC_SKIP_AMBIGUOUS_CANDIDATES|true}"
+  bev_correlation:
+    grid_resolution: "${LC_BEV_RESOLUTION|1.0}" # [m]
+    max_range: "${LC_BEV_MAX_RANGE|64.0}" # [m] half side of the grids
+    yaw_step_deg: "${LC_BEV_YAW_STEP|1.5}" # [deg] fine yaw step
+    coarse_resolution_factor: "${LC_BEV_COARSE_FACTOR|2}" # 1: single stage
+    coarse_yaw_step_deg: "${LC_BEV_COARSE_YAW_STEP|6.0}" # [deg]
+    coarse_candidates: "${LC_BEV_COARSE_CANDIDATES|3}"
+    max_cell_height: "${LC_BEV_MAX_CELL_HEIGHT|3.0}" # [m]
+    min_score: "${LC_BEV_MIN_SCORE|0.25}"
+    min_ambiguity_ratio: "${LC_BEV_MIN_AMBIGUITY_RATIO|1.1}"
+
   # ===== Planar World Annealing =====
   # When enabled, a planarity constraint (z≈0, roll≈0, pitch≈0) is added for
   # each keyframe. It starts strong at LC round 0 and is exponentially relaxed
