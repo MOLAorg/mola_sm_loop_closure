@@ -356,11 +356,12 @@ BevCorrelationResult bev_correlation(
         coarsePeaks.begin(), coarsePeaks.end(),
         [](const Peak& a, const Peak& b) { return a.score > b.score; });
 
-    // The best few distinct coarse candidates:
+    // The best few distinct coarse candidates; at least two, so that the
+    // ambiguity ratio always sees a clearly different alternative:
     std::vector<Peak> candidates;
     for (const auto& p : coarsePeaks)
     {
-        if (candidates.size() >= std::max<size_t>(1, params.coarse_candidates))
+        if (candidates.size() >= std::max<size_t>(2, params.coarse_candidates))
         {
             break;
         }
@@ -449,13 +450,14 @@ BevCorrelationResult bev_correlation(
             dz.push_back(static_cast<double>(gGrid.zmin[k]) - lBest.zmin[k]);
         }
     }
-    double           z               = 0;
+    // Too little overlap to estimate z: not a usable result.
     constexpr size_t MIN_CELLS_FOR_Z = 20;
-    if (dz.size() >= MIN_CELLS_FOR_Z)
+    if (dz.size() < MIN_CELLS_FOR_Z)
     {
-        std::nth_element(dz.begin(), dz.begin() + static_cast<long>(dz.size() / 2), dz.end());
-        z = dz[dz.size() / 2];
+        return result;
     }
+    std::nth_element(dz.begin(), dz.begin() + static_cast<long>(dz.size() / 2), dz.end());
+    const double z = dz[dz.size() / 2];
 
     // Back from the leveled frames: global <- leveled global <- leveled local <- local
     const auto gLev =

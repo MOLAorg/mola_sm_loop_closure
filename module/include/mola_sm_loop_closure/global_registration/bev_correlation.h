@@ -32,7 +32,8 @@ struct BevCorrelationParameters
 
     /** Coarse-to-fine search: a first pass over every yaw on a grid this many
      *  times coarser, every coarse_yaw_step_deg; then, at the full resolution,
-     *  yaw_step_deg steps around the best coarse_candidates. 1: one stage. */
+     *  yaw_step_deg steps around the best coarse_candidates (at least 2, for
+     *  the ambiguity ratio). coarse_resolution_factor 1: one stage. */
     unsigned int coarse_resolution_factor = 2;
     double       coarse_yaw_step_deg      = 6.0;
     size_t       coarse_candidates        = 3;
