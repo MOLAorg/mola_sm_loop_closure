@@ -80,6 +80,7 @@ mola-sm-lc-cli -i in.simplemap -o out.simplemap \
 - `global_registration` : initial guess of each loop-closure ICP: `none` (the graph estimate), `kiss` (KISS-Matcher, as `use_kiss_matcher`) or `bev` (default: `kiss` if `use_kiss_matcher`, else `none`).
   - `bev`: a gravity-aligned 4-DoF search of our own (`global_registration::bev_correlation()`): both keyframe clouds are leveled with the roll and pitch of their poses, projected into bird's eye view grids of the cell vertical extent and matched by FFT cross-correlation, coarse to fine in yaw; z from the ground heights in the overlap. It needs keyframe poses with absolute roll and pitch (LiDAR-inertial odometry). Parameters in `bev_correlation:` (grid resolution and range, yaw steps, `min_score`, `min_ambiguity_ratio`).
   - `global_registration_layer` (default `"points_to_register_points"`) : layer fed into `bev`.
+  - `bev_assume_level` (default `false`) : `bev` takes both clouds as level, ignoring the roll and pitch of the keyframe poses: for odometry without a gravity reference (LiDAR-only) on mostly level ground.
   - `skip_ambiguous_candidates` (default `true`) : reject a candidate whose `bev` match cannot be told apart from a clearly different one (repetitive structure), instead of running ICP from the graph estimate.
 
 See the [online tutorial](https://docs.mola-slam.org/latest/tutorial-ouster-mapping-lc.html) for a step-by-step example.

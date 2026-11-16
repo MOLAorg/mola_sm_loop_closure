@@ -170,7 +170,10 @@ TEST(BevCorrelation, DatasetLoopClosureCases)
     int                            nValidWrong = 0;
     for (const auto& casesFile : sets)
     {
-        const auto doc = mrpt::containers::yaml::FromFile(casesFile);
+        const int  loops0      = nLoops;
+        const int  found0      = nFound;
+        const int  validWrong0 = nValidWrong;
+        const auto doc         = mrpt::containers::yaml::FromFile(casesFile);
         for (const auto& node : doc["cases"].asSequence())
         {
             const auto c    = mrpt::containers::yaml(node);
@@ -199,6 +202,8 @@ TEST(BevCorrelation, DatasetLoopClosureCases)
                 std::cout << "  ^ valid but wrong\n";
             }
         }
+        std::cout << casesFile << ": loops found " << nFound - found0 << "/" << nLoops - loops0
+                  << ", valid but wrong " << nValidWrong - validWrong0 << "\n";
     }
     std::cout << "loops found: " << nFound << "/" << nLoops
               << ", valid but wrong results: " << nValidWrong << "\n";

@@ -320,6 +320,7 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, global_registration, std::string);
     YAML_LOAD_OPT(params_, global_registration_layer, std::string);
     YAML_LOAD_OPT(params_, skip_ambiguous_candidates, bool);
+    YAML_LOAD_OPT(params_, bev_assume_level, bool);
     if (cfg.has("bev_correlation"))
     {
         params_.bev_correlation.load_from_yaml(cfg["bev_correlation"]);
@@ -1675,8 +1676,11 @@ std::optional<FrameToFrameLoopClosure::LcIcpEdge> FrameToFrameLoopClosure::run_l
         if (pts_i && pts_j && !pts_i->empty() && !pts_j->empty())
         {
             // Only the roll and pitch of the keyframe poses are used:
-            const auto r = mola::global_registration::bev_correlation(
-                *pts_i, pose_i, *pts_j, pose_j, params_.bev_correlation);
+            const mrpt::poses::CPose3D level;
+            const auto&                attitude_i = params_.bev_assume_level ? level : pose_i;
+            const auto&                attitude_j = params_.bev_assume_level ? level : pose_j;
+            const auto                 r          = mola::global_registration::bev_correlation(
+                                         *pts_i, attitude_i, *pts_j, attitude_j, params_.bev_correlation);
             if (r.valid)
             {
                 initGuess = r.pose.asTPose();
