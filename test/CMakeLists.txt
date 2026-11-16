@@ -11,7 +11,7 @@ find_package(mola_test_datasets)
 # mola_test_datasets. If the installed version lacks any of these sets (older
 # release), they are fetched from its repository (shallow, only that directory).
 # Without them (e.g. no network), the dataset test is skipped.
-set(_LC_CASE_SETS vbr husky)
+set(_LC_CASE_SETS vbr husky kitti)
 set(_LC_CASES_DIR "")
 
 function(_lc_cases_complete dir out)
