@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <vector>
 
 namespace mola::global_registration
@@ -38,6 +39,24 @@ void BevCorrelationParameters::load_from_yaml(const mrpt::containers::yaml& cfg)
     YAML_LOAD_OPT(coarse_resolution_factor, unsigned int);
     YAML_LOAD_OPT(coarse_yaw_step_deg, double);
     YAML_LOAD_OPT(coarse_candidates, size_t);
+    validate();
+}
+
+void BevCorrelationParameters::validate() const
+{
+    ASSERTMSG_(grid_resolution > 0, "bev_correlation: grid_resolution must be > 0");
+    ASSERTMSG_(max_range > 0, "bev_correlation: max_range must be > 0");
+    ASSERTMSG_(yaw_step_deg > 0, "bev_correlation: yaw_step_deg must be > 0");
+    ASSERTMSG_(coarse_yaw_step_deg > 0, "bev_correlation: coarse_yaw_step_deg must be > 0");
+    ASSERTMSG_(
+        coarse_resolution_factor >= 1, "bev_correlation: coarse_resolution_factor must be >= 1");
+    ASSERTMSG_(ambiguity_min_distance > 0, "bev_correlation: ambiguity_min_distance must be > 0");
+    ASSERTMSG_(
+        2 * max_range / grid_resolution <= static_cast<double>(MAX_GRID_CELLS),
+        mrpt::format(
+            "bev_correlation: grids of 2*max_range/grid_resolution = %.0f cells per side, more "
+            "than %zu: raise grid_resolution or lower max_range",
+            2 * max_range / grid_resolution, MAX_GRID_CELLS));
 }
 
 namespace
@@ -52,7 +71,9 @@ struct Points
     std::vector<float> z;
 };
 
-Points level(const mrpt::maps::CPointsMap& pc, const mrpt::poses::CPose3D& attitude)
+/** Leveled points within maxRange (horizontal) of the origin. */
+Points level(
+    const mrpt::maps::CPointsMap& pc, const mrpt::poses::CPose3D& attitude, double maxRange)
 {
     const auto R = mrpt::poses::CPose3D::FromYawPitchRoll(0, attitude.pitch(), attitude.roll())
                        .getRotationMatrix();
@@ -60,14 +81,23 @@ Points level(const mrpt::maps::CPointsMap& pc, const mrpt::poses::CPose3D& attit
     const auto& ys = pc.getPointsBufferRef_y();
     const auto& zs = pc.getPointsBufferRef_z();
     Points      out;
-    out.x.resize(xs.size());
-    out.y.resize(xs.size());
-    out.z.resize(xs.size());
+    out.x.reserve(xs.size());
+    out.y.reserve(xs.size());
+    out.z.reserve(xs.size());
+    const double maxRange2 = maxRange * maxRange;
     for (size_t i = 0; i < xs.size(); i++)
     {
-        out.x[i] = static_cast<float>(R(0, 0) * xs[i] + R(0, 1) * ys[i] + R(0, 2) * zs[i]);
-        out.y[i] = static_cast<float>(R(1, 0) * xs[i] + R(1, 1) * ys[i] + R(1, 2) * zs[i]);
-        out.z[i] = static_cast<float>(R(2, 0) * xs[i] + R(2, 1) * ys[i] + R(2, 2) * zs[i]);
+        const double x = R(0, 0) * xs[i] + R(0, 1) * ys[i] + R(0, 2) * zs[i];
+        const double y = R(1, 0) * xs[i] + R(1, 1) * ys[i] + R(1, 2) * zs[i];
+        const double z = R(2, 0) * xs[i] + R(2, 1) * ys[i] + R(2, 2) * zs[i];
+        // Also drops non-finite points:
+        if (!(x * x + y * y <= maxRange2) || !std::isfinite(z))
+        {
+            continue;
+        }
+        out.x.push_back(static_cast<float>(x));
+        out.y.push_back(static_cast<float>(y));
+        out.z.push_back(static_cast<float>(z));
     }
     return out;
 }
@@ -98,13 +128,15 @@ struct Grid
         {
             const double x  = c * p.x[i] - s * p.y[i] + dx;
             const double y  = s * p.x[i] + c * p.y[i] + dy;
-            const auto   ix = static_cast<long>(std::floor((x + half) / res));
-            const auto   iy = static_cast<long>(std::floor((y + half) / res));
-            if (ix < 0 || iy < 0 || ix >= static_cast<long>(N) || iy >= static_cast<long>(N))
+            const double fx = (x + half) / res;
+            const double fy = (y + half) / res;
+            const auto   n  = static_cast<double>(N);
+            // Bounds checked before the integer conversion (also rejects NaN):
+            if (!(fx >= 0 && fx < n && fy >= 0 && fy < n))
             {
                 continue;
             }
-            const size_t k = static_cast<size_t>(ix) * N + static_cast<size_t>(iy);
+            const size_t k = static_cast<size_t>(fx) * N + static_cast<size_t>(fy);
             const auto   z = static_cast<float>(p.z[i] + dz);
             zmin[k]        = std::min(zmin[k], z);
             zmax[k]        = std::max(zmax[k], z);
@@ -205,6 +237,10 @@ class Correlator
     Peak eval(const Points& local, double yaw, double minDist = 0, double* secondPeak = nullptr)
     {
         Peak p;
+        if (!ok())
+        {
+            return p;
+        }
         Grid lGrid(N_, res_);
         lGrid.insert(local, std::cos(yaw), std::sin(yaw), 0, 0, 0);
         const double lNorm = lGrid.to_matrix(maxHeight_, lMat_, M_);
@@ -289,15 +325,14 @@ BevCorrelationResult bev_correlation(
     const BevCorrelationParameters& params)
 {
     BevCorrelationResult result;
-    ASSERT_GT_(params.grid_resolution, 0);
-    ASSERT_GT_(params.yaw_step_deg, 0);
-    ASSERT_GE_(params.coarse_resolution_factor, 1);
+    params.validate();
 
-    const Points pg = level(global, globalAttitude);
-    const Points pl = level(local, localAttitude);
+    const Points pg = level(global, globalAttitude, params.max_range);
+    const Points pl = level(local, localAttitude, params.max_range);
 
-    const double minYaw  = mrpt::DEG2RAD(params.ambiguity_min_yaw_deg);
-    const double minDist = params.ambiguity_min_distance;
+    const double minYaw = mrpt::DEG2RAD(params.ambiguity_min_yaw_deg);
+    // Alternatives closer than two cells are the same peak:
+    const double minDist = std::max(params.ambiguity_min_distance, 2 * params.grid_resolution);
 
     // Stage 1, coarse: every yaw on a coarser grid.
     const bool   twoStages = params.coarse_resolution_factor > 1;
@@ -339,32 +374,53 @@ BevCorrelationResult bev_correlation(
     }
 
     // Stage 2, fine: yaws around each candidate, at the full resolution.
-    Correlator  fineOwned(pg, params.grid_resolution, params.max_range, params.max_cell_height);
-    Correlator& fine = twoStages ? fineOwned : coarse;
-    std::vector<Peak> finePeaks;
+    std::optional<Correlator> fineOwned;
+    if (twoStages)
+    {
+        fineOwned.emplace(pg, params.grid_resolution, params.max_range, params.max_cell_height);
+        if (!fineOwned->ok())
+        {
+            return result;
+        }
+    }
+    Correlator& fine = twoStages ? *fineOwned : coarse;
+
+    // Each candidate refined in yaw (two stages), with the best score of its
+    // correlation at least minDist away from its peak:
+    std::vector<Peak>   finePeaks;
+    std::vector<double> sameYawSeconds;
     for (const auto& c : candidates)
     {
+        Peak   bestHere;
+        double secondHere = 0;
         if (!twoStages)
         {
-            finePeaks.push_back(c);
-            continue;
+            bestHere = fine.eval(pl, c.yaw, minDist, &secondHere);
         }
-        Peak      bestHere;
-        const int half = static_cast<int>(std::ceil(coarseStep / params.yaw_step_deg));
-        for (int k = -half; k <= half; k++)
+        else
         {
-            const auto p = fine.eval(pl, c.yaw + mrpt::DEG2RAD(k * params.yaw_step_deg));
-            if (p.score > bestHere.score)
+            const int half =
+                static_cast<int>(std::ceil(0.5 * coarseStep / params.yaw_step_deg)) + 1;
+            for (int k = -half; k <= half; k++)
             {
-                bestHere = p;
+                double     s2 = 0;
+                const auto p =
+                    fine.eval(pl, c.yaw + mrpt::DEG2RAD(k * params.yaw_step_deg), minDist, &s2);
+                if (p.score > bestHere.score)
+                {
+                    bestHere   = p;
+                    secondHere = s2;
+                }
             }
         }
         finePeaks.push_back(bestHere);
+        sameYawSeconds.push_back(secondHere);
     }
-    const auto bestIt = std::max_element(
-        finePeaks.begin(), finePeaks.end(),
-        [](const Peak& a, const Peak& b) { return a.score < b.score; });
-    const Peak best = *bestIt;
+    const auto bestIdx = static_cast<size_t>(std::distance(
+        finePeaks.begin(), std::max_element(
+                               finePeaks.begin(), finePeaks.end(),
+                               [](const Peak& a, const Peak& b) { return a.score < b.score; })));
+    const Peak best    = finePeaks.at(bestIdx);
 
     // Ambiguity: the best clearly different peak, among the other candidates and
     // elsewhere in the best yaw correlation (repetitive structures along a direction).
@@ -376,12 +432,10 @@ BevCorrelationResult bev_correlation(
             second = std::max(second, p.score);
         }
     }
-    double sameYawSecond = 0;
-    fine.eval(pl, best.yaw, minDist, &sameYawSecond);
-    second = std::max(second, sameYawSecond);
+    second = std::max(second, sameYawSeconds.at(bestIdx));
 
     result.score           = best.score;
-    result.ambiguity_ratio = best.score / std::max(second, 1e-9);
+    result.ambiguity_ratio = best.score > 0 ? best.score / std::max(second, 1e-9) : 0.0;
 
     // z: median difference of the lowest point (ground) of the cells seen by both
     const Grid& gGrid = fine.grid();

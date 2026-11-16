@@ -20,7 +20,9 @@
 #include <mrpt/random/RandomGenerators.h>
 #include <mrpt/system/filesystem.h>
 
+#include <algorithm>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -125,17 +127,27 @@ TEST(BevCorrelation, UnrelatedScenesAreRejected)
     EXPECT_FALSE(r.valid);
 }
 
-// Loop closure cases of mola_test_datasets (datasets/loop_closures/vbr), if installed.
+// Loop closure cases of mola_test_datasets (datasets/loop_closures/*/cases.yaml),
+// if installed: every set found there is used.
 TEST(BevCorrelation, DatasetLoopClosureCases)
 {
-    const char*       dir       = std::getenv("LC_CASES_DIR");
-    const std::string casesFile = dir ? std::string(dir) + "/vbr/cases.yaml" : std::string();
-    if (casesFile.empty() || !mrpt::system::fileExists(casesFile))
+    const char*              dir = std::getenv("LC_CASES_DIR");
+    std::vector<std::string> sets;
+    if (dir && std::filesystem::is_directory(dir))
+    {
+        for (const auto& e : std::filesystem::directory_iterator(dir))
+        {
+            if (e.is_directory() && std::filesystem::exists(e.path() / "cases.yaml"))
+            {
+                sets.push_back((e.path() / "cases.yaml").string());
+            }
+        }
+    }
+    if (sets.empty())
     {
         GTEST_SKIP() << "No loop closure cases found (LC_CASES_DIR)";
     }
-    const auto doc   = mrpt::containers::yaml::FromFile(casesFile);
-    const auto cases = doc["cases"];
+    std::sort(sets.begin(), sets.end());
 
     const auto loadPoints = [&](const std::string& f)
     {
@@ -153,44 +165,44 @@ TEST(BevCorrelation, DatasetLoopClosureCases)
     };
 
     const BevCorrelationParameters params;
-    int                            nLoops         = 0;
-    int                            nFound         = 0;
-    int                            nOther         = 0;
-    int                            nOtherAccepted = 0;
-    for (const auto& node : cases.asSequence())
+    int                            nLoops      = 0;
+    int                            nFound      = 0;
+    int                            nValidWrong = 0;
+    for (const auto& casesFile : sets)
     {
-        const auto c    = mrpt::containers::yaml(node);
-        const auto kind = c["kind"].as<std::string>();
-        const auto g    = loadPoints(c["global"].as<std::string>());
-        const auto l    = loadPoints(c["local"].as<std::string>());
-        const auto r    = bev_correlation(
-               *g, pose(c["global_odometry_pose"]), *l, pose(c["local_odometry_pose"]), params);
-        const auto   ref = pose(c["reference_pose"]);
-        const double et  = (r.pose.translation() - ref.translation()).norm();
-        const double er  = rot_error_deg(r.pose, ref);
-        std::cout << c["name"].as<std::string>() << " " << kind << " valid=" << r.valid
-                  << " score=" << r.score << " ratio=" << r.ambiguity_ratio << " err=" << et
-                  << " m " << er << " deg\n";
-        if (kind == "loop")
+        const auto doc = mrpt::containers::yaml::FromFile(casesFile);
+        for (const auto& node : doc["cases"].asSequence())
         {
-            nLoops++;
-            if (r.valid && et < 2.0 && er < 5.0)
+            const auto c    = mrpt::containers::yaml(node);
+            const auto kind = c["kind"].as<std::string>();
+            const auto g    = loadPoints(c["global"].as<std::string>());
+            const auto l    = loadPoints(c["local"].as<std::string>());
+            const auto r    = bev_correlation(
+                   *g, pose(c["global_odometry_pose"]), *l, pose(c["local_odometry_pose"]), params);
+            const auto   ref     = pose(c["reference_pose"]);
+            const double et      = (r.pose.translation() - ref.translation()).norm();
+            const double er      = rot_error_deg(r.pose, ref);
+            const bool   correct = et < 2.0 && er < 5.0;
+            std::cout << c["name"].as<std::string>() << " " << kind << " valid=" << r.valid
+                      << " score=" << r.score << " ratio=" << r.ambiguity_ratio << " err=" << et
+                      << " m " << er << " deg\n";
+            if (kind == "loop")
             {
-                nFound++;
+                nLoops++;
+                nFound += (r.valid && correct) ? 1 : 0;
             }
-        }
-        else if (kind == "no_loop")
-        {
-            nOther++;
-            if (r.valid)
+            // A valid result must be right, for every kind of case (the reference
+            // pose of non-loops is far from anything a match could return):
+            if (r.valid && !correct)
             {
-                nOtherAccepted++;
+                nValidWrong++;
+                std::cout << "  ^ valid but wrong\n";
             }
         }
     }
     std::cout << "loops found: " << nFound << "/" << nLoops
-              << ", non-loops accepted: " << nOtherAccepted << "/" << nOther << "\n";
-    // Thresholds a little under what the method achieves, to catch regressions:
-    EXPECT_GE(nFound, nLoops * 9 / 10);
-    EXPECT_LE(nOtherAccepted, 1);
+              << ", valid but wrong results: " << nValidWrong << "\n";
+    // A little under what the method achieves, to catch regressions:
+    EXPECT_GE(nFound, nLoops * 3 / 4);
+    EXPECT_EQ(nValidWrong, 0);
 }

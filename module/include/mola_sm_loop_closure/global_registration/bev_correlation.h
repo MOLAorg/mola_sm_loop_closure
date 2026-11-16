@@ -23,7 +23,8 @@ struct BevCorrelationParameters
     /// Cell size of the bird's eye view grids [m].
     double grid_resolution = 1.0;
 
-    /// Half side of the square grids, centered at each cloud origin [m].
+    /** Points farther than this (horizontally) from each cloud origin are
+     *  ignored [m]. The square grids are sized to contain that circle. */
     double max_range = 64.0;
 
     /// Yaw search step [deg], of the fine stage if there are two.
@@ -43,13 +44,20 @@ struct BevCorrelationParameters
     double min_score = 0.25;
 
     /// Minimum ratio of the best peak to the best clearly different one.
-    double min_ambiguity_ratio = 1.1;
+    double min_ambiguity_ratio = 1.25;
 
     /// Peaks closer than these to the best one are not alternatives [m], [deg].
     double ambiguity_min_distance = 3.0;
     double ambiguity_min_yaw_deg  = 10.0;
 
+    /// Upper limit of 2 * max_range / grid_resolution (memory and time).
+    static constexpr size_t MAX_GRID_CELLS = 1024;
+
+    /// Loads the given values (others keep their defaults), then validate().
     void load_from_yaml(const mrpt::containers::yaml& c);
+
+    /// Throws if a value is out of range.
+    void validate() const;
 };
 
 /** Output of bev_correlation(). */
