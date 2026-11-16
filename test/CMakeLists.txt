@@ -7,6 +7,17 @@ ament_add_gtest(test_gnss_alignment_and_densify test_gnss_alignment_and_densify.
 target_link_libraries(test_gnss_alignment_and_densify ${PROJECT_NAME})
 find_package(mola_test_datasets)
 
+# Global registration: synthetic cases, plus the dataset ones if installed.
+set(_LC_CASES_DIR "")
+if(mola_test_datasets_FOUND)
+  set(_LC_CASES_DIR "${mola_test_datasets_DIR}/../datasets/loop_closures")
+endif()
+ament_add_gtest(test_bev_correlation test_bev_correlation.cpp
+  ENV LC_CASES_DIR=${_LC_CASES_DIR}
+  TIMEOUT 300
+)
+target_link_libraries(test_bev_correlation ${PROJECT_NAME})
+
 if(NOT mola_test_datasets_FOUND)
   message(STATUS "**********************************************************************")
   message(STATUS " WARNING: Skipping unit tests since mola_test_datasets was not found  ")

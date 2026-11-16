@@ -56,6 +56,7 @@ mola_add_library(
     module/src/common/gnss_factor_helpers.cpp
     module/src/common/debug_flags.cpp
     module/src/common/densify_trajectory.cpp
+    module/src/global_registration/bev_correlation.cpp
     # Headers:
     module/include/mola_sm_loop_closure/SimplemapLoopClosure.h
     module/include/mola_sm_loop_closure/FrameToFrameLoopClosure.h
@@ -68,6 +69,7 @@ mola_add_library(
     module/include/mola_sm_loop_closure/common/gnss_factor_helpers.h
     module/include/mola_sm_loop_closure/common/debug_flags.h
     module/include/mola_sm_loop_closure/common/densify_trajectory.h
+    module/include/mola_sm_loop_closure/global_registration/bev_correlation.h
   PUBLIC_LINK_LIBRARIES
     gtsam
     mola::mola_georeferencing
