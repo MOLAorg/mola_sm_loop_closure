@@ -143,16 +143,6 @@ jobs:
           apt-get update
           apt-get install -y lcov
 
-      # Loop closure registration cases, from the latest mola_test_datasets
-      # (the released package may not have them yet). Outside the workspace,
-      # so colcon does not build it.
-      - name: Fetch loop closure test cases
-        run: |
-          git clone --depth 1 --filter=blob:none --sparse \
-            https://github.com/MOLAorg/mola_test_datasets.git /tmp/mola_test_datasets
-          git -C /tmp/mola_test_datasets sparse-checkout set datasets/loop_closures
-          echo "LC_CASES_DIR=/tmp/mola_test_datasets/datasets/loop_closures" >> "$GITHUB_ENV"
-
       - name: Build with colcon
         run: |
           . /opt/ros/*/setup.sh

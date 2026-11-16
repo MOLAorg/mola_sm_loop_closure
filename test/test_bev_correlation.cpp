@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -127,19 +128,21 @@ TEST(BevCorrelation, UnrelatedScenesAreRejected)
     EXPECT_FALSE(r.valid);
 }
 
-// Loop closure cases of mola_test_datasets (datasets/loop_closures/*/cases.yaml),
-// if installed: every set found there is used.
+// Loop closure cases of mola_test_datasets (datasets/loop_closures/*/cases.yaml):
+// every set found there is used. Per set, (almost) all loops must be found, and
+// every valid result must be right: wrong matches and non-loops must be
+// rejected (or, for a wrong match, found at the true pose).
 TEST(BevCorrelation, DatasetLoopClosureCases)
 {
-    const char*              dir = std::getenv("LC_CASES_DIR");
-    std::vector<std::string> sets;
+    const char*                        dir = std::getenv("LC_CASES_DIR");
+    std::vector<std::filesystem::path> sets;
     if (dir && std::filesystem::is_directory(dir))
     {
         for (const auto& e : std::filesystem::directory_iterator(dir))
         {
             if (e.is_directory() && std::filesystem::exists(e.path() / "cases.yaml"))
             {
-                sets.push_back((e.path() / "cases.yaml").string());
+                sets.push_back(e.path());
             }
         }
     }
@@ -148,6 +151,11 @@ TEST(BevCorrelation, DatasetLoopClosureCases)
         GTEST_SKIP() << "No loop closure cases found (LC_CASES_DIR)";
     }
     std::sort(sets.begin(), sets.end());
+
+    // Minimum fraction of loops found per set. Sets known to be beyond the
+    // method (sparse scans far apart) have a lower floor, to catch regressions:
+    const std::map<std::string, double> minFoundPerSet  = {{"husky", 0.25}};
+    const double                        minFoundDefault = 0.95;
 
     const auto loadPoints = [&](const std::string& f)
     {
@@ -165,18 +173,16 @@ TEST(BevCorrelation, DatasetLoopClosureCases)
     };
 
     const BevCorrelationParameters params;
-    int                            nLoops      = 0;
-    int                            nFound      = 0;
-    int                            nValidWrong = 0;
-    for (const auto& casesFile : sets)
+    for (const auto& set : sets)
     {
-        const int  loops0      = nLoops;
-        const int  found0      = nFound;
-        const int  validWrong0 = nValidWrong;
-        const auto doc         = mrpt::containers::yaml::FromFile(casesFile);
+        const auto setName = set.filename().string();
+        int        nLoops  = 0;
+        int        nFound  = 0;
+        const auto doc     = mrpt::containers::yaml::FromFile((set / "cases.yaml").string());
         for (const auto& node : doc["cases"].asSequence())
         {
             const auto c    = mrpt::containers::yaml(node);
+            const auto name = c["name"].as<std::string>();
             const auto kind = c["kind"].as<std::string>();
             const auto g    = loadPoints(c["global"].as<std::string>());
             const auto l    = loadPoints(c["local"].as<std::string>());
@@ -186,28 +192,23 @@ TEST(BevCorrelation, DatasetLoopClosureCases)
             const double et      = (r.pose.translation() - ref.translation()).norm();
             const double er      = rot_error_deg(r.pose, ref);
             const bool   correct = et < 2.0 && er < 5.0;
-            std::cout << c["name"].as<std::string>() << " " << kind << " valid=" << r.valid
-                      << " score=" << r.score << " ratio=" << r.ambiguity_ratio << " err=" << et
-                      << " m " << er << " deg\n";
+            std::cout << name << " " << kind << " valid=" << r.valid << " score=" << r.score
+                      << " ratio=" << r.ambiguity_ratio << " err=" << et << " m " << er << " deg\n";
             if (kind == "loop")
             {
                 nLoops++;
                 nFound += (r.valid && correct) ? 1 : 0;
             }
-            // A valid result must be right, for every kind of case (the reference
-            // pose of non-loops is far from anything a match could return):
-            if (r.valid && !correct)
+            else if (kind == "no_loop")
             {
-                nValidWrong++;
-                std::cout << "  ^ valid but wrong\n";
+                EXPECT_FALSE(r.valid) << name << ": a non-loop was accepted";
             }
+            EXPECT_FALSE(r.valid && !correct) << name << ": valid but wrong result";
         }
-        std::cout << casesFile << ": loops found " << nFound - found0 << "/" << nLoops - loops0
-                  << ", valid but wrong " << nValidWrong - validWrong0 << "\n";
+        const auto   it      = minFoundPerSet.find(setName);
+        const double minFrac = it != minFoundPerSet.end() ? it->second : minFoundDefault;
+        std::cout << setName << ": loops found " << nFound << "/" << nLoops << " (minimum "
+                  << minFrac << ")\n";
+        EXPECT_GE(nFound, minFrac * nLoops) << setName;
     }
-    std::cout << "loops found: " << nFound << "/" << nLoops
-              << ", valid but wrong results: " << nValidWrong << "\n";
-    // A little under what the method achieves, to catch regressions:
-    EXPECT_GE(nFound, nLoops * 3 / 4);
-    EXPECT_EQ(nValidWrong, 0);
 }
