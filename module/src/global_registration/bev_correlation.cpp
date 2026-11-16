@@ -35,6 +35,9 @@ void BevCorrelationParameters::load_from_yaml(const mrpt::containers::yaml& cfg)
     YAML_LOAD_OPT(min_ambiguity_ratio, double);
     YAML_LOAD_OPT(ambiguity_min_distance, double);
     YAML_LOAD_OPT(ambiguity_min_yaw_deg, double);
+    YAML_LOAD_OPT(coarse_resolution_factor, unsigned int);
+    YAML_LOAD_OPT(coarse_yaw_step_deg, double);
+    YAML_LOAD_OPT(coarse_candidates, size_t);
 }
 
 namespace
@@ -162,6 +165,122 @@ struct Peak
     double dy    = 0;
 };
 
+/** Correlates rotated versions of the local cloud against the global grid at
+ *  one resolution. */
+class Correlator
+{
+   public:
+    Correlator(const Points& global, double res, double maxRange, double maxHeight)
+        : res_(res),
+          maxHeight_(maxHeight),
+          N_(next_pow2(static_cast<size_t>(std::ceil(2 * maxRange / res)))),
+          M_(2 * N_),  // zero padding: linear, not circular, correlation
+          grid_(N_, res)
+    {
+        grid_.insert(global, 1, 0, 0, 0, 0);
+        CMatrixFloat gMat;
+        norm_ = grid_.to_matrix(maxHeight_, gMat, M_);
+        if (norm_ <= 0)
+        {
+            return;
+        }
+        mrpt::math::dft2_real(gMat, re_, im_);
+
+        // Scale of the inverse transform, from the autocorrelation at zero shift:
+        CMatrixFloat pRe(static_cast<int>(M_), static_cast<int>(M_));
+        CMatrixFloat pIm(static_cast<int>(M_), static_cast<int>(M_));
+        pRe.asEigen() = re_.asEigen().array().square() + im_.asEigen().array().square();
+        pIm.setZero();
+        CMatrixFloat corr;
+        mrpt::math::idft2_real(pRe, pIm, corr);
+        invScale_ = (norm_ * norm_) / static_cast<double>(corr(0, 0));
+    }
+
+    [[nodiscard]] bool        ok() const { return norm_ > 0; }
+    [[nodiscard]] const Grid& grid() const { return grid_; }
+    [[nodiscard]] double      res() const { return res_; }
+
+    /** Best translation for the local points rotated by yaw. If secondPeak is
+     *  given, it receives the best score at least minDist away from it. */
+    Peak eval(const Points& local, double yaw, double minDist = 0, double* secondPeak = nullptr)
+    {
+        Peak p;
+        Grid lGrid(N_, res_);
+        lGrid.insert(local, std::cos(yaw), std::sin(yaw), 0, 0, 0);
+        const double lNorm = lGrid.to_matrix(maxHeight_, lMat_, M_);
+        if (lNorm <= 0)
+        {
+            return p;
+        }
+        mrpt::math::dft2_real(lMat_, lRe_, lIm_);
+        // Cross-correlation: G * conj(L)
+        pRe_.resize(re_.rows(), re_.cols());
+        pIm_.resize(re_.rows(), re_.cols());
+        pRe_.asEigen() = re_.asEigen().array() * lRe_.asEigen().array() +
+                         im_.asEigen().array() * lIm_.asEigen().array();
+        pIm_.asEigen() = im_.asEigen().array() * lRe_.asEigen().array() -
+                         re_.asEigen().array() * lIm_.asEigen().array();
+        mrpt::math::idft2_real(pRe_, pIm_, corr_);
+
+        Eigen::Index bi    = 0;
+        Eigen::Index bj    = 0;
+        const double peak  = static_cast<double>(corr_.asEigen().maxCoeff(&bi, &bj));
+        const double scale = invScale_ / (norm_ * lNorm);
+        p.score            = peak * scale;
+        p.yaw              = yaw;
+        // corr(d) = sum_i g(i + d) l(i): local cells move by +d into the global grid
+        p.dx = shift(static_cast<int>(bi)) * res_;
+        p.dy = shift(static_cast<int>(bj)) * res_;
+
+        if (secondPeak)
+        {
+            const auto Mi = static_cast<int>(M_);
+            double     s2 = 0;
+            for (int i = 0; i < Mi; i++)
+            {
+                for (int j = 0; j < Mi; j++)
+                {
+                    if (std::hypot(shift(i) * res_ - p.dx, shift(j) * res_ - p.dy) > minDist)
+                    {
+                        s2 = std::max(s2, static_cast<double>(corr_(i, j)) * scale);
+                    }
+                }
+            }
+            *secondPeak = s2;
+        }
+        return p;
+    }
+
+   private:
+    double       res_;
+    double       maxHeight_;
+    size_t       N_;
+    size_t       M_;
+    Grid         grid_;
+    double       norm_     = 0;
+    double       invScale_ = 1;
+    CMatrixFloat re_;
+    CMatrixFloat im_;
+    CMatrixFloat lMat_;
+    CMatrixFloat lRe_;
+    CMatrixFloat lIm_;
+    CMatrixFloat pRe_;
+    CMatrixFloat pIm_;
+    CMatrixFloat corr_;
+
+    [[nodiscard]] int shift(int i) const
+    {
+        const auto Mi = static_cast<int>(M_);
+        return i < Mi / 2 ? i : i - Mi;
+    }
+};
+
+bool distinct(const Peak& a, const Peak& b, double minYaw, double minDist)
+{
+    return std::abs(mrpt::math::wrapToPi(a.yaw - b.yaw)) > minYaw ||
+           std::hypot(a.dx - b.dx, a.dy - b.dy) > minDist;
+}
+
 }  // namespace
 
 BevCorrelationResult bev_correlation(
@@ -172,117 +291,104 @@ BevCorrelationResult bev_correlation(
     BevCorrelationResult result;
     ASSERT_GT_(params.grid_resolution, 0);
     ASSERT_GT_(params.yaw_step_deg, 0);
+    ASSERT_GE_(params.coarse_resolution_factor, 1);
 
     const Points pg = level(global, globalAttitude);
     const Points pl = level(local, localAttitude);
 
-    const double res = params.grid_resolution;
-    const size_t N   = next_pow2(static_cast<size_t>(std::ceil(2 * params.max_range / res)));
-    const size_t M   = 2 * N;  // zero padding: linear, not circular, correlation
+    const double minYaw  = mrpt::DEG2RAD(params.ambiguity_min_yaw_deg);
+    const double minDist = params.ambiguity_min_distance;
 
-    Grid gGrid(N, res);
-    gGrid.insert(pg, 1, 0, 0, 0, 0);
-    CMatrixFloat gMat;
-    const double gNorm = gGrid.to_matrix(params.max_cell_height, gMat, M);
-    if (gNorm <= 0)
+    // Stage 1, coarse: every yaw on a coarser grid.
+    const bool   twoStages = params.coarse_resolution_factor > 1;
+    const double coarseRes =
+        params.grid_resolution * static_cast<double>(params.coarse_resolution_factor);
+    const double coarseStep = twoStages ? params.coarse_yaw_step_deg : params.yaw_step_deg;
+    Correlator   coarse(
+          pg, twoStages ? coarseRes : params.grid_resolution, params.max_range,
+          params.max_cell_height);
+    if (!coarse.ok())
     {
         return result;
     }
-    CMatrixFloat gRe;
-    CMatrixFloat gIm;
-    mrpt::math::dft2_real(gMat, gRe, gIm);
-
-    // Scale of the inverse transform, from the autocorrelation at zero shift:
-    CMatrixFloat pRe(static_cast<int>(M), static_cast<int>(M));
-    CMatrixFloat pIm(static_cast<int>(M), static_cast<int>(M));
-    CMatrixFloat corr;
-    pRe.asEigen() = gRe.asEigen().array().square() + gIm.asEigen().array().square();
-    pIm.setZero();
-    mrpt::math::idft2_real(pRe, pIm, corr);
-    const double invScale = (gNorm * gNorm) / static_cast<double>(corr(0, 0));
-
-    const auto Mi    = static_cast<int>(M);
-    const auto shift = [&](int i) { return (i < Mi / 2 ? i : i - Mi); };
-
-    std::vector<Peak> perYaw;
-    Peak              best;
-    CMatrixFloat      bestCorr;
-    double            bestLocalNorm = 1;
-
-    const int    nYaws = std::max(1, static_cast<int>(std::round(360.0 / params.yaw_step_deg)));
-    CMatrixFloat lMat;
-    CMatrixFloat lRe;
-    CMatrixFloat lIm;
+    std::vector<Peak> coarsePeaks;
+    const int         nYaws = std::max(1, static_cast<int>(std::round(360.0 / coarseStep)));
     for (int iy = 0; iy < nYaws; iy++)
     {
-        const double yaw = mrpt::DEG2RAD(360.0 * iy / nYaws);
-        Grid         lGrid(N, res);
-        lGrid.insert(pl, std::cos(yaw), std::sin(yaw), 0, 0, 0);
-        const double lNorm = lGrid.to_matrix(params.max_cell_height, lMat, M);
-        if (lNorm <= 0)
+        coarsePeaks.push_back(coarse.eval(pl, mrpt::DEG2RAD(360.0 * iy / nYaws)));
+    }
+    std::sort(
+        coarsePeaks.begin(), coarsePeaks.end(),
+        [](const Peak& a, const Peak& b) { return a.score > b.score; });
+
+    // The best few distinct coarse candidates:
+    std::vector<Peak> candidates;
+    for (const auto& p : coarsePeaks)
+    {
+        if (candidates.size() >= std::max<size_t>(1, params.coarse_candidates))
         {
-            return result;
+            break;
         }
-        mrpt::math::dft2_real(lMat, lRe, lIm);
-
-        // Cross-correlation: G * conj(L)
-        pRe.asEigen() = gRe.asEigen().array() * lRe.asEigen().array() +
-                        gIm.asEigen().array() * lIm.asEigen().array();
-        pIm.asEigen() = gIm.asEigen().array() * lRe.asEigen().array() -
-                        gRe.asEigen().array() * lIm.asEigen().array();
-        mrpt::math::idft2_real(pRe, pIm, corr);
-
-        Eigen::Index bi   = 0;
-        Eigen::Index bj   = 0;
-        const double peak = static_cast<double>(corr.asEigen().maxCoeff(&bi, &bj));
-        Peak         p;
-        p.score = peak * invScale / (gNorm * lNorm);
-        p.yaw   = yaw;
-        // corr(d) = sum_i g(i + d) l(i): local cells move by +d into the global grid
-        p.dx = shift(static_cast<int>(bi)) * res;
-        p.dy = shift(static_cast<int>(bj)) * res;
-        perYaw.push_back(p);
-        if (p.score > best.score)
+        const bool isNew = std::all_of(
+            candidates.begin(), candidates.end(),
+            [&](const Peak& c) { return distinct(p, c, minYaw, minDist); });
+        if (isNew)
         {
-            best          = p;
-            bestCorr      = corr;
-            bestLocalNorm = lNorm;
+            candidates.push_back(p);
         }
     }
 
-    // Ambiguity: the best clearly different peak, at another yaw or elsewhere in
-    // the best yaw correlation (e.g. repetitive structures along a direction).
-    const double minYaw  = mrpt::DEG2RAD(params.ambiguity_min_yaw_deg);
-    const double minDist = params.ambiguity_min_distance;
-    double       second  = 0;
-    for (const auto& p : perYaw)
+    // Stage 2, fine: yaws around each candidate, at the full resolution.
+    Correlator  fineOwned(pg, params.grid_resolution, params.max_range, params.max_cell_height);
+    Correlator& fine = twoStages ? fineOwned : coarse;
+    std::vector<Peak> finePeaks;
+    for (const auto& c : candidates)
     {
-        const double dYaw = std::abs(mrpt::math::wrapToPi(p.yaw - best.yaw));
-        if (dYaw > minYaw || std::hypot(p.dx - best.dx, p.dy - best.dy) > minDist)
+        if (!twoStages)
+        {
+            finePeaks.push_back(c);
+            continue;
+        }
+        Peak      bestHere;
+        const int half = static_cast<int>(std::ceil(coarseStep / params.yaw_step_deg));
+        for (int k = -half; k <= half; k++)
+        {
+            const auto p = fine.eval(pl, c.yaw + mrpt::DEG2RAD(k * params.yaw_step_deg));
+            if (p.score > bestHere.score)
+            {
+                bestHere = p;
+            }
+        }
+        finePeaks.push_back(bestHere);
+    }
+    const auto bestIt = std::max_element(
+        finePeaks.begin(), finePeaks.end(),
+        [](const Peak& a, const Peak& b) { return a.score < b.score; });
+    const Peak best = *bestIt;
+
+    // Ambiguity: the best clearly different peak, among the other candidates and
+    // elsewhere in the best yaw correlation (repetitive structures along a direction).
+    double second = 0;
+    for (const auto& p : finePeaks)
+    {
+        if (distinct(p, best, minYaw, minDist))
         {
             second = std::max(second, p.score);
         }
     }
-    for (int i = 0; i < Mi; i++)
-    {
-        for (int j = 0; j < Mi; j++)
-        {
-            if (std::hypot(shift(i) * res - best.dx, shift(j) * res - best.dy) <= minDist)
-            {
-                continue;
-            }
-            const double s = bestCorr(i, j) * invScale / (gNorm * bestLocalNorm);
-            second         = std::max(second, s);
-        }
-    }
+    double sameYawSecond = 0;
+    fine.eval(pl, best.yaw, minDist, &sameYawSecond);
+    second = std::max(second, sameYawSecond);
+
     result.score           = best.score;
     result.ambiguity_ratio = best.score / std::max(second, 1e-9);
 
     // z: median difference of the lowest point (ground) of the cells seen by both
-    Grid lBest(N, res);
+    const Grid& gGrid = fine.grid();
+    Grid        lBest(gGrid.N, gGrid.res);
     lBest.insert(pl, std::cos(best.yaw), std::sin(best.yaw), best.dx, best.dy, 0);
     std::vector<double> dz;
-    for (size_t k = 0; k < N * N; k++)
+    for (size_t k = 0; k < gGrid.N * gGrid.N; k++)
     {
         if (gGrid.occupied(k) && lBest.occupied(k))
         {

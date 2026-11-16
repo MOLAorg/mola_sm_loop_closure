@@ -26,8 +26,15 @@ struct BevCorrelationParameters
     /// Half side of the square grids, centered at each cloud origin [m].
     double max_range = 64.0;
 
-    /// Yaw search step [deg].
-    double yaw_step_deg = 3.0;
+    /// Yaw search step [deg], of the fine stage if there are two.
+    double yaw_step_deg = 1.5;
+
+    /** Coarse-to-fine search: a first pass over every yaw on a grid this many
+     *  times coarser, every coarse_yaw_step_deg; then, at the full resolution,
+     *  yaw_step_deg steps around the best coarse_candidates. 1: one stage. */
+    unsigned int coarse_resolution_factor = 2;
+    double       coarse_yaw_step_deg      = 6.0;
+    size_t       coarse_candidates        = 3;
 
     /// Cell vertical extents are clamped to this [m].
     double max_cell_height = 3.0;
