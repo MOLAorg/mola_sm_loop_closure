@@ -317,6 +317,31 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     YAML_LOAD_OPT(params_, kiss_matcher_layer, std::string);
     YAML_LOAD_OPT(params_, kiss_matcher_min_inliers, uint32_t);
 
+    YAML_LOAD_OPT(params_, global_registration, std::string);
+    YAML_LOAD_OPT(params_, global_registration_layer, std::string);
+    YAML_LOAD_OPT(params_, skip_ambiguous_candidates, bool);
+    YAML_LOAD_OPT(params_, bev_assume_level, bool);
+    if (cfg.has("bev_correlation"))
+    {
+        params_.bev_correlation.load_from_yaml(cfg["bev_correlation"]);
+    }
+    if (params_.global_registration.empty())
+    {
+        params_.global_registration = params_.use_kiss_matcher ? "kiss" : "none";
+    }
+    else if (params_.use_kiss_matcher && params_.global_registration != "kiss")
+    {
+        MRPT_LOG_INFO_STREAM(
+            "use_kiss_matcher ignored: global_registration=" << params_.global_registration);
+    }
+    ASSERTMSG_(
+        params_.global_registration == "none" || params_.global_registration == "kiss" ||
+            params_.global_registration == "bev",
+        mrpt::format(
+            "global_registration: unknown value '%s' (expected none, kiss or bev)",
+            params_.global_registration.c_str()));
+    params_.use_kiss_matcher = (params_.global_registration == "kiss");
+
     YAML_LOAD_OPT(params_, largest_delta_for_reconsider, double);
     YAML_LOAD_OPT(params_, max_sensor_range, double);
 
@@ -425,10 +450,17 @@ void FrameToFrameLoopClosure::initialize(const mrpt::containers::yaml& c)
     if (params_.use_kiss_matcher)
     {
         MRPT_LOG_WARN(
-            "use_kiss_matcher=true but this build lacks KISS-Matcher support "
+            "global_registration=kiss but this build lacks KISS-Matcher support "
             "(populate the third_party/kiss-matcher submodule and rebuild); ignoring.");
     }
 #endif
+    if (params_.global_registration == "bev")
+    {
+        MRPT_LOG_INFO_STREAM(
+            "BEV correlation global registration enabled: resolution="
+            << params_.bev_correlation.grid_resolution << " m, layer='"
+            << params_.global_registration_layer << "'");
+    }
 
     state_.initialized = true;
 
@@ -971,7 +1003,7 @@ bool FrameToFrameLoopClosure::add_imu_gravity_factors()
         }
         const auto& normalizedAcc = *frame.normalizedAcc;
 #else
-        const auto& normalizedAcc = frame.normalizedAcc;
+        const auto& normalizedAcc         = frame.normalizedAcc;
 #endif
         const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPose3(frame.sensorPoseOnVehicle);
         state_.knownInlierFactorIndices.push_back(state_.graphFG.size());
@@ -1067,10 +1099,14 @@ void FrameToFrameLoopClosure::add_manual_loop_closure_factors()
             continue;
         }
 
+        // With a global registration, compute the actual relative pose (+ ICP)
+        // rather than assuming an identity transform.
 #ifdef MOLA_HAS_KISS_MATCHER
-        // When KISS-Matcher is available, use it (+ ICP) to compute the actual
-        // relative pose rather than assuming an identity transform.
-        if (params_.use_kiss_matcher)
+        const bool hasGlobalRegistration = params_.global_registration != "none";
+#else
+        const bool  hasGlobalRegistration = params_.global_registration == "bev";
+#endif
+        if (hasGlobalRegistration)
         {
             LoopCandidate lc;
             lc.frame_i = fi;
@@ -1084,21 +1120,20 @@ void FrameToFrameLoopClosure::add_manual_loop_closure_factors()
                 if (mlc.trust_as_inlier) state_.knownInlierFactorIndices.push_back(*km_result);
                 addedCount++;
                 MRPT_LOG_INFO_STREAM(
-                    "Manual LC (KISS-Matcher+ICP) added: frame "
-                    << fi << " (t=" << mlc.timestamp_i << ") <-> frame " << fj
-                    << " (t=" << mlc.timestamp_j << ")");
+                    "Manual LC (" << params_.global_registration << " + ICP) added: frame " << fi
+                                  << " (t=" << mlc.timestamp_i << ") <-> frame " << fj
+                                  << " (t=" << mlc.timestamp_j << ")");
                 continue;
             }
             MRPT_LOG_WARN_STREAM(
-                "Manual LC: KISS-Matcher+ICP failed for frames "
-                << fi << "<->" << fj
-                << " (ICP quality too low); falling back to identity constraint "
-                   "with sigma_xyz="
-                << mlc.sigma_xyz << " m");
+                "Manual LC: " << params_.global_registration << " + ICP failed for frames " << fi
+                              << "<->" << fj
+                              << " (ICP quality too low); falling back to identity constraint "
+                                 "with sigma_xyz="
+                              << mlc.sigma_xyz << " m");
         }
-#endif
 
-        // Fallback (or when KISS-Matcher is disabled): identity pose constraint
+        // Fallback (or without a global registration): identity pose constraint
         // with a tight XYZ sigma and unconstrained angles.
         const auto deltaPose = gtsam::Pose3::Identity();
 
@@ -1117,7 +1152,7 @@ void FrameToFrameLoopClosure::add_manual_loop_closure_factors()
         auto factor = boost::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             X(fi), X(fj), deltaPose, edgeNoise);
 #else
-        auto        factor        = std::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+        auto        factor                = std::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             X(fi), X(fj), deltaPose, edgeNoise);
 #endif
         state_.graphFG += factor;
@@ -1619,6 +1654,64 @@ std::optional<FrameToFrameLoopClosure::LcIcpEdge> FrameToFrameLoopClosure::run_l
         }
     }
 #endif
+
+    if (params_.global_registration == "bev")
+    {
+        std::optional<mrpt::system::CTimeLoggerEntry> tle_bev;
+        if (profile)
+        {
+            tle_bev.emplace(profiler_, "bev_initial_guess");
+        }
+        const auto layerOf = [&](const mp2p_icp::metric_map_t& pc) -> mrpt::maps::CPointsMap::Ptr
+        {
+            const auto it = pc.layers.find(params_.global_registration_layer);
+            if (it == pc.layers.end())
+            {
+                return {};
+            }
+            return std::dynamic_pointer_cast<mrpt::maps::CPointsMap>(it->second);
+        };
+        const auto pts_i = layerOf(*pc_i);
+        const auto pts_j = layerOf(*pc_j);
+        if (pts_i && pts_j && !pts_i->empty() && !pts_j->empty())
+        {
+            // Only the roll and pitch of the keyframe poses are used:
+            const mrpt::poses::CPose3D level;
+            const auto&                attitude_i = params_.bev_assume_level ? level : pose_i;
+            const auto&                attitude_j = params_.bev_assume_level ? level : pose_j;
+            const auto                 r          = mola::global_registration::bev_correlation(
+                                         *pts_i, attitude_i, *pts_j, attitude_j, params_.bev_correlation);
+            if (r.valid)
+            {
+                initGuess = r.pose.asTPose();
+                MRPT_LOG_DEBUG_STREAM(
+                    "BEV guess for LC " << lc.frame_i << "<->" << lc.frame_j << " score=" << r.score
+                                        << " ambiguity_ratio=" << r.ambiguity_ratio
+                                        << " T=" << initGuess);
+            }
+            else if (
+                params_.skip_ambiguous_candidates && r.score >= params_.bev_correlation.min_score)
+            {
+                MRPT_LOG_INFO_STREAM(
+                    "LC " << lc.frame_i << "<->" << lc.frame_j
+                          << " rejected: ambiguous BEV match (score=" << r.score
+                          << " ambiguity_ratio=" << r.ambiguity_ratio << ")");
+                return std::nullopt;
+            }
+            else
+            {
+                MRPT_LOG_DEBUG_STREAM(
+                    "BEV guess rejected for LC " << lc.frame_i << "<->" << lc.frame_j << " (score="
+                                                 << r.score << "); using graph-based guess");
+            }
+        }
+        else
+        {
+            MRPT_LOG_THROTTLE_WARN_STREAM(
+                5.0, "Layer '" << params_.global_registration_layer << "' missing or empty for LC "
+                               << lc.frame_i << "<->" << lc.frame_j << "; using graph-based guess");
+        }
+    }
 
     // Run ICP
 

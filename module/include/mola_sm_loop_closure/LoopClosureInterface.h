@@ -67,8 +67,9 @@ struct LoopClosureAnalyzeStats
     /// selection / exclusion), i.e. the initial "queue" size for the scan.
     std::size_t candidates_generated = 0;
 
-    /// Candidates whose ICP actually ran (== candidates_generated unless the
-    /// scan was aborted early).
+    /// Candidates processed (== candidates_generated unless the scan was
+    /// aborted early), including those rejected before ICP by an ambiguous
+    /// global registration.
     std::size_t candidates_evaluated = 0;
 
     /// Candidates accepted as loop-closure edges (passed min_icp_goodness).

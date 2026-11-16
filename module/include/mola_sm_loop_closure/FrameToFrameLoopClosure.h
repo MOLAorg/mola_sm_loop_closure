@@ -20,6 +20,7 @@
 #include <mola_sm_loop_closure/LoopClosureInterface.h>
 #include <mola_sm_loop_closure/common/gnss_factor_helpers.h>
 #include <mola_sm_loop_closure/common/icp_pipeline_setup.h>
+#include <mola_sm_loop_closure/global_registration/bev_correlation.h>
 #include <mp2p_icp/icp_pipeline_from_yaml.h>
 #include <mp2p_icp/metricmap.h>
 #include <mp2p_icp_filters/FilterBase.h>
@@ -326,6 +327,37 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
          *  then mislead ICP.  Below this count the graph-based guess is used
          *  instead. */
         uint32_t kiss_matcher_min_inliers = 5;
+
+        // ===== Global registration initial guess =====
+        /** Global registration that seeds the ICP of each loop closure
+         *  candidate, instead of the current graph estimate:
+         *  - "none": the graph estimate only.
+         *  - "kiss": KISS-Matcher (see the parameters above).
+         *  - "bev": global_registration::bev_correlation(), a gravity-aligned
+         *    4-DoF search; it needs keyframe poses with absolute roll and pitch
+         *    (e.g. from LiDAR-inertial odometry).
+         *  Empty: "kiss" if use_kiss_matcher is true, "none" otherwise. */
+        std::string global_registration;
+
+        /** Metric-map layer of each keyframe fed into the "bev" global
+         *  registration. Must contain an mrpt::maps::CPointsMap. */
+        std::string global_registration_layer = "points_to_register_points";
+
+        /** Parameters of the "bev" global registration (YAML map
+         *  `bev_correlation`). */
+        mola::global_registration::BevCorrelationParameters bev_correlation;
+
+        /** If true, "bev" ignores the roll and pitch of the keyframe poses and
+         *  takes both clouds as level. For odometry without a gravity reference
+         *  (LiDAR-only) on mostly level ground, where the estimated roll and
+         *  pitch may drift. */
+        bool bev_assume_level = false;
+
+        /** If true, a candidate whose "bev" global registration finds a match
+         *  but cannot tell it from another clearly different one (repetitive
+         *  structure) is rejected, instead of running ICP from the graph
+         *  estimate. */
+        bool skip_ambiguous_candidates = true;
 
         // ===== Manual Loop Closure Hints =====
         struct ManualLoopConstraint

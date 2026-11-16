@@ -7,6 +7,68 @@ ament_add_gtest(test_gnss_alignment_and_densify test_gnss_alignment_and_densify.
 target_link_libraries(test_gnss_alignment_and_densify ${PROJECT_NAME})
 find_package(mola_test_datasets)
 
+# Global registration: synthetic cases, plus the loop closure cases of
+# mola_test_datasets. If the installed version lacks any of these sets (older
+# release), they are fetched from its repository (shallow, only that directory).
+# Without them (e.g. no network), the dataset test is skipped.
+set(_LC_CASE_SETS vbr husky kitti)
+set(_LC_CASES_DIR "")
+
+function(_lc_cases_complete dir out)
+  set(ok TRUE)
+  foreach(s ${_LC_CASE_SETS})
+    if(NOT EXISTS "${dir}/${s}/cases.yaml")
+      set(ok FALSE)
+    endif()
+  endforeach()
+  set(${out} ${ok} PARENT_SCOPE)
+endfunction()
+
+if(mola_test_datasets_FOUND)
+  set(_dir "${mola_test_datasets_DIR}/../datasets/loop_closures")
+  _lc_cases_complete("${_dir}" _complete)
+  if(_complete)
+    set(_LC_CASES_DIR "${_dir}")
+  endif()
+endif()
+
+if(NOT _LC_CASES_DIR)
+  find_package(Git QUIET)
+  set(_clone "${CMAKE_CURRENT_BINARY_DIR}/mola_test_datasets")
+  set(_url "https://github.com/MOLAorg/mola_test_datasets.git")
+  _lc_cases_complete("${_clone}/datasets/loop_closures" _complete)
+  if(GIT_FOUND AND NOT _complete)
+    message(STATUS "Fetching the loop closure cases of mola_test_datasets")
+    if(NOT EXISTS "${_clone}/.git")
+      execute_process(
+        COMMAND ${GIT_EXECUTABLE} clone --depth 1 --filter=blob:none --sparse
+                ${_url} "${_clone}"
+        OUTPUT_QUIET ERROR_QUIET TIMEOUT 300)
+    else()
+      execute_process(
+        COMMAND ${GIT_EXECUTABLE} -C "${_clone}" pull --depth 1
+        OUTPUT_QUIET ERROR_QUIET TIMEOUT 300)
+    endif()
+    execute_process(
+      COMMAND ${GIT_EXECUTABLE} -C "${_clone}"
+              sparse-checkout set datasets/loop_closures
+      OUTPUT_QUIET ERROR_QUIET TIMEOUT 300)
+    _lc_cases_complete("${_clone}/datasets/loop_closures" _complete)
+  endif()
+  if(_complete)
+    set(_LC_CASES_DIR "${_clone}/datasets/loop_closures")
+  else()
+    message(WARNING
+      "Loop closure cases of mola_test_datasets not available: test skipped")
+  endif()
+endif()
+
+ament_add_gtest(test_bev_correlation test_bev_correlation.cpp
+  ENV LC_CASES_DIR=${_LC_CASES_DIR}
+  TIMEOUT 300
+)
+target_link_libraries(test_bev_correlation ${PROJECT_NAME})
+
 if(NOT mola_test_datasets_FOUND)
   message(STATUS "**********************************************************************")
   message(STATUS " WARNING: Skipping unit tests since mola_test_datasets was not found  ")
