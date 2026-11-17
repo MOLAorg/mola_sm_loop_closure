@@ -136,9 +136,6 @@ params:
   # Reject candidates whose bev match is ambiguous (repetitive structure)
   # instead of running ICP from the graph estimate:
   skip_ambiguous_candidates: "${LC_SKIP_AMBIGUOUS_CANDIDATES|true}"
-  # bev: take both clouds as level, ignoring the keyframe roll and pitch
-  # (odometry without a gravity reference, mostly level ground):
-  bev_assume_level: "${LC_BEV_ASSUME_LEVEL|false}"
   bev_correlation:
     grid_resolution: "${LC_BEV_RESOLUTION|1.0}" # [m]
     max_range: "${LC_BEV_MAX_RANGE|64.0}" # [m] points farther are ignored

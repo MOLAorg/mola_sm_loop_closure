@@ -347,12 +347,6 @@ class FrameToFrameLoopClosure : public mola::LoopClosureInterface
          *  `bev_correlation`). */
         mola::global_registration::BevCorrelationParameters bev_correlation;
 
-        /** If true, "bev" ignores the roll and pitch of the keyframe poses and
-         *  takes both clouds as level. For odometry without a gravity reference
-         *  (LiDAR-only) on mostly level ground, where the estimated roll and
-         *  pitch may drift. */
-        bool bev_assume_level = false;
-
         /** If true, a candidate whose "bev" global registration finds a match
          *  but cannot tell it from another clearly different one (repetitive
          *  structure) is rejected, instead of running ICP from the graph
