@@ -2,6 +2,14 @@
 Changelog for package mola_sm_loop_closure
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Global registration: gravity-aligned BEV correlation (4-DoF, coarse-to-fine); new global_registration parameter (none | kiss | bev).
+* Size the per-thread ICP slots by the resolved worker count.
+* Pipelines: use robustKernelScale instead of the deprecated robustKernelParam.
+* Tests: KITTI loop closure cases from mola_test_datasets.
+* Contributors: Jose Luis Blanco-Claraco
+
 1.4.0 (2026-11-15)
 ------------------
 * GNSS pose graph: yaw+translation pre-alignment; mola-sm-lc-cli can write a dense trajectory output.
