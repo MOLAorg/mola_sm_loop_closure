@@ -2,8 +2,8 @@
 Changelog for package mola_sm_loop_closure
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+1.5.0 (2026-11-20)
+------------------
 * Global registration: gravity-aligned BEV correlation (4-DoF, coarse-to-fine); new global_registration parameter (none | kiss | bev).
 * Size the per-thread ICP slots by the resolved worker count.
 * Pipelines: use robustKernelScale instead of the deprecated robustKernelParam.
