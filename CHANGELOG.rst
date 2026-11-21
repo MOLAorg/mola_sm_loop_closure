@@ -2,8 +2,8 @@
 Changelog for package mola_sm_loop_closure
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+1.5.1 (2026-11-22)
+------------------
 * f2f GICP pipeline: point times relative to mid-sweep before the de-skew, matching the keyframe pose instants (`#38 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/38>`_).
 * Contributors: Jose Luis Blanco-Claraco
 
