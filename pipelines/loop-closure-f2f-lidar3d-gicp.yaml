@@ -292,11 +292,17 @@ observations_filter:
   # and with the given parameters. Filters are run in definition order on the
   # input metric_map_t object.
   #
-  #- class_name: mp2p_icp_filters::FilterAdjustTimestamps
-  #  params:
-  #    pointcloud_layer: "raw"
-  #    silently_ignore_no_timestamps: false
-  #    method: "TimestampAdjustMethod::MiddleIsZero"
+  # Point times relative to the middle of the scan, the instant of the keyframe
+  # pose (as in the LiDAR odometry that made the keyframes), before the de-skew:
+  # otherwise each cloud is de-skewed to another instant, and the registered
+  # relative pose is off by the motion in between (worst with fast rotations).
+  - class_name: mp2p_icp_filters::FilterAdjustTimestamps
+    params:
+      pointcloud_layer: "raw"
+      # Without per-point timestamps there is nothing to adjust: whether that is
+      # an error is decided by FilterDeskew below.
+      silently_ignore_no_timestamps: true
+      method: "TimestampAdjustMethod::MiddleIsZero"
 
   - class_name: mp2p_icp_filters::FilterDeskew
     params:
