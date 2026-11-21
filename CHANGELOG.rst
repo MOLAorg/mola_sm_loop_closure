@@ -2,6 +2,11 @@
 Changelog for package mola_sm_loop_closure
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* f2f GICP pipeline: point times relative to mid-sweep before the de-skew, matching the keyframe pose instants (`#38 <https://github.com/MOLAorg/mola_sm_loop_closure/issues/38>`_).
+* Contributors: Jose Luis Blanco-Claraco
+
 1.5.0 (2026-11-20)
 ------------------
 * Global registration: gravity-aligned BEV correlation (4-DoF, coarse-to-fine); new global_registration parameter (none | kiss | bev).
